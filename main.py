@@ -16,6 +16,18 @@ DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
 
 app = FastAPI(title="Reef Tank Parameters")
 
+# --- RECOMMENDED DEFAULTS ---
+# These values will pre-fill the Targets form for new tanks/parameters.
+RECOMMENDED_DEFAULTS = {
+    "Alkalinity/KH": {"low": 8.0, "high": 9.5, "a_low": 7.0, "a_high": 11.0},
+    "Calcium": {"low": 400, "high": 450, "a_low": 350, "a_high": 500},
+    "Magnesium": {"low": 1300, "high": 1400, "a_low": 1200, "a_high": 1500},
+    "Phosphate": {"low": 0.03, "high": 0.1, "a_low": 0.0, "a_high": 0.25},
+    "Nitrate": {"low": 2, "high": 10, "a_low": 0, "a_high": 25},
+    "Salinity": {"low": 34, "high": 35.5, "a_low": 32, "a_high": 37},
+    "Temperature": {"low": 25, "high": 26.5, "a_low": 23, "a_high": 29},
+}
+
 static_dir = os.path.join(BASE_DIR, "static")
 templates_dir = os.path.join(BASE_DIR, "templates")
 os.makedirs(static_dir, exist_ok=True)
@@ -668,15 +680,50 @@ def edit_targets(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
+        
     params = list_parameters(db)
     existing = {}
+    
     if table_exists(db, "targets"):
-        for t in q(db, "SELECT * FROM targets WHERE tank_id=?", (tank_id,)): existing[t["parameter"]] = t
+        for t in q(db, "SELECT * FROM targets WHERE tank_id=?", (tank_id,)): 
+            existing[t["parameter"]] = t
+            
     rows = []
     for p in params:
         name = p["name"]
         t = existing.get(name)
-        rows.append({"parameter": {"name": name, "unit": row_get(p, "unit") or (t["unit"] if t else "") or ""}, "key": slug_key(name), "target": compute_target(row_get(t, "target_low") if t else None, row_get(t, "target_high") if t else None), "target_low": (t["target_low"] if t and "target_low" in t.keys() else None), "target_high": (t["target_high"] if t and "target_high" in t.keys() else None), "alert_low": (t["alert_low"] if t and "alert_low" in t.keys() else None), "alert_high": (t["alert_high"] if t and "alert_high" in t.keys() else None), "enabled": (t["enabled"] if t and "enabled" in t.keys() else 1)})
+        
+        # --- NEW LOGIC: Get Defaults ---
+        defaults = RECOMMENDED_DEFAULTS.get(name, {})
+        
+        # Helper: Use DB value if it exists, otherwise use Default
+        def get_val(key_db, key_def):
+            if t and t.get(key_db) is not None:
+                return t[key_db]
+            return defaults.get(key_def)
+
+        # 1. Target Low/High
+        t_low = get_val("target_low", "low")
+        if t_low is None and t: t_low = t.get("low") # Legacy DB support
+
+        t_high = get_val("target_high", "high")
+        if t_high is None and t: t_high = t.get("high") # Legacy DB support
+
+        # 2. Alert Low/High
+        a_low = get_val("alert_low", "a_low")
+        a_high = get_val("alert_high", "a_high")
+        
+        rows.append({
+            "parameter": {"name": name, "unit": row_get(p, "unit") or (t["unit"] if t else "") or ""},
+            "key": slug_key(name),
+            "target": compute_target(t_low, t_high),
+            "target_low": t_low,
+            "target_high": t_high,
+            "alert_low": a_low,
+            "alert_high": a_high,
+            "enabled": (t["enabled"] if t and "enabled" in t.keys() else 1)
+        })
+        
     db.close()
     return templates.TemplateResponse("edit_targets.html", {"request": request, "tank": tank, "tank_id": tank_id, "rows": rows})
 
