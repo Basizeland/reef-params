@@ -1255,11 +1255,7 @@ def dose_plan(request: Request):
             if vol_l is not None: eff_vol_l = float(vol_l) * (net_pct / 100.0)
         except Exception: eff_vol_l = None
         
-        # --- DOSE PLAN UPDATE: Use Latest Per Parameter ---
         latest_map = get_latest_per_parameter(db, tank_id)
-        # --------------------------------------------------
-        
-        # Keep old 'latest' for timestamp reference if needed
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
 
@@ -1278,7 +1274,6 @@ def dose_plan(request: Request):
             except Exception: target_val = None
             if target_val is None: continue
             
-            # Use value from individual latest reading
             p_data = latest_map.get(pname)
             cur_val = p_data.get("value") if p_data else None
             
@@ -1303,9 +1298,25 @@ def dose_plan(request: Request):
             per_day_change = delta / float(days)
             adds = q(db, "SELECT * FROM additives WHERE active=1 AND parameter=? ORDER BY name", (pname,))
             if not adds:
+                # Keep 'no additive' rows so user knows they need one
                 tank_rows.append({"parameter": pname, "latest": cur_val_f, "target": target_val, "change": delta, "unit": unit, "days": days, "per_day_change": per_day_change, "max_daily_change": max_change_f, "additives": [], "note": "No additive linked."})
                 continue
+            
+            # --- NEW LOGIC: Determine Preferred Additive ---
+            # 1. Try to find the last additive used for this parameter in this tank
+            last_used = one(db, """
+                SELECT dl.additive_id 
+                FROM dose_logs dl 
+                JOIN additives a ON a.id = dl.additive_id 
+                WHERE dl.tank_id=? AND a.parameter=? 
+                ORDER BY dl.logged_at DESC LIMIT 1
+            """, (tank_id, pname))
+            
+            preferred_id = last_used["additive_id"] if last_used else None
+            
             add_rows = []
+            has_selected = False
+            
             for a in adds:
                 strength = a["strength"]
                 if strength in (None, 0) or eff_vol_l is None: total_ml = None
@@ -1317,7 +1328,7 @@ def dose_plan(request: Request):
                 for i in range(int(days)):
                     d = (today + timedelta(days=i)).isoformat()
                     schedule.append({
-                        "day": i + 1,  # Day 1, Day 2...
+                        "day": i + 1,
                         "date": d,
                         "when": parse_dt_any(d),
                         "ml": per_day_ml,
@@ -1327,13 +1338,37 @@ def dose_plan(request: Request):
                         "parameter": pname,
                         "key": f"{tank_id}|{pname}|{a['id']}|{d}",
                     })
-                add_rows.append({"additive_id": a["id"], "additive_name": a["name"], "strength": a["strength"], "max_daily_change": max_change_f, "total_ml": total_ml, "per_day_ml": per_day_ml, "schedule": schedule})
+                
+                # Check if this should be the selected one
+                is_selected = False
+                if preferred_id:
+                    if a["id"] == preferred_id: is_selected = True
+                
+                add_rows.append({
+                    "additive_id": a["id"], 
+                    "additive_name": a["name"], 
+                    "strength": a["strength"], 
+                    "max_daily_change": max_change_f, 
+                    "total_ml": total_ml, 
+                    "per_day_ml": per_day_ml, 
+                    "schedule": schedule,
+                    "selected": is_selected
+                })
+                if is_selected: has_selected = True
+
+            # If no history (or history additive deleted), default to the first one
+            if not has_selected and add_rows:
+                add_rows[0]["selected"] = True
+                
             tank_rows.append({"parameter": pname, "latest": cur_val_f, "target": target_val, "change": delta, "unit": unit, "days": days, "per_day_change": per_day_change, "additives": add_rows, "note": ""})
+            
         plan_total_ml = 0.0
         for _r in tank_rows:
+            # Sum only the selected additives for the total
             for _a in (_r.get("additives") or []):
-                try: plan_total_ml += float(_a.get("total_ml") or 0)
-                except Exception: pass
+                if _a.get("selected"):
+                    try: plan_total_ml += float(_a.get("total_ml") or 0)
+                    except Exception: pass
         grand_total_ml += plan_total_ml
         plans.append({"tank": t, "latest_taken": latest_taken, "eff_vol_l": eff_vol_l, "net_pct": net_pct, "rows": tank_rows, "total_ml": plan_total_ml})
     db.close()
