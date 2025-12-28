@@ -33,8 +33,8 @@ def fmt2(v: Any) -> str:
         fv = float(v)
     except Exception: return str(v)
     
-    # Updated logic for 4 decimal places
-    s = f"{fv:.4f}" 
+    # UPDATED: 2 decimal places standard
+    s = f"{fv:.2f}" 
     if "." in s:
         s = s.rstrip("0").rstrip(".")
     return s
