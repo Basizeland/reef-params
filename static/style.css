@@ -1,25 +1,69 @@
-/* App overrides that sit on top of Bootstrap */
-
-:root{
-  --reef-bg: #f6f8fb;
+:root {
+    --reef-navy: #042f4b;      /* Deep Navy Header */
+    --reef-cyan: #00d2d3;      /* Primary Action/Cyan */
+    --reef-teal: #1dd1a1;      /* Success/Teal */
+    --reef-bg: #f8f9fa;        /* Light Background */
+    --reef-text: #2d3436;
 }
 
-body.bg-light{
-  background: var(--reef-bg) !important;
+body {
+    background-color: var(--reef-bg);
+    color: var(--reef-text);
+    font-family: 'Inter', -apple-system, sans-serif;
 }
 
-/* Make buttons a bit more "pill" like for the app */
-.btn{
-  border-radius: 14px;
-  font-weight: 600;
+/* Header & Navbar */
+.navbar {
+    background-color: var(--reef-navy) !important;
+    padding: 0.8rem 1rem;
+    border-bottom: 3px solid var(--reef-cyan);
 }
 
-/* Dashboard cards already have custom css in /static/dashboard.css, but keep sane defaults */
-.card{
-  border-radius: 18px;
+.navbar-brand {
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: white !important;
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
-/* Keep forms readable on wide screens */
-.form-control, .form-select{
-  border-radius: 14px;
+.navbar-brand span {
+    color: var(--reef-cyan);
 }
+
+/* Brand Button Styles */
+.btn-primary {
+    background-color: var(--reef-cyan);
+    border-color: var(--reef-cyan);
+    color: var(--reef-navy);
+    font-weight: 600;
+}
+
+.btn-primary:hover {
+    background-color: #00b8b9;
+    border-color: #00b8b9;
+    color: white;
+}
+
+.btn-success {
+    background-color: var(--reef-teal);
+    border-color: var(--reef-teal);
+}
+
+/* Card Improvements */
+.card {
+    border: none;
+    border-radius: 12px;
+    transition: transform 0.2s ease;
+}
+
+.card-header {
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+    font-weight: 700;
+    color: var(--reef-navy);
+}
+
+/* Latest Reading "Glow" */
+.border-danger-subtle { border-left: 5px solid #ff7675 !important; }
+.border-success-subtle { border-left: 5px solid var(--reef-teal) !important; }
