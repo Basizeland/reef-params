@@ -64,7 +64,16 @@
           {% endif %}
           
           <div class="text-muted mt-3 small">
-            Tank: {{ result.tank.name }}{% if profiles.get(result.tank.id) %} (net {{ profiles.get(result.tank.id).net_percent or 100 }}%){% endif %}<br/>
+            Tank: {{ result.tank.name }}
+            
+            {% set prof = profiles.get(result.tank.id) %}
+            {% set tv = prof.volume_l if prof and prof.volume_l is not none else result.tank.volume_l %}
+            {% set np = prof.net_percent if prof and prof.net_percent is not none else 100 %}
+            {% if tv %}
+               (volume {{ (tv * np / 100)|round|int }} L)
+            {% endif %}
+            
+            <br/>
             Additive: {{ result.additive.name }} — strength {{ result.additive.strength }} {{ result.additive.unit }}
           </div>
         {% else %}
