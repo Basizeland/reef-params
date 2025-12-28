@@ -53,8 +53,9 @@ def fmt2(v: Any) -> str:
     if v is None: return ""
     try:
         if isinstance(v, bool): return "1" if v else "0"
+        if isinstance(v, int): return str(v)
         fv = float(v)
-        s = f"{fv:.2f}" 
+        s = f"{fv:.2f}"
         return s.rstrip("0").rstrip(".") if "." in s else s
     except: return str(v)
 
@@ -74,6 +75,11 @@ def time_ago(v: Any) -> str:
 
 templates.env.filters.update({"fmt2": fmt2, "dtfmt": dtfmt, "time_ago": time_ago, "tojson": lambda v: json.dumps(v, default=str)})
 
+def _finalize(v: Any) -> Any:
+    if isinstance(v, float): return fmt2(v)
+    return v
+templates.env.finalize = _finalize
+
 # --- Database Core Helpers ---
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -86,9 +92,6 @@ def one(db, sql, params=()): return db.execute(sql, params).fetchone()
 def row_get(row, key, default=None):
     try: return row[key] if row and key in row.keys() else default
     except: return default
-
-def table_exists(db, name):
-    return one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)) is not None
 
 def to_float(v: Any) -> Optional[float]:
     try: return float(str(v).replace(",", ".")) if v is not None else None
@@ -127,7 +130,7 @@ def get_latest_per_parameter(db, tank_id):
             latest_map[r["name"]] = {"value": r["value"], "taken_at": parse_dt_any(r["taken_at"])}
     return latest_map
 
-# --- Database Initialization ---
+# --- DB INIT ---
 def init_db():
     db = get_db(); cur = db.cursor()
     cur.executescript('''
@@ -153,7 +156,8 @@ def init_db():
 
 init_db()
 
-# --- Main Dashboard ---
+# --- ROUTES ---
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db(); tanks = q(db, "SELECT * FROM tanks ORDER BY name"); tank_cards = []
@@ -167,21 +171,31 @@ def dashboard(request: Request):
         tank_cards.append({"tank": dict(t), "latest": latest, "readings": readings})
     db.close(); return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards})
 
-# --- Tank Detail & History ---
+@app.get("/tanks/new", response_class=HTMLResponse)
+def tank_new_form(request: Request):
+    return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": None})
+
+@app.post("/tanks/new")
+def tank_new(name: str = Form(...), volume_l: float = Form(None)):
+    db = get_db(); cur = db.cursor()
+    cur.execute("INSERT INTO tanks (name, volume_l) VALUES (?,?)", (name, volume_l))
+    tid = cur.lastrowid
+    cur.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?,?,100)", (tid, volume_l))
+    db.commit(); db.close(); return RedirectResponse(f"/tanks/{tid}", status_code=303)
+
 @app.get("/tanks/{tank_id}", response_class=HTMLResponse)
 def tank_detail(request: Request, tank_id: int):
     db = get_db(); tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank: return RedirectResponse("/", status_code=303)
-    samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
-    for r in samples_rows:
+    for r in q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,)):
         d = dict(r); d["taken_at"] = parse_dt_any(d["taken_at"]); samples.append(d)
     
     latest_vals = get_latest_per_parameter(db, tank_id)
     targets = q(db, "SELECT * FROM targets WHERE tank_id=?", (tank_id,))
     target_map = {t["parameter"]: t for t in targets}
-    
     params = list_parameters(db)
+    
     selected_pid = request.query_params.get("parameter") or (params[0]["name"] if params else "")
     series = []
     rows = q(db, """
@@ -204,17 +218,16 @@ def tank_detail(request: Request, tank_id: int):
         "selected_parameter_id": selected_pid, "series": series, "chart_targets": [target_map.get(selected_pid)] if selected_pid in target_map else []
     })
 
-# --- Excel Import Center ---
+# --- EXCEL IMPORT CENTER ---
 @app.get("/admin/import", response_class=HTMLResponse)
-def import_page(request: Request):
-    return templates.TemplateResponse("import_manager.html", {"request": request})
+def import_page(request: Request): return templates.TemplateResponse("import_manager.html", {"request": request})
 
 @app.get("/admin/download-template")
 def download_template():
     db = get_db(); params = list_parameters(db); db.close()
     cols = ["Tank Name", "Volume (L)", "Date (YYYY-MM-DD)", "Notes"] + [p["name"] for p in params]
     df = pd.DataFrame(columns=cols)
-    df.loc[0] = ["My Display Tank", 450, date.today().isoformat(), "Weekly log example"] + [None]*len(params)
+    df.loc[0] = ["Example Tank", 450, date.today().isoformat(), "Sample log"] + [None]*len(params)
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Readings')
@@ -227,76 +240,91 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
     try:
         df = pd.read_excel(BytesIO(await file.read()))
         cur = db.cursor()
+        pdefs = list_parameters(db)
         for _, row in df.iterrows():
             t_name = str(row.get("Tank Name", "Unknown"))
             tank = one(db, "SELECT id FROM tanks WHERE name=?", (t_name,))
             if not tank:
                 cur.execute("INSERT INTO tanks (name, volume_l) VALUES (?,?)", (t_name, to_float(row.get("Volume (L)", 0))))
                 tid = cur.lastrowid; stats["tanks"] += 1
-                cur.execute("INSERT INTO tank_profiles (tank_id, volume_l) VALUES (?,?)", (tid, to_float(row.get("Volume (L)", 0))))
+                cur.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?,?,100)", (tid, to_float(row.get("Volume (L)", 0))))
             else: tid = tank["id"]
             
-            dt = str(row.get("Date (YYYY-MM-DD)", datetime.now().isoformat()))
-            cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?,?,?)", (tid, dt, str(row.get("Notes", ""))))
+            dt_str = str(row.get("Date (YYYY-MM-DD)", datetime.now().isoformat()))
+            cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?,?,?)", (tid, dt_str, str(row.get("Notes", ""))))
             sid = cur.lastrowid; stats["samples"] += 1
             
-            for p in list_parameters(db):
+            for p in pdefs:
                 val = to_float(row.get(p["name"]))
                 if val is not None: insert_sample_reading(db, sid, p["name"], val)
         db.commit()
-        return templates.TemplateResponse("import_manager.html", {"request": request, "success": f"Imported {stats['samples']} entries."})
+        return templates.TemplateResponse("import_manager.html", {"request": request, "success": f"Imported {stats['samples']} samples."})
     except Exception as e: return templates.TemplateResponse("import_manager.html", {"request": request, "error": str(e)})
     finally: db.close()
 
 # --- Dose Calculator ---
 @app.get("/tools/calculators", response_class=HTMLResponse)
 def calculators(request: Request):
-    db = get_db(); tanks = q(db, "SELECT * FROM tanks"); adds = q(db, "SELECT * FROM additives WHERE active=1"); profs = {p["tank_id"]: p for p in q(db, "SELECT * FROM tank_profiles")}
+    db = get_db(); tanks = q(db, "SELECT * FROM tanks ORDER BY name"); adds = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    profs = {p["tank_id"]: p for p in q(db, "SELECT * FROM tank_profiles")}
     db.close(); return templates.TemplateResponse("calculators.html", {"request": request, "tanks": tanks, "additives": adds, "profiles": profs})
 
 @app.post("/tools/calculators")
 def calculators_post(request: Request, tank_id: int = Form(...), additive_id: int = Form(...), desired_change: float = Form(...)):
     db = get_db(); tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,)); additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
     prof = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-    vol = (row_get(prof, "volume_l") or 0) * (row_get(prof, "net_percent", 100) / 100.0)
-    dose = (desired_change / additive["strength"]) * (vol / 100.0) if additive["strength"] else 0
-    res = {"dose_ml": round(dose, 2), "unit": additive["unit"], "tank": tank, "additive": additive, "desired_change": desired_change}
-    tanks = q(db, "SELECT * FROM tanks"); adds = q(db, "SELECT * FROM additives WHERE active=1"); profs = {p["tank_id"]: p for p in q(db, "SELECT * FROM tank_profiles")}
+    vol = (row_get(prof, "volume_l") or row_get(tank, "volume_l") or 0) * (row_get(prof, "net_percent", 100) / 100.0)
+    
+    strength = additive["strength"]
+    dose_ml = (desired_change / strength) * (vol / 100.0) if strength else 0
+    
+    # Calculate Split Dosing if safety limit exists
+    pdef = one(db, "SELECT max_daily_change, unit FROM parameter_defs WHERE name=?", (additive["parameter"],))
+    mdc = row_get(pdef, "max_daily_change")
+    days, daily_ml = 1, dose_ml
+    if mdc and desired_change > mdc:
+        days = int(math.ceil(desired_change / mdc))
+        daily_ml = dose_ml / days
+
+    res = {"dose_ml": round(dose_ml, 2), "days": days, "daily_ml": round(daily_ml, 2), "unit": row_get(pdef, "unit") or additive["unit"], "tank": tank, "additive": additive, "desired_change": desired_change}
+    tanks = q(db, "SELECT * FROM tanks ORDER BY name"); adds = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    profs = {p["tank_id"]: p for p in q(db, "SELECT * FROM tank_profiles")}
     db.close(); return templates.TemplateResponse("calculators.html", {"request": request, "result": res, "tanks": tanks, "additives": adds, "profiles": profs, "selected": {"tank_id": tank_id, "additive_id": additive_id}})
 
 # --- Dose Plan ---
 @app.get("/tools/dose-plan", response_class=HTMLResponse)
 def dose_plan(request: Request):
     db = get_db(); today = date.today(); plans = []; grand_total_ml = 0.0
-    
     chk_rows = q(db, "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date >= ?", (today.isoformat(),))
     check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): r["checked"] for r in chk_rows}
 
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
-    for t in tanks:
+    for t in q(db, "SELECT * FROM tanks ORDER BY name"):
         prof = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (t["id"],))
         vol = (row_get(prof, "volume_l") or row_get(t, "volume_l") or 0) * (row_get(prof, "net_percent", 100) / 100.0)
         latest_map = get_latest_per_parameter(db, t["id"])
-        targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))
         tank_rows = []
         
-        for tr in targets:
+        for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],)):
             pname = tr["parameter"]; cur_val = latest_map.get(pname, {}).get("value")
-            target_val = ((tr["target_low"] or 0) + (tr["target_high"] or 0)) / 2.0
+            target_val = ((row_get(tr, "target_low") or 0) + (row_get(tr, "target_high") or 0)) / 2.0
+            
             if cur_val is not None and cur_val < target_val:
                 delta = target_val - cur_val
-                adds = q(db, "SELECT * FROM additives WHERE parameter=? AND active=1", (pname,))
+                pdef = one(db, "SELECT max_daily_change FROM parameter_defs WHERE name=?", (pname,))
+                mdc = row_get(pdef, "max_daily_change")
+                days = int(math.ceil(delta / mdc)) if mdc and delta > mdc else 1
+                
                 add_rows = []
-                
-                # Check for preferred additive
-                pref = one(db, "SELECT dl.additive_id FROM dose_logs dl JOIN additives a ON a.id = dl.additive_id WHERE dl.tank_id=? AND a.parameter=? ORDER BY dl.logged_at DESC LIMIT 1", (t["id"], pname))
+                pref = one(db, "SELECT additive_id FROM dose_logs WHERE tank_id=? AND reason LIKE ? ORDER BY logged_at DESC LIMIT 1", (t["id"], f"%{pname}%"))
                 pref_id = pref["additive_id"] if pref else None
-                
-                for a in adds:
+
+                for a in q(db, "SELECT * FROM additives WHERE parameter=? AND active=1", (pname,)):
                     total_ml = (delta / a["strength"]) * (vol / 100.0) if a["strength"] else 0
-                    schedule = [{"day": 1, "date": today.isoformat(), "ml": total_ml, "checked": check_map.get((t["id"], pname, a["id"], today.isoformat()), 0)}]
-                    is_sel = (a["id"] == pref_id) or (not pref_id and not add_rows)
-                    add_rows.append({"additive_id": a["id"], "additive_name": a["name"], "total_ml": total_ml, "schedule": schedule, "selected": is_sel})
+                    schedule = []
+                    for i in range(days):
+                        d = (today + timedelta(days=i)).isoformat()
+                        schedule.append({"day": i+1, "date": d, "ml": total_ml/days, "checked": check_map.get((t["id"], pname, a["id"], d), 0)})
+                    add_rows.append({"additive_id": a["id"], "additive_name": a["name"], "total_ml": total_ml, "schedule": schedule, "selected": (a["id"] == pref_id or not add_rows)})
                 
                 tank_rows.append({"parameter": pname, "latest": cur_val, "target": target_val, "unit": tr["unit"], "additives": add_rows})
         
@@ -304,8 +332,7 @@ def dose_plan(request: Request):
         grand_total_ml += tank_total
         plans.append({"tank": dict(t), "eff_vol_l": vol, "rows": tank_rows, "total_ml": tank_total})
     
-    db.close()
-    return templates.TemplateResponse("dose_plan.html", {"request": request, "plans": plans, "grand_total_ml": grand_total_ml})
+    db.close(); return templates.TemplateResponse("dose_plan.html", {"request": request, "plans": plans, "grand_total_ml": grand_total_ml})
 
 @app.post("/tools/dose-plan/check")
 async def dose_plan_check(request: Request):
@@ -313,26 +340,26 @@ async def dose_plan_check(request: Request):
     tid, aid, param, p_date, ml, checked = form.get("tank_id"), form.get("additive_id"), form.get("parameter"), form.get("planned_date"), form.get("amount_ml"), form.get("checked")
     db.execute("INSERT INTO dose_plan_checks (tank_id, parameter, additive_id, planned_date, checked) VALUES (?,?,?,?,?) ON CONFLICT(tank_id, parameter, additive_id, planned_date) DO UPDATE SET checked=excluded.checked", (tid, param, aid, p_date, checked))
     if int(checked):
-        db.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?,?,?,?,?)", (tid, aid, ml, f"Dose plan: {param}", datetime.now().isoformat()))
+        db.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?,?,?,?,?)", (tid, aid, ml, f"Dose plan: {param} ({p_date})", f"{p_date}T00:00:00"))
     db.commit(); db.close(); return {"ok": True}
 
-# --- Generic Management & CRUD ---
-@app.post("/tanks/{tank_id}/delete")
-def delete_tank(tank_id: int):
-    db = get_db(); db.execute("DELETE FROM tanks WHERE id=?", (tank_id,)); db.commit(); db.close(); return RedirectResponse("/", status_code=303)
-
+# --- Management & CRUD (Restored) ---
 @app.get("/additives", response_class=HTMLResponse)
 def additives_list(request: Request):
     db = get_db(); rows = q(db, "SELECT * FROM additives ORDER BY parameter, name"); db.close()
     return templates.TemplateResponse("additives.html", {"request": request, "additives": rows})
 
+@app.get("/additives/{additive_id}/edit", response_class=HTMLResponse)
+def additive_edit(request: Request, additive_id: int):
+    db = get_db(); additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
+    params = list_parameters(db); db.close()
+    return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": additive, "parameters": params})
+
 @app.post("/additives/save")
-def additive_save(additive_id: Optional[str] = Form(None), name: str = Form(...), parameter: str = Form(...), strength: float = Form(...), unit: str = Form(...), active: Optional[str] = Form(None)):
+def additive_save(additive_id: str = Form(None), name: str = Form(...), parameter: str = Form(...), strength: float = Form(...), unit: str = Form(...), active: str = Form(None)):
     db = get_db(); is_active = 1 if active else 0
-    if additive_id:
-        db.execute("UPDATE additives SET name=?, parameter=?, strength=?, unit=?, active=? WHERE id=?", (name, parameter, strength, unit, is_active, additive_id))
-    else:
-        db.execute("INSERT INTO additives (name, parameter, strength, unit, active) VALUES (?,?,?,?,?)", (name, parameter, strength, unit, is_active))
+    if additive_id: db.execute("UPDATE additives SET name=?, parameter=?, strength=?, unit=?, active=? WHERE id=?", (name, parameter, strength, unit, is_active, additive_id))
+    else: db.execute("INSERT INTO additives (name, parameter, strength, unit, active) VALUES (?,?,?,?,?)", (name, parameter, strength, unit, is_active))
     db.commit(); db.close(); return RedirectResponse("/additives", status_code=303)
 
 @app.get("/settings/parameters", response_class=HTMLResponse)
@@ -340,16 +367,31 @@ def parameters_settings(request: Request):
     db = get_db(); rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name"); db.close()
     return templates.TemplateResponse("parameters.html", {"request": request, "parameters": rows})
 
-@app.post("/tanks/new")
-async def tank_new(name: str = Form(...), volume_l: float = Form(None)):
-    db = get_db(); cur = db.cursor()
-    cur.execute("INSERT INTO tanks (name, volume_l) VALUES (?,?)", (name, volume_l))
-    tid = cur.lastrowid
-    db.execute("INSERT INTO tank_profiles (tank_id, volume_l) VALUES (?,?)", (tid, volume_l))
-    db.commit(); db.close(); return RedirectResponse(f"/tanks/{tid}", status_code=303)
+@app.get("/tanks/{tank_id}/profile", response_class=HTMLResponse)
+def edit_tank_profile(request: Request, tank_id: int):
+    db = get_db(); tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    prof = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    db.close(); return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": dict(tank), "profile": prof})
+
+@app.post("/tanks/{tank_id}/profile")
+async def save_tank_profile(tank_id: int, name: str = Form(...), volume_l: float = Form(...), net_percent: float = Form(100)):
+    db = get_db()
+    db.execute("UPDATE tanks SET name=?, volume_l=? WHERE id=?", (name, volume_l, tank_id))
+    db.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?,?,?) ON CONFLICT(tank_id) DO UPDATE SET volume_l=excluded.volume_l, net_percent=excluded.net_percent", (tank_id, volume_l, net_percent))
+    db.commit(); db.close(); return RedirectResponse(f"/tanks/{tank_id}", status_code=303)
+
+@app.post("/tanks/{tank_id}/delete")
+def delete_tank(tank_id: int):
+    db = get_db(); db.execute("DELETE FROM tanks WHERE id=?", (tank_id,)); db.commit(); db.close(); return RedirectResponse("/", status_code=303)
+
+@app.get("/tanks/{tank_id}/add", response_class=HTMLResponse)
+def add_sample_form(request: Request, tank_id: int):
+    db = get_db(); tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    params = get_active_param_defs(db); db.close()
+    return templates.TemplateResponse("add_sample.html", {"request": request, "tank": tank, "parameters": params})
 
 @app.post("/tanks/{tank_id}/add")
-async def add_sample(request: Request, tank_id: int):
+async def add_sample_save(request: Request, tank_id: int):
     form = await request.form(); taken_at = form.get("taken_at") or datetime.now().isoformat()
     db = get_db(); cur = db.cursor()
     cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?,?,?)", (tank_id, taken_at, form.get("notes")))
@@ -357,6 +399,26 @@ async def add_sample(request: Request, tank_id: int):
     for p in list_parameters(db):
         val = to_float(form.get(f"value_{p['id']}"))
         if val is not None: insert_sample_reading(db, sid, p["name"], val)
+    db.commit(); db.close(); return RedirectResponse(f"/tanks/{tank_id}", status_code=303)
+
+@app.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
+def edit_targets_route(request: Request, tank_id: int):
+    db = get_db(); tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    params = list_parameters(db); existing = {t["parameter"]: t for t in q(db, "SELECT * FROM targets WHERE tank_id=?", (tank_id,))}
+    rows = []
+    for p in params:
+        t = existing.get(p["name"])
+        rows.append({"parameter": p, "key": slug_key(p["name"]), "target_low": row_get(t, "target_low") or row_get(p, "default_target_low"), "target_high": row_get(t, "target_high") or row_get(p, "default_target_high"), "enabled": row_get(t, "enabled", 1)})
+    db.close(); return templates.TemplateResponse("edit_targets.html", {"request": request, "tank": tank, "rows": rows})
+
+@app.post("/tanks/{tank_id}/targets")
+async def save_targets_route(request: Request, tank_id: int):
+    form = await request.form(); db = get_db()
+    for p in list_parameters(db):
+        key = slug_key(p["name"])
+        low, high = to_float(form.get(f"target_low_{key}")), to_float(form.get(f"target_high_{key}"))
+        enabled = 1 if form.get(f"enabled_{key}") else 0
+        db.execute("INSERT INTO targets (tank_id, parameter, target_low, target_high, enabled, unit) VALUES (?,?,?,?,?,?) ON CONFLICT(tank_id, parameter) DO UPDATE SET target_low=excluded.target_low, target_high=excluded.target_high, enabled=excluded.enabled", (tank_id, p["name"], low, high, enabled, p["unit"]))
     db.commit(); db.close(); return RedirectResponse(f"/tanks/{tank_id}", status_code=303)
 
 if __name__ == "__main__":
