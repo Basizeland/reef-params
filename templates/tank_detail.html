@@ -118,28 +118,55 @@
 
 <script>
   document.addEventListener('DOMContentLoaded', function() {
+      // 1. Get Data
       const seriesData = {{ series|tojson }};
       const targets = {{ chart_targets|tojson }};
-      
       const ctx = document.getElementById('historyChart');
 
-      // 1. Data Safety Check
+      console.log("Chart Data Received:", seriesData); // Check your browser console (F12) to see this
+
+      // 2. Safety Check: Is there data?
       if (!seriesData || seriesData.length === 0) {
-          if(ctx) {
-             ctx.getContext('2d').fillText("No data available for this parameter", 10, 50);
+          if (ctx) {
+             const msg = "No history data found for this parameter.";
+             const c = ctx.getContext('2d');
+             c.font = "14px sans-serif";
+             c.fillStyle = "#6c757d";
+             c.textAlign = "center";
+             c.fillText(msg, ctx.width / 2, ctx.height / 2);
           }
           return; 
       }
 
+      // 3. Robust Date Parsing Helper
+      // Handles ISO (2025-12-28) and EU/AU (28/12/2025) formats
+      function parseDate(dateStr) {
+          if (!dateStr) return new Date();
+          
+          // Try standard parsing first
+          let d = new Date(dateStr);
+          if (!isNaN(d.getTime())) return d;
+
+          // If invalid, try manually parsing DD/MM/YYYY or DD-MM-YYYY
+          // Assumes format: DD/MM/YYYY HH:MM...
+          const parts = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{1,2}))?/);
+          if (parts) {
+              // parts[1]=Day, parts[2]=Month, parts[3]=Year, parts[4]=Hour, parts[5]=Min
+              return new Date(parts[3], parts[2] - 1, parts[1], parts[4] || 0, parts[5] || 0);
+          }
+          return new Date(); // Fallback
+      }
+
       const labels = seriesData.map(d => {
-        const date = new Date(d.x);
+        const date = parseDate(d.x);
         return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       });
+      
       const dataPoints = seriesData.map(d => d.y);
 
-      // 2. Prepare Annotations (Target Lines)
+      // 4. Prepare Annotations (Target Lines)
       const annotations = {};
-      if (targets.length > 0) {
+      if (targets && targets.length > 0) {
           const t = targets[0]; 
           if (t.low !== null) {
               annotations.lineLow = {
@@ -157,16 +184,13 @@
           }
       }
 
-      // 3. Configure Plugins safely
+      // 5. Configure Plugins safely
       const chartPlugins = {
         legend: { display: false }
       };
 
-      // Only add annotation config if the plugin is actually registered in Chart.js
-      if (typeof window['chartjs-plugin-annotation'] !== 'undefined' || Chart.registry.plugins.get('annotation')) {
+      if (typeof window['chartjs-plugin-annotation'] !== 'undefined' || (Chart.registry && Chart.registry.plugins.get('annotation'))) {
           chartPlugins.annotation = { annotations: annotations };
-      } else {
-          console.warn("ChartJS Annotation plugin not found. Target lines will be hidden.");
       }
 
       new Chart(ctx, {
@@ -174,7 +198,7 @@
         data: {
           labels: labels,
           datasets: [{
-            label: '{{ selected_parameter_id }}',
+            label: 'Reading',
             data: dataPoints,
             borderColor: '#0d6efd',
             backgroundColor: 'rgba(13, 110, 253, 0.1)',
