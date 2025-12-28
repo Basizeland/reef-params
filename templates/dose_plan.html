@@ -22,7 +22,7 @@
             <a class="btn btn-sm btn-outline-secondary" href="/tanks/{{ plan.tank['id'] }}">View Tank</a>
           </div>
           <div class="text-secondary small">
-            <span class="me-2">Vol: {{ plan.eff_volume_l|default(0)|round(0) }} L</span>
+            <span class="me-2">Vol: {{ plan.eff_vol_l|default(0)|round(0) }} L</span>
             <span class="badge bg-primary-subtle text-primary-emphasis rounded-pill">Total: {{ plan.total_ml|fmt2 }} ml</span>
           </div>
         </div>
@@ -173,7 +173,6 @@
     const amountMl = input.dataset.amountMl;
     const checked = input.checked ? 1 : 0;
 
-    // Visual Feedback (optional): disable input briefly
     input.disabled = true;
 
     try{
@@ -193,7 +192,6 @@
         throw new Error(await res.text());
       }
     }catch(e){
-      // Revert UI state on error
       input.checked = !input.checked;
       alert("Failed to update dose check. " + (e && e.message ? e.message : ""));
     } finally {
