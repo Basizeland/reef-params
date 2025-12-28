@@ -1,0 +1,25 @@
+/* App overrides that sit on top of Bootstrap */
+
+:root{
+  --reef-bg: #f6f8fb;
+}
+
+body.bg-light{
+  background: var(--reef-bg) !important;
+}
+
+/* Make buttons a bit more "pill" like for the app */
+.btn{
+  border-radius: 14px;
+  font-weight: 600;
+}
+
+/* Dashboard cards already have custom css in /static/dashboard.css, but keep sane defaults */
+.card{
+  border-radius: 18px;
+}
+
+/* Keep forms readable on wide screens */
+.form-control, .form-select{
+  border-radius: 14px;
+}

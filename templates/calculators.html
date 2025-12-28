@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-end justify-content-between mb-3">
+  <div>
+    <h1 class="h4 mb-1">Dose calculator</h1>
+    <div class="text-muted">Estimate mL needed to change a parameter by a target amount</div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <form method="post" action="/tools/calculators">
+          <div class="mb-3">
+            <label class="form-label">Tank</label>
+            <select class="form-select" name="tank_id" required>
+              {% for t in tanks %}
+                <option value="{{ t.id }}" {% if selected and selected.tank_id==t.id %}selected{% endif %}>{{ t.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Additive</label>
+            <select class="form-select" name="additive_id" required>
+              {% for a in additives %}
+                <option value="{{ a.id }}" {% if selected and selected.additive_id==a.id %}selected{% endif %}>{{ a.name }} ({{ a.parameter }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Desired change</label>
+            <input class="form-control" name="desired_change" type="number" step="any" required value="{{ result.desired_change if result and result.desired_change is not none else '' }}" />
+            <div class="form-text">In the additive unit (e.g. dKH, ppm)</div>
+          </div>
+
+          <button class="btn btn-primary" type="submit">Calculate</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h6">Result</h2>
+        {% if result and result.error %}
+          <div class="alert alert-warning mb-0">{{ result.error }}</div>
+        {% elif result and result.dose_ml is not none %}
+          <div class="display-6">{{ result.dose_ml }} mL</div>
+          {% if result.days and result.days > 1 %}
+            <div class="alert alert-info mt-2 mb-0">
+              Split over <strong>{{ result.days }}</strong> days: <strong>{{ result.daily_ml }}</strong> mL/day 
+              (≈ {{ result.daily_change }} {{ result.unit }}/day)
+            </div>
+          {% endif %}
+          <div class="text-muted">
+            Tank: {{ result.tank.name }}{% if profiles.get(result.tank.id) %} (net {{ profiles.get(result.tank.id).net_percent or 100 }}%){% endif %}<br/>
+            Additive: {{ result.additive.name }} — strength {{ result.additive.strength }} {{ result.additive.unit }}
+          </div>
+        {% else %}
+          <div class="text-muted">Fill in the form and calculate.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

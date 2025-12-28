@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <h2 class="h5 mb-1">{% if kit %}Edit test kit{% else %}New test kit{% endif %}</h2>
+        <div class="text-muted small">Optional metadata for the kit you used to measure a parameter.</div>
+      </div>
+      <a class="btn btn-outline-secondary" href="/settings/test-kits">Back</a>
+    </div>
+
+    <form method="post" action="/settings/test-kits/save" class="mt-3">
+      {% if kit %}
+        <input type="hidden" name="kit_id" value="{{ kit.id }}" />
+      {% endif %}
+
+      <div class="row g-3">
+        <div class="col-12 col-md-6">
+          <label class="form-label">Kit name</label>
+          <input class="form-control" name="name" value="{{ kit.name if kit else '' }}" required />
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">Parameter</label>
+          <select class="form-select" name="parameter" required>
+            {% for p in parameters %}
+              <option value="{{ p.name }}" {% if kit and kit.parameter == p.name %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">Output unit (optional)</label>
+          <input class="form-control" name="unit" value="{{ kit.unit if kit and kit.unit else '' }}" placeholder="e.g. dKH, ppm" />
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">Resolution (optional)</label>
+          <input class="form-control" name="resolution" type="number" step="any" value="{{ kit.resolution if kit and kit.resolution is not none else '' }}" />
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">Active</label>
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" name="active" id="active" {% if not kit or kit.active %}checked{% endif %}>
+            <label class="form-check-label" for="active">Use in dropdown</label>
+          </div>
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">Min value (optional)</label>
+          <input class="form-control" name="min_value" type="number" step="any" value="{{ kit.min_value if kit and kit.min_value is not none else '' }}" />
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">Max value (optional)</label>
+          <input class="form-control" name="max_value" type="number" step="any" value="{{ kit.max_value if kit and kit.max_value is not none else '' }}" />
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" name="notes" rows="3">{{ kit.notes if kit and kit.notes else '' }}</textarea>
+        </div>
+
+        <div class="col-12 d-flex gap-2">
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-outline-secondary" href="/settings/test-kits">Cancel</a>
+        </div>
+      </div>
+    </form>
+
+    {% if kit %}
+    <form class="mt-3" method="post" action="/settings/test-kits/{{ kit.id }}/delete" onsubmit="return confirm('Delete this kit?')">
+      <button class="btn btn-outline-danger" type="submit">Delete test kit</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block content %}
+<a class="btn btn-outline-secondary mb-3" href="/settings/presets">Back</a>
+
+{% if not preset %}
+  <div class="alert alert-warning">Preset not found.</div>
+{% else %}
+<div class="d-flex align-items-start justify-content-between mb-3">
+  <div>
+    <h1 class="h4 mb-1">{{ preset.name }}</h1>
+    <div class="text-muted">{{ preset.description or "" }}</div>
+  </div>
+  <form method="post" action="/settings/presets/{{ preset.id }}/apply">
+    <button class="btn btn-primary" type="submit">Apply preset</button>
+  </form>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <h2 class="h6">Add item</h2>
+    <form method="post" action="/settings/presets/{{ preset.id }}/items/create" class="row g-2 align-items-end">
+      <div class="col-12 col-md-4">
+        <label class="form-label">Additive name</label>
+        <input class="form-control" name="additive_name" required placeholder="e.g. Alk Buffer" />
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">Parameter</label>
+        <select class="form-select" name="parameter" required>
+          {% for p in parameters %}
+            <option value="{{ p.name }}">{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">Strength</label>
+        <input class="form-control" name="strength" type="number" step="any" placeholder="X" />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">Unit</label>
+        <input class="form-control" name="unit" placeholder="dKH/ppm" />
+      </div>
+      <div class="col-12 col-md-1">
+        <button class="btn btn-outline-primary w-100" type="submit">Add</button>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">Max daily (mL)</label>
+        <input class="form-control" name="max_daily" type="number" step="any" />
+      </div>
+      <div class="col-12 col-md-9">
+        <label class="form-label">Notes</label>
+        <input class="form-control" name="notes" />
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h2 class="h6">Items</h2>
+
+    {% if not items %}
+      <div class="text-muted">No items yet.</div>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Additive name</th>
+            <th>Parameter</th>
+            <th class="text-end">Strength</th>
+            <th>Unit</th>
+            <th class="text-end">Max daily</th>
+            <th>Notes</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for it in items %}
+          <tr>
+            <form method="post" action="/settings/presets/{{ preset.id }}/items/{{ it.id }}/save">
+              <td><input class="form-control form-control-sm" name="additive_name" value="{{ it.additive_name }}" /></td>
+              <td>
+                <select class="form-select form-select-sm" name="parameter">
+                  {% for p in parameters %}
+                    <option value="{{ p.name }}" {% if it.parameter==p.name %}selected{% endif %}>{{ p.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td class="text-end"><input class="form-control form-control-sm text-end" name="strength" type="number" step="any" value="{{ it.strength if it.strength is not none else '' }}" /></td>
+              <td><input class="form-control form-control-sm" name="unit" value="{{ it.unit or '' }}" /></td>
+              <td class="text-end"><input class="form-control form-control-sm text-end" name="max_daily" type="number" step="any" value="{{ it.max_daily if it.max_daily is not none else '' }}" /></td>
+              <td><input class="form-control form-control-sm" name="notes" value="{{ it.notes or '' }}" /></td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+              </td>
+            </form>
+          </tr>
+          <tr>
+            <td colspan="7" class="text-end">
+              <form method="post" action="/settings/presets/{{ preset.id }}/items/{{ it.id }}/delete" onsubmit="return confirm('Delete this preset item?')" class="d-inline">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

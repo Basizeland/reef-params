@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-end justify-content-between mb-3">
+  <div>
+    <h1 class="h4 mb-1">Test kits</h1>
+    <div class="text-muted">Used as optional metadata when logging readings</div>
+  </div>
+  <a class="btn btn-primary" href="/settings/test-kits/new">New test kit</a>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            <th>Name</th>
+            <th>Unit</th>
+            <th class="text-end">Resolution</th>
+            <th>Active</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for k in kits %}
+          <tr>
+            <td class="fw-semibold">{{ k.parameter }}</td>
+            <td>{{ k.name }}</td>
+            <td class="text-muted">{{ k.unit or "" }}</td>
+            <td class="text-end">{{ k.resolution if k.resolution is not none else "—" }}</td>
+            <td>{% if k.active %}Yes{% else %}No{% endif %}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-secondary" href="/settings/test-kits/{{ k.id }}/edit">Edit</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

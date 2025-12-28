@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Add Reading{% if tank %} — {{ tank.name }}{% endif %}</h2>
+
+<form method="post" action="/tanks/{{ tank_id }}/add">
+  <div class="form-group">
+    <label>Taken at (optional, ISO like 2025-12-27T10:30)</label>
+    <input name="taken_at" placeholder="Leave blank for now">
+  </div>
+
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    {% for p in parameters %}
+      <div style="border:1px solid #ddd; padding:12px; border-radius:10px;">
+        <div style="font-weight:600; margin-bottom:6px;">{{ p.name }}</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input name="value_{{ p.id }}" placeholder="{{ p.unit or '' }}" style="flex:1;">
+          <span style="min-width:42px; opacity:0.7;">{{ p.unit or '' }}</span>
+        </div>
+
+        <div style="margin-top:8px;">
+          <label style="font-size:0.9em; opacity:0.8;">Test kit (optional)</label>
+          <select name="kit_{{ p.id }}" style="width:100%;">
+            <option value="">—</option>
+            {% set pkits = kits_by_param.get(p.name) or [] %}
+            {% for k in pkits %}
+              <option value="{{ k.id }}">{{ k.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="form-group" style="margin-top:12px;">
+    <label>Notes</label>
+    <textarea name="notes" rows="3" style="width:100%;"></textarea>
+  </div>
+
+  <button class="btn" type="submit">Save Reading</button>
+  <a class="btn" href="/tanks/{{ tank_id }}">Cancel</a>
+</form>
+{% endblock %}

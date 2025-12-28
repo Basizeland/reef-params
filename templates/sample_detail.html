@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+  <div>
+    <h1 style="margin:0;">Sample details</h1>
+    <div style="opacity:.75; margin-top:4px;">
+      <a href="/tanks/{{ tank.id }}" style="text-decoration:none; font-weight:800;">{{ tank.name }}</a>
+      &nbsp;•&nbsp;
+<p class="text-muted mb-2">Taken: {{ sample.taken_at|dtfmt }}</p>
+    </div>
+  </div>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a class="btn" href="/tanks/{{ tank.id }}">Back to tank</a>
+<a class="btn btn-sm btn-outline-primary me-2" href="/tanks/{{ tank.id }}/samples/{{ sample.id }}/edit">Edit</a>
+    <form method="post" action="/samples/{{ sample.id }}/delete" onsubmit="return confirm('Delete this sample and all readings?');" style="display:inline;">
+      <button class="btn" type="submit">Delete sample</button>
+    </form>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px; padding:16px;">
+  {% if sample.notes %}
+    <div style="margin-bottom:12px;">
+      <div style="font-weight:800; margin-bottom:6px;">Notes</div>
+      <div style="opacity:.85; white-space:pre-wrap;">{{ sample.notes }}</div>
+    </div>
+  {% endif %}
+
+  <div style="font-weight:800; margin-bottom:10px;">Readings</div>
+  {% if readings and readings|length %}
+    <table>
+      <thead>
+        <tr>
+          <th style="width:45%;">Parameter</th>
+          <th style="width:25%;">Value</th>
+          <th style="width:30%;">Unit</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in readings %}
+          <tr>
+            <td>{{ r.name }}</td>
+            <td>{{ r.value|fmt2 }}</td>
+            <td>{{ r.unit }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div style="opacity:.75;">No readings stored for this sample.</div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container" style="max-width: 900px;">
+  <h3 class="mb-2">Merge duplicate parameters</h3>
+  <div class="text-muted mb-3">
+    If you renamed parameters and ended up with duplicates, this will keep the newest definition (highest ID) and merge the rest into it.
+  </div>
+
+  {% if not dups %}
+    <div class="alert alert-success">No duplicate parameters detected.</div>
+  {% else %}
+    <div class="alert alert-warning">
+      Found {{ dups|length }} duplicate group(s).
+    </div>
+
+    <form method="post" action="/admin/merge-parameters" class="mb-3">
+      <button class="btn btn-danger" type="submit" onclick="return confirm('Merge duplicates now? This will update readings/targets/additives/test kits to the newest parameter and remove the older definitions.');">
+        Merge duplicates
+      </button>
+    </form>
+
+    {% for g in dups %}
+      <div class="card shadow-sm mb-3">
+        <div class="card-body">
+          <div class="fw-semibold">Canonical: {{ g.keep.name }} (id {{ g.keep.id }})</div>
+          <div class="text-muted small mb-2">Will merge and remove:</div>
+          <ul class="mb-0">
+            {% for d in g.drop %}
+              <li>{{ d.name }} (id {{ d.id }})</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

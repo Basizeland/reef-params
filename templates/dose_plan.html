@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+{% macro fmt(v) -%}{{ v|fmt2 }}{%- endmacro %}
+
+<div class="container" style="max-width: 1100px;">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0">Dose plan</h3>
+      <div class="text-muted small">
+        Based on each tank’s most recent test result and the single target you set in Targets.
+      </div>
+    </div>
+    {% if overall_total_ml is defined %}
+      <div class="badge text-bg-light border">
+        Total across tanks: {{ overall_total_ml|fmt2 }} ml
+      </div>
+    {% endif %}
+  </div>
+
+  {% if not plans %}
+    <div class="alert alert-secondary">No tanks / readings / targets found yet.</div>
+  {% endif %}
+
+  {% for plan in plans %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-2">
+          <div>
+            <div class="h5 mb-0">
+              <a class="text-decoration-none" href="/tanks/{{ plan.tank_id }}">{{ plan.tank_name }}</a>
+            </div>
+            <div class="text-muted small">
+              Effective volume: {{ plan.eff_vol_l|fmt2 }} L
+              {% if plan.total_ml is defined %} • Total dose: {{ plan.total_ml|fmt2 }} ml{% endif %}
+            </div>
+          </div>
+        </div>
+
+        {% if plan.rows %}
+          <div class="table-responsive mt-3">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th style="width: 28%;">Additive</th>
+                  <th style="width: 15%;">Parameter</th>
+                  <th style="width: 15%;">Current</th>
+                  <th style="width: 15%;">Target</th>
+                  <th style="width: 27%;">Schedule</th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for a in plan.rows %}
+                <tr>
+                  <td class="fw-semibold">{{ a.additive_name }}</td>
+                  <td>{{ a.parameter }}</td>
+                  <td>{{ fmt(a.current_value) }} {{ a.unit }}</td>
+                  <td>{{ fmt(a.target_value) }} {{ a.unit }}</td>
+                  <td>
+                    <div class="text-muted small">
+                      {{ a.days }} day(s) • {{ fmt(a.total_ml) }} ml total • {{ fmt(a.per_day_ml) }} ml / day
+                      {% if a.max_daily_change is defined and a.max_daily_change is not none %}
+                        • Max daily change: {{ fmt(a.max_daily_change) }} {{ a.unit }}
+                      {% endif %}
+                    </div>
+
+                    {% if a.schedule %}
+                      <div class="d-flex flex-wrap gap-2 mt-2">
+                        {% for d in a.schedule %}
+                          <div class="form-check form-check-inline border rounded px-2 py-1">
+                            <input
+                              class="form-check-input dose-checkbox"
+                              type="checkbox"
+                              id="dose_{{ d.key }}"
+                              data-key="{{ d.key }}"
+                              data-amount-ml="{{ fmt(d.ml) }}"
+                              {% if d.checked %}checked{% endif %}
+                            />
+                            <label class="form-check-label small" for="dose_{{ d.key }}">
+                              {{ d.when|dtfmt }} • {{ fmt(d.ml) }} ml
+                            </label>
+                          </div>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted mt-3">Nothing to dose right now.</div>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<script>
+(function(){
+  function encodeForm(data){
+    return Object.keys(data).map(k => encodeURIComponent(k) + "=" + encodeURIComponent(data[k])).join("&");
+  }
+  document.querySelectorAll(".dose-checkbox").forEach(cb => {
+    cb.addEventListener("change", async (e) => {
+      const key = cb.getAttribute("data-key");
+      const checked = cb.checked ? 1 : 0;
+      try{
+        const res = await fetch("/tools/dose-plan/check", {
+          method: "POST",
+          headers: {"Content-Type": "application/x-www-form-urlencoded"},
+          body: encodeForm({key: key, checked: checked, amount_ml: cb.getAttribute("data-amount-ml") || ""})
+        });
+        if(!res.ok){
+          cb.checked = !cb.checked;
+        }
+      }catch(err){
+        cb.checked = !cb.checked;
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

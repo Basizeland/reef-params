@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h2 class="mb-0">Targets</h2>
+      <div class="text-muted">Tank: {{ tank.name }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="/tanks/{{ tank_id }}">Back</a>
+    </div>
+  </div>
+
+  <form method="post" action="/tanks/{{ tank_id }}/targets">
+    <div class="table-responsive">
+      <table class="table align-middle">
+        <thead>
+          <tr>
+            <th style="min-width:220px;">Parameter</th>
+            <th style="width:140px;">Target</th>
+            <th style="width:140px;">Alert low</th>
+            <th style="width:140px;">Alert high</th>
+            <th style="width:110px;">Enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ r.parameter.name }}</div>
+              <div class="small text-muted">{{ r.parameter.unit }}</div>
+            </td>
+            <td>
+              <input class="form-control" type="number" step="any" name="target_{{ r.key }}" value="{{ r.target if r.target is not none else '' }}">
+            </td>
+            <td>
+              <input class="form-control" type="number" step="any" name="alert_low_{{ r.key }}" value="{{ r.alert_low if r.alert_low is not none else '' }}">
+            </td>
+            <td>
+              <input class="form-control" type="number" step="any" name="alert_high_{{ r.key }}" value="{{ r.alert_high if r.alert_high is not none else '' }}">
+            </td>
+            <td>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="enabled_{{ r.key }}" {% if r.enabled %}checked{% endif %}>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2">
+      <button class="btn btn-primary" type="submit">Save targets</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

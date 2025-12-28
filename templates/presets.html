@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-end justify-content-between mb-3">
+  <div>
+    <h1 class="h4 mb-1">Presets</h1>
+    <div class="text-muted">Preset buttons create additive entries for you</div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h6">Existing presets</h2>
+
+        {% if not presets %}
+          <div class="text-muted">No presets yet.</div>
+        {% endif %}
+
+        <div class="list-group">
+          {% for p in presets %}
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">
+                  <a href="/settings/presets/{{ p.id }}">{{ p.name }}</a>
+                </div>
+                <div class="text-muted small">{{ p.description or "" }}</div>
+              </div>
+              <form method="post" action="/settings/presets/{{ p.id }}/apply">
+                <button class="btn btn-sm btn-outline-primary" type="submit">Apply</button>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h6">Create preset</h2>
+
+        {% if created %}
+          <div class="alert alert-success">Preset created.</div>
+        {% endif %}
+
+        <form method="post" action="/settings/presets/create">
+          <div class="mb-2">
+            <label class="form-label">Preset name</label>
+            <input class="form-control" name="name" required placeholder="e.g. Our Store Mix" />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea class="form-control" name="description" rows="3"></textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">Create</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

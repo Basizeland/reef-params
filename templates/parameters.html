@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Parameters</h2>
+<p><a class="btn" href="/settings/parameters/new">+ Add Parameter</a></p>
+
+<table class="table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Unit</th>
+      <th>Order</th>
+      <th>Active</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in parameters %}
+    <tr>
+      <td>{{ p.name }}</td>
+      <td>{{ p.unit or "" }}</td>
+      <td>{{ p.sort_order }}</td>
+      <td>{{ "Yes" if p.active else "No" }}</td>
+      <td style="white-space:nowrap;">
+        <a class="btn" href="/settings/parameters/{{ p.id }}/edit">Edit</a>
+        <form method="post" action="/settings/parameters/{{ p.id }}/delete" style="display:inline;">
+          <button class="btn btn-danger" type="submit" onclick="return confirm('Delete this parameter?')">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-end justify-content-between mb-3">
+  <div>
+    <h1 class="h4 mb-1">{{ title }}</h1>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <p class="mb-3">{{ message }}</p>
+
+    <div class="d-flex gap-2">
+      {% for a in actions %}
+        {% if a.method|lower == "post" %}
+          <form method="post" action="{{ a.href }}">
+            <button class="btn btn-primary" type="submit">{{ a.label }}</button>
+          </form>
+        {% else %}
+          <a class="btn btn-outline-primary" href="{{ a.href }}">{{ a.label }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

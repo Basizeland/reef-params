@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+  <div>
+    <h1 style="margin:0;">{{ tank.name }}</h1>
+    <div style="opacity:.75; margin-top:4px;">Tank ID: {{ tank.id }}</div>
+  </div>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a class="btn" href="/tanks/{{ tank.id }}/add">Add reading</a>
+    <a class="btn" href="/tanks/{{ tank.id }}/targets">Targets</a>
+	    <a class="btn" href="/tanks/{{ tank.id }}/edit">Edit</a>
+    <a class="btn" href="/tanks/{{ tank.id }}/dosing-log">Dosing log</a>
+    <form method="post" action="/tanks/{{ tank.id }}/delete" onsubmit="return confirm('Delete tank {{ tank.name }} and all readings?');" style="display:inline;">
+      <button class="btn" type="submit">Delete tank</button>
+    </form>
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; margin-top:16px;">
+  <div class="card" style="padding:16px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div style="font-weight:900;">Chart</div>
+      <form method="get" action="/tanks/{{ tank.id }}" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <select name="parameter">
+          {% for p in params %}
+            <option value="{{ p.id }}" {% if p.id==selected_parameter_id %}selected{% endif %}>
+              {{ p.name }}
+            </option>
+          {% endfor %}
+        </select>
+        <button class="btn" type="submit">Update</button>
+      </form>
+    </div>
+
+    <div style="height:420px; margin-top:12px;">
+      <canvas id="chart" style="width:100%; height:100%;"></canvas>
+    </div>
+  </div>
+
+  <div class="card" style="padding:16px;">
+    <div style="font-weight:900; margin-bottom:10px;">Latest readings</div>
+    {% if params and params|length %}
+      <table>
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            <th style="width:30%;">Latest</th>
+            <th style="width:18%;">Unit</th>
+            <th style="width:16%;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in params %}
+            {% set v = latest_by_param_id.get(p.id) %}
+            {% set st = status_by_param_id.get(p.id, "") %}
+            <tr>
+              <td>{{ p.name }}</td>
+              <td>{{ format_value(p, v) }}</td>
+              <td>{{ p.unit }}</td>
+              <td>
+                {% if st %}
+                  <span class="badge {{ st }}">{{ st }}</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div style="opacity:.75;">No parameters found yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card" style="padding:16px; margin-top:16px;">
+  <div style="font-weight:900; margin-bottom:10px;">Recent samples</div>
+  {% if recent_samples and recent_samples|length %}
+    <table>
+      <thead>
+        <tr>
+          <th style="width:26%;">Date/time</th>
+          <th>Notes</th>
+          <th style="width:18%;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in recent_samples %}
+          <tr>
+            <td>
+              <a href="/tanks/{{ tank.id }}/samples/{{ s.id }}" style="font-weight:800; text-decoration:none;">
+                {{ s.taken_at.strftime("%Y-%m-%d %H:%M") if s.taken_at is not string else s.taken_at }}
+              </a>
+            </td>
+            <td style="white-space:pre-wrap;">{{ s.notes or "" }}</td>
+            <td>
+              <a class="btn" href="/tanks/{{ tank.id }}/samples/{{ s.id }}">View</a>
+              <form method="post" action="/samples/{{ s.id }}/delete" onsubmit="return confirm('Delete this sample and all readings?');" style="display:inline;">
+                <button class="btn" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div style="opacity:.75;">No samples yet.</div>
+  {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const series = {{ series|tojson }};
+const labels = series.map(p => p.x);
+const data = series.map(p => p.y);
+
+const ctx = document.getElementById('chart');
+new Chart(ctx, {
+  type: 'line',
+  data: { labels, datasets: [{ label: "{{ selected_parameter_id }}", data }] },
+  options: { responsive: true, maintainAspectRatio: false }
+});
+</script>
+{% endblock %}
