@@ -11,11 +11,12 @@
     </div>
   </div>
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-success" href="/tanks/{{ tank.id }}/export"><i class="bi bi-download"></i> Export</a>
     <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/dosing-log">Dosing Log</a>
     <a class="btn btn-primary" href="/tanks/{{ tank.id }}/add">Log Test</a>
     <div class="dropdown">
-      <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">Settings</button>
+      <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+        Settings
+      </button>
       <ul class="dropdown-menu dropdown-menu-end">
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/targets">Targets</a></li>
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/profile">Edit Profile</a></li>
@@ -49,8 +50,13 @@
         <div class="card-body p-3">
           <div class="d-flex justify-content-between align-items-center mb-1">
              <div class="text-muted small text-uppercase fw-bold">{{ p.name }}</div>
-             {% if taken_at %}<span class="badge bg-light text-secondary border fw-normal" style="font-size: 0.65rem;">{{ taken_at|time_ago }}</span>{% endif %}
+             {% if taken_at %}
+                <span class="badge bg-light text-secondary border fw-normal" style="font-size: 0.65rem;">
+                   {{ taken_at|time_ago }}
+                </span>
+             {% endif %}
           </div>
+          
           <div class="d-flex align-items-baseline gap-1 mt-2">
              <span class="h3 mb-0 fw-bold">{{ val|fmt2 if val is not none else "-" }}</span>
              <span class="text-muted small">{{ p.unit }}</span>
@@ -67,42 +73,56 @@
     <form method="get" class="d-flex align-items-center gap-2">
       <select name="parameter" class="form-select form-select-sm" onchange="this.form.submit()">
         {% for p in params %}
-          <option value="{{ p.id }}" {% if selected_parameter_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+          <option value="{{ p.id }}" {% if selected_parameter_id == p.id %}selected{% endif %}>
+            {{ p.name }}
+          </option>
         {% endfor %}
       </select>
     </form>
   </div>
   <div class="card-body">
-    <div style="height: 350px;"><canvas id="historyChart"></canvas></div>
+    <div style="height: 350px;">
+      <canvas id="historyChart"></canvas>
+    </div>
   </div>
 </div>
 
 <div class="card shadow-sm">
-  <div class="card-header bg-white"><h5 class="card-title mb-0">Log</h5></div>
+  <div class="card-header bg-white">
+    <h5 class="card-title mb-0">Log</h5>
+  </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle text-nowrap">
       <thead class="table-light">
         <tr>
           <th>Date</th>
           {% for p in params %}
-            {% if p.name not in ['Temperature', 'Salinity'] %}<th class="text-center">{{ p.name }}</th>{% endif %}
+            {% if p.name not in ['Temperature', 'Salinity'] %}
+                <th class="text-center">{{ p.name }}</th>
+            {% endif %}
           {% endfor %}
-        </tr>
+          </tr>
       </thead>
       <tbody>
         {% for s in recent_samples %}
           <tr style="cursor: pointer;" onclick="window.location.href='/tanks/{{ tank.id }}/samples/{{ s.id }}'">
             <td class="fw-medium">{{ s.taken_at|dtfmt }}</td>
+            
             {% for p in params %}
               {% if p.name not in ['Temperature', 'Salinity'] %}
                   <td class="text-center">
-                     {% set sv = sample_values.get(s.id, {}) %}{% set val = sv.get(p.id) %}
-                     {% if val is not none %}{{ val|fmt2 }} <small class="text-muted" style="font-size: 0.75em;">{{ p.unit }}</small>
-                     {% else %}<span class="text-muted">-</span>{% endif %}
+                     {% set sv = sample_values.get(s.id, {}) %}
+                     {% set val = sv.get(p.id) %}
+                     
+                     {% if val is not none %}
+                        {{ val|fmt2 }} <small class="text-muted" style="font-size: 0.75em;">{{ p.unit }}</small>
+                     {% else %}
+                        <span class="text-muted">-</span>
+                     {% endif %}
                   </td>
               {% endif %}
             {% endfor %}
-          </tr>
+            </tr>
         {% endfor %}
       </tbody>
     </table>
@@ -115,12 +135,28 @@
           const seriesData = {{ series|tojson|safe }};
           const targets = {{ chart_targets|tojson|safe }};
           const ctx = document.getElementById('historyChart');
+          
           if (!ctx) return;
-          if (!seriesData || seriesData.length === 0) return;
+
+          if (typeof Chart === 'undefined') {
+              throw new Error("Chart.js library not loaded. Check your internet connection or base template.");
+          }
+
+          if (!seriesData || seriesData.length === 0) {
+              const c = ctx.getContext('2d');
+              c.font = "14px sans-serif";
+              c.fillStyle = "#6c757d";
+              c.textAlign = "center";
+              c.fillText("No history data found for this parameter.", ctx.width / 2, ctx.height / 2);
+              return; 
+          }
 
           function cleanDate(dStr) {
               if (!dStr) return new Date();
-              return new Date(String(dStr).split('.')[0].replace(" ", "T"));
+              let s = String(dStr).split('.')[0].replace(" ", "T");
+              let d = new Date(s);
+              if (isNaN(d.getTime())) return new Date(); // Fallback
+              return d;
           }
 
           const labels = seriesData.map(d => {
@@ -128,27 +164,78 @@
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
           });
           
+          const dataPoints = seriesData.map(d => d.y);
+
+          const annotations = {};
+          if (targets && targets.length > 0) {
+              const t = targets[0]; 
+              if (t.low !== null) {
+                  annotations.lineLow = {
+                      type: 'line', yMin: t.low, yMax: t.low, 
+                      borderColor: 'rgba(25, 135, 84, 0.6)', borderWidth: 2, borderDash: [5, 5], 
+                      label: { content: 'Low: ' + t.low, enabled: true, position: 'start' }
+                  };
+              }
+              if (t.high !== null) {
+                  annotations.lineHigh = {
+                      type: 'line', yMin: t.high, yMax: t.high, 
+                      borderColor: 'rgba(25, 135, 84, 0.6)', borderWidth: 2, borderDash: [5, 5], 
+                      label: { content: 'High: ' + t.high, enabled: true, position: 'start' }
+                  };
+              }
+          }
+
+          const chartPlugins = {
+            legend: { display: false }
+          };
+
+          if (typeof window['chartjs-plugin-annotation'] !== 'undefined' || (Chart.registry && Chart.registry.plugins.get('annotation'))) {
+              chartPlugins.annotation = { annotations: annotations };
+          }
+
           new Chart(ctx, {
             type: 'line',
             data: {
               labels: labels,
               datasets: [{
                 label: 'Reading',
-                data: seriesData.map(d => d.y),
+                data: dataPoints,
                 borderColor: '#0d6efd',
                 backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                borderWidth: 2,
                 tension: 0.3,
                 fill: true,
-                pointRadius: 4
+                pointRadius: 4,
+                pointHoverRadius: 6
               }]
             },
             options: {
-              responsive: true, maintainAspectRatio: false,
-              plugins: { legend: { display: false } },
-              scales: { y: { beginAtZero: false }, x: { display: false } }
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: { mode: 'index', intersect: false },
+              plugins: chartPlugins,
+              scales: {
+                y: { beginAtZero: false, grid: { borderDash: [2, 4] } },
+                x: { 
+                    display: false,
+                    grid: { display: false } 
+                }
+              }
             }
           });
-      } catch (err) { console.error(err); }
+
+      } catch (err) {
+          const ctx = document.getElementById('historyChart');
+          if (ctx) {
+              const c = ctx.getContext('2d');
+              c.clearRect(0, 0, ctx.width, ctx.height);
+              c.font = "14px monospace";
+              c.fillStyle = "red";
+              c.textAlign = "center";
+              c.fillText("Chart Error: " + err.message, ctx.width / 2, ctx.height / 2);
+              console.error(err);
+          }
+      }
   });
 </script>
 {% endblock %}
