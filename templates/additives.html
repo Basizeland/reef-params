@@ -1,15 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between mb-3"><h2>Additives</h2><a href="/additives/new" class="btn btn-primary">New</a></div>
-<table class="table">
-  <thead><tr><th>Name</th><th>Parameter</th><th>Strength</th><th>Action</th></tr></thead>
-  <tbody>
-  {% for a in additives %}
-    <tr>
-      <td>{{ a.name }}</td><td>{{ a.parameter }}</td><td>{{ a.strength }} {{ a.unit }}</td>
-      <td><a href="/additives/{{ a.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a></td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="d-flex align-items-end justify-content-between mb-3">
+  <div>
+    <h1 class="h4 mb-1">Additives</h1>
+    <div class="text-muted">Manage dosing additives and their strengths</div>
+  </div>
+  <a class="btn btn-primary" href="/additives/new">New additive</a>
+</div>
+
+{% if not rows %}
+  <div class="alert alert-info">No additives yet.</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Parameter</th>
+            <th class="text-end">Strength</th>
+            <th>Unit</th>
+            <th class="text-end">Max daily</th>
+            <th>Active</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in rows %}
+          <tr>
+            <td class="fw-semibold">{{ a.name }}</td>
+            <td>{{ a.parameter }}</td>
+            <td class="text-end">{{ a.strength|string if a.strength is not none else "—" }}</td>
+            <td class="text-muted">{{ a.unit }}</td>
+            <td class="text-end">{{ a.max_daily if a.max_daily is not none else "—" }}</td>
+            <td>{% if a.active %}Yes{% else %}No{% endif %}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-secondary" href="/additives/{{ a.id }}/edit">Edit</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
 {% endblock %}
