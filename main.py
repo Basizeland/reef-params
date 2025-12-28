@@ -16,16 +16,15 @@ DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
 
 app = FastAPI(title="Reef Tank Parameters")
 
-# --- RECOMMENDED DEFAULTS ---
-# These values will pre-fill the Targets form for new tanks/parameters.
-RECOMMENDED_DEFAULTS = {
-    "Alkalinity - KH": {"low": 8.0, "high": 9.5, "a_low": 7.0, "a_high": 11.0},
-    "Calcium - CA": {"low": 400, "high": 450, "a_low": 350, "a_high": 500},
-    "Magnesium - MG": {"low": 1300, "high": 1400, "a_low": 1200, "a_high": 1500},
-    "Phosphate - P04": {"low": 0.03, "high": 0.1, "a_low": 0.02, "a_high": 0.15},
-    "Nitrate - N03": {"low": 2, "high": 10, "a_low": 1, "a_high": 15},
-    "Salinity": {"low": 34.5, "high": 35.5, "a_low": 34, "a_high": 36},
-    "Temperature": {"low": 24.5, "high": 25.5, "a_low": 24, "a_high": 26},
+# --- INITIAL SEED DEFAULTS (Used only for migration/fresh DB) ---
+INITIAL_DEFAULTS = {
+    "Alkalinity/KH": {"default_target_low": 8.0, "default_target_high": 9.5, "default_alert_low": 7.0, "default_alert_high": 11.0},
+    "Calcium": {"default_target_low": 400, "default_target_high": 450, "default_alert_low": 350, "default_alert_high": 500},
+    "Magnesium": {"default_target_low": 1300, "default_target_high": 1400, "default_alert_low": 1200, "default_alert_high": 1500},
+    "Phosphate": {"default_target_low": 0.03, "default_target_high": 0.1, "default_alert_low": 0.0, "default_alert_high": 0.25},
+    "Nitrate": {"default_target_low": 2, "default_target_high": 10, "default_alert_low": 0, "default_alert_high": 25},
+    "Salinity": {"default_target_low": 34, "default_target_high": 35.5, "default_alert_low": 32, "default_alert_high": 37},
+    "Temperature": {"default_target_low": 25, "default_target_high": 26.5, "default_alert_low": 23, "default_alert_high": 29},
 }
 
 static_dir = os.path.join(BASE_DIR, "static")
@@ -44,8 +43,6 @@ def fmt2(v: Any) -> str:
         if isinstance(v, int): return str(v)
         fv = float(v)
     except Exception: return str(v)
-    
-    # UPDATED: 2 decimal places standard
     s = f"{fv:.2f}" 
     if "." in s:
         s = s.rstrip("0").rstrip(".")
@@ -233,6 +230,10 @@ class ParameterDef(Base, DictMixin):
     active = Column(Integer, default=1)
     sort_order = Column(Integer, default=0)
     max_daily_change = Column(Float, nullable=True)
+    default_target_low = Column(Float, nullable=True)
+    default_target_high = Column(Float, nullable=True)
+    default_alert_low = Column(Float, nullable=True)
+    default_alert_high = Column(Float, nullable=True)
 
 class Sample(Base, DictMixin):
     __tablename__ = "samples"
@@ -360,11 +361,27 @@ def init_db() -> None:
     ensure_col("targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
     ensure_col("targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
     ensure_col("targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
+    
+    # NEW: Add default target columns
+    ensure_col("parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
+    ensure_col("parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
+    ensure_col("parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
+    ensure_col("parameter_defs", "default_alert_high", "ALTER TABLE parameter_defs ADD COLUMN default_alert_high REAL")
+
     cur.execute("SELECT COUNT(1) FROM parameter_defs")
     cnt = cur.fetchone()[0]
     if cnt == 0:
         defaults = [("Alkalinity/KH", "dKH", 1, 10), ("Calcium", "ppm", 1, 20), ("Magnesium", "ppm", 1, 30), ("Phosphate", "ppm", 1, 40), ("Nitrate", "ppm", 1, 50), ("Salinity", "ppt", 1, 60), ("Temperature", "°C", 1, 70)]
         cur.executemany("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)", defaults)
+        
+    # MIGRATION: Populate defaults if they are null
+    for name, d in INITIAL_DEFAULTS.items():
+        cur.execute("""
+            UPDATE parameter_defs 
+            SET default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=? 
+            WHERE name=? AND default_target_low IS NULL
+        """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
+        
     db.commit()
     db.close()
 
@@ -693,27 +710,24 @@ def edit_targets(request: Request, tank_id: int):
         name = p["name"]
         t = existing.get(name)
         
-        # --- NEW LOGIC: Get Defaults ---
-        defaults = RECOMMENDED_DEFAULTS.get(name, {})
-        
-        # Helper: Use DB value if it exists, otherwise use Default
-        # FIX: Uses row_get(t, key) instead of t.get(key) to prevent 500 Error
+        # Helper: Use DB value if it exists, otherwise use Default (from DB column)
         def get_val(key_db, key_def):
             val = row_get(t, key_db)
             if val is not None:
                 return val
-            return defaults.get(key_def)
+            # New: Get default from parameter definition
+            return row_get(p, key_def)
 
         # 1. Target Low/High
-        t_low = get_val("target_low", "low")
+        t_low = get_val("target_low", "default_target_low")
         if t_low is None: t_low = row_get(t, "low") # Legacy DB support
 
-        t_high = get_val("target_high", "high")
+        t_high = get_val("target_high", "default_target_high")
         if t_high is None: t_high = row_get(t, "high") # Legacy DB support
 
         # 2. Alert Low/High
-        a_low = get_val("alert_low", "a_low")
-        a_high = get_val("alert_high", "a_high")
+        a_low = get_val("alert_low", "default_alert_low")
+        a_high = get_val("alert_high", "default_alert_high")
         
         # 3. Resolve Unit and Enabled status safely
         p_unit = row_get(p, "unit")
@@ -804,7 +818,18 @@ def parameter_edit(request: Request, param_id: int):
     return templates.TemplateResponse("parameter_edit.html", {"request": request, "param": row})
 
 @app.post("/settings/parameters/save")
-def parameter_save(param_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), sort_order: Optional[str] = Form(None), max_daily_change: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def parameter_save(
+    param_id: Optional[str] = Form(None), 
+    name: str = Form(...), 
+    unit: Optional[str] = Form(None), 
+    sort_order: Optional[str] = Form(None), 
+    max_daily_change: Optional[str] = Form(None), 
+    active: Optional[str] = Form(None),
+    default_target_low: Optional[str] = Form(None),
+    default_target_high: Optional[str] = Form(None),
+    default_alert_low: Optional[str] = Form(None),
+    default_alert_high: Optional[str] = Form(None)
+):
     db = get_db()
     cur = db.cursor()
     
@@ -812,13 +837,18 @@ def parameter_save(param_id: Optional[str] = Form(None), name: str = Form(...), 
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     order = int(to_float(sort_order) or 0)
     mdc = to_float(max_daily_change)
+    dt_low = to_float(default_target_low)
+    dt_high = to_float(default_target_high)
+    da_low = to_float(default_alert_low)
+    da_high = to_float(default_alert_high)
+    
     clean_name = name.strip()
     
     if not clean_name:
         db.close()
         return redirect("/settings/parameters")
 
-    data = (clean_name, (unit or "").strip() or None, mdc, order, is_active)
+    data = (clean_name, (unit or "").strip() or None, mdc, order, is_active, dt_low, dt_high, da_low, da_high)
 
     try:
         # 2. Logic for Update/Merge
@@ -844,7 +874,11 @@ def parameter_save(param_id: Optional[str] = Form(None), name: str = Form(...), 
                             cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
 
                     cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
-                    cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, existing_id))
+                    cur.execute("""
+                        UPDATE parameter_defs 
+                        SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                            default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
+                        WHERE id=?""", (*data, existing_id))
                     
                 else:
                     # RENAME SCENARIO (No conflict):
@@ -852,18 +886,33 @@ def parameter_save(param_id: Optional[str] = Form(None), name: str = Form(...), 
                         if table_exists(db, tbl): 
                             cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
                             
-                    cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, pid))
+                    cur.execute("""
+                        UPDATE parameter_defs 
+                        SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                            default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
+                        WHERE id=?""", (*data, pid))
             else:
                 # SIMPLE UPDATE
-                cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, pid))
+                cur.execute("""
+                    UPDATE parameter_defs 
+                    SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                        default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
+                    WHERE id=?""", (*data, pid))
         
         # 3. Logic for Insert
         else:
             existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (clean_name,))
             if existing:
-                cur.execute("UPDATE parameter_defs SET unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (data[1], data[2], data[3], data[4], existing["id"]))
+                cur.execute("""
+                    UPDATE parameter_defs 
+                    SET unit=?, max_daily_change=?, sort_order=?, active=?, 
+                        default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
+                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], existing["id"]))
             else:
-                cur.execute("INSERT INTO parameter_defs (name, unit, max_daily_change, sort_order, active) VALUES (?, ?, ?, ?, ?)", data)
+                cur.execute("""
+                    INSERT INTO parameter_defs 
+                    (name, unit, max_daily_change, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
 
         db.commit()
         
