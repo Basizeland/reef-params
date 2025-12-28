@@ -16,8 +16,20 @@ DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
 
 app = FastAPI(title="Reef Tank Parameters")
 
-# --- RECOMMENDED DEFAULTS ---
+# --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
 RECOMMENDED_DEFAULTS = {
+    "Alkalinity/KH": {"target_low": 8.0, "target_high": 9.5, "alert_low": 7.0, "alert_high": 11.0},
+    "Calcium": {"target_low": 400, "target_high": 450, "alert_low": 350, "alert_high": 500},
+    "Magnesium": {"target_low": 1300, "target_high": 1400, "alert_low": 1200, "alert_high": 1500},
+    "Phosphate": {"target_low": 0.03, "target_high": 0.1, "alert_low": 0.0, "alert_high": 0.25},
+    "Nitrate": {"target_low": 2, "target_high": 10, "alert_low": 0, "alert_high": 25},
+    "Salinity": {"target_low": 34, "target_high": 35.5, "alert_low": 32, "alert_high": 37},
+    "Temperature": {"target_low": 25, "target_high": 26.5, "alert_low": 23, "alert_high": 29},
+}
+
+# --- 2. INITIAL SEED DEFAULTS (Used for DB Migration only) ---
+# Maps parameter names to the new DB columns we added
+INITIAL_DEFAULTS = {
     "Alkalinity/KH": {"default_target_low": 8.0, "default_target_high": 9.5, "default_alert_low": 7.0, "default_alert_high": 11.0},
     "Calcium": {"default_target_low": 400, "default_target_high": 450, "default_alert_low": 350, "default_alert_high": 500},
     "Magnesium": {"default_target_low": 1300, "default_target_high": 1400, "default_alert_low": 1200, "default_alert_high": 1500},
@@ -43,6 +55,8 @@ def fmt2(v: Any) -> str:
         if isinstance(v, int): return str(v)
         fv = float(v)
     except Exception: return str(v)
+    
+    # Updated: 2 decimal places standard
     s = f"{fv:.2f}" 
     if "." in s:
         s = s.rstrip("0").rstrip(".")
@@ -219,8 +233,6 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
     latest_map = {}
     mode = values_mode(db)
     
-    # We query all samples for the tank, ordered by newest first.
-    # We then iterate and pick the first value we see for each parameter.
     if mode == "sample_values":
         rows = q(db, """
             SELECT pd.name, sv.value, s.taken_at 
@@ -303,7 +315,6 @@ class Sample(Base, DictMixin):
 
     @property
     def values_dict(self):
-        """Returns a dict of {parameter_id: value} for easy lookup in templates."""
         return {v.parameter_id: v.value for v in self.values}
 
 class SampleValue(Base, DictMixin):
@@ -422,6 +433,8 @@ def init_db() -> None:
     ensure_col("targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
     ensure_col("targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
     ensure_col("targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
+    
+    # NEW: Add default target columns
     ensure_col("parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
     ensure_col("parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
     ensure_col("parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
@@ -432,7 +445,8 @@ def init_db() -> None:
     if cnt == 0:
         defaults = [("Alkalinity/KH", "dKH", 1, 10), ("Calcium", "ppm", 1, 20), ("Magnesium", "ppm", 1, 30), ("Phosphate", "ppm", 1, 40), ("Nitrate", "ppm", 1, 50), ("Salinity", "ppt", 1, 60), ("Temperature", "°C", 1, 70)]
         cur.executemany("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)", defaults)
-    
+        
+    # MIGRATION: Populate defaults if they are null
     for name, d in INITIAL_DEFAULTS.items():
         cur.execute("""
             UPDATE parameter_defs 
@@ -451,15 +465,10 @@ def dashboard(request: Request):
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     tank_cards = []
     for t in tanks:
-        # Use new helper to get latest for EACH parameter
         latest_map = get_latest_per_parameter(db, t["id"])
-        
-        # Keep 'latest' for backward compatibility if needed, though we should prefer individual dates now
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         
         readings = []
-        # Convert map to list for the dashboard card
-        # We need parameter definitions to know order and units
         pdefs = get_active_param_defs(db)
         
         for p in pdefs:
@@ -470,7 +479,7 @@ def dashboard(request: Request):
                     "name": pname, 
                     "value": data["value"], 
                     "unit": (row_get(p, "unit") or ""),
-                    "taken_at": data["taken_at"] # Pass date for dashboard if we want to show it there too
+                    "taken_at": data["taken_at"]
                 })
         
         tank_data = dict(t)
@@ -590,17 +599,11 @@ def tank_detail(request: Request, tank_id: int):
             
     params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
     
-    # --- UPDATED LOGIC: Get absolute latest reading per parameter ---
-    # Instead of just taking the last sample, we use our helper
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
-    # ----------------------------------------------------------------
-
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
     
     status_by_param_id = {}
     for pname in available_params:
-        # Note: latest_by_param_id now returns a dict {value: ..., taken_at: ...}
-        # We need to extract just the value for status checking
         data = latest_by_param_id.get(pname)
         v = data.get("value") if data else None
         
