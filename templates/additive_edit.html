@@ -1,59 +1,76 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>{% if additive %}Edit{% else %}New{% endif %} Additive</h2>
-<form method="post" action="/additives/save">
-  {% if additive %}<input type="hidden" name="additive_id" value="{{ additive.id }}"/>{% endif %}
-  
-  <div class="mb-3">
-    <label class="form-label">Name</label>
-    <input name="name" class="form-control" value="{{ additive.name if additive else '' }}" required autofocus>
-  </div>
-
-  <div class="mb-3">
-    <label class="form-label">Parameter to Dose</label>
-    <select name="parameter" class="form-select" required>
-      <option value="" disabled {% if not additive %}selected{% endif %}>Select parameter...</option>
-      {% for p in parameters %}
-        <option value="{{ p.name }}" {% if additive and additive.parameter == p.name %}selected{% endif %}>
-          {{ p.name }}
-        </option>
-      {% endfor %}
-    </select>
-    <div class="form-text">Must match your Target parameter name exactly.</div>
-  </div>
-
-  <div class="row mb-3">
-    <div class="col">
-      <label class="form-label">Strength</label>
-      <input name="strength" type="number" step="any" class="form-control" value="{{ additive.strength if additive else '' }}" required>
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <h2 class="h5 mb-1">{% if additive %}Edit additive{% else %}New additive{% endif %}</h2>
+        <div class="text-muted small">Strength is defined as: 1 mL per 100 L changes the parameter by X.</div>
+      </div>
+      <a class="btn btn-outline-secondary" href="/additives">Back</a>
     </div>
-    <div class="col">
-      <label class="form-label">Unit</label>
-      <input name="unit" class="form-control" value="{{ additive.unit if additive else 'ml' }}" required>
-      <div class="form-text">e.g. dKH, ppm, etc.</div>
-    </div>
-  </div>
 
-  <div class="mb-3">
-    <label class="form-label">Max Daily Dose (optional)</label>
-    <input name="max_daily" type="number" step="any" class="form-control" value="{{ additive.max_daily if additive else '' }}">
-  </div>
+    <form method="post" action="/additives/save" class="mt-3">
+      {% if additive %}
+        <input type="hidden" name="additive_id" value="{{ additive.id }}" />
+      {% endif %}
 
-  <div class="mb-3">
-    <label class="form-label">Notes</label>
-    <textarea name="notes" class="form-control" rows="2">{{ additive.notes if additive else '' }}</textarea>
-  </div>
+      <div class="row g-3">
+        <div class="col-12 col-md-6">
+          <label class="form-label">Name</label>
+          <input class="form-control" name="name" value="{{ additive.name if additive else '' }}" required />
+        </div>
 
-  <div class="mb-4 form-check">
-    <input type="checkbox" class="form-check-input" name="active" id="activeCheck" value="1" {% if not additive or additive.active %}checked{% endif %}>
-    <label class="form-check-label" for="activeCheck">Active (Available for dosing plans)</label>
-  </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label">Parameter</label>
+          <select class="form-select" name="parameter" required>
+            {% for p in parameters %}
+              <option value="{{ p.name }}" {% if additive and additive.parameter == p.name %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
 
-  <button type="submit" class="btn btn-primary">Save</button>
-  <a href="/additives" class="btn btn-outline-secondary">Cancel</a>
-  
-  {% if additive %}
-  <button type="submit" formaction="/additives/{{ additive.id }}/delete" class="btn btn-danger float-end" onclick="return confirm('Delete this additive?');">Delete</button>
-  {% endif %}
-</form>
+        <div class="col-12 col-md-4">
+          <label class="form-label">Strength (X)</label>
+          <input class="form-control" name="strength" type="number" step="any" value="{{ additive.strength|string if additive and additive.strength is not none else '' }}" required />
+          <div class="form-text">Change per 1 mL / 100 L</div>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">Unit</label>
+          <input class="form-control" name="unit" value="{{ additive.unit if additive else '' }}" required placeholder="e.g. dKH, ppm" />
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label">Max daily change (in parameter units)</label>
+          <input class="form-control" name="max_daily" type="number" step="any" value="{{ additive.max_daily if additive and additive.max_daily is not none else '' }}" />
+        <div class="form-text">Leave blank to use the parameter's default daily limit (set under Settings → Parameters).</div>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" name="notes" rows="3">{{ additive.notes if additive and additive.notes else '' }}</textarea>
+        </div>
+
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="active" id="active" {% if not additive or additive.active %}checked{% endif %}>
+            <label class="form-check-label" for="active">Active</label>
+          </div>
+        </div>
+
+        <div class="col-12 d-flex gap-2">
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-outline-secondary" href="/additives">Cancel</a>
+        </div>
+      </div>
+    </form>
+
+    {% if additive %}
+    <form class="mt-3" method="post" action="/additives/{{ additive.id }}/delete" onsubmit="return confirm('Delete this additive?')">
+      <button class="btn btn-outline-danger" type="submit">Delete additive</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}
