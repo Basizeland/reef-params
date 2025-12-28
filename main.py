@@ -362,25 +362,6 @@ class Additive(Base, DictMixin):
     notes = Column(String)
     active = Column(Integer, default=1)
 
-class Preset(Base, DictMixin):
-    __tablename__ = "presets"
-    id = Column(Integer, primary_key=True)
-    name = Column(String)
-    description = Column(String)
-    items = relationship("PresetItem", back_populates="preset", cascade="all, delete-orphan")
-
-class PresetItem(Base, DictMixin):
-    __tablename__ = "preset_items"
-    id = Column(Integer, primary_key=True)
-    preset_id = Column(Integer, ForeignKey("presets.id"))
-    additive_name = Column(String)
-    parameter = Column(String)
-    strength = Column(Float)
-    unit = Column(String)
-    max_daily = Column(Float)
-    notes = Column(String)
-    preset = relationship("Preset", back_populates="items")
-
 class DoseLog(Base, DictMixin):
     __tablename__ = "dose_logs"
     id = Column(Integer, primary_key=True)
@@ -416,8 +397,6 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, min_value REAL, max_value REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
-        CREATE TABLE IF NOT EXISTS presets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT);
-        CREATE TABLE IF NOT EXISTS preset_items (id INTEGER PRIMARY KEY AUTOINCREMENT, preset_id INTEGER NOT NULL, additive_name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL, unit TEXT, max_daily REAL, notes TEXT, FOREIGN KEY (preset_id) REFERENCES presets(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
     ''')
@@ -1105,66 +1084,6 @@ def additive_save(additive_id: Optional[str] = Form(None), name: str = Form(...)
 def additive_delete(additive_id: int):
     db = get_db()
     db.execute("DELETE FROM additives WHERE id=?", (additive_id,))
-    db.commit()
-    db.close()
-    return redirect("/additives")
-
-@app.get("/settings/presets", response_class=HTMLResponse)
-@app.get("/settings/presets/", response_class=HTMLResponse, include_in_schema=False)
-def presets(request: Request):
-    db = get_db()
-    rows = q(db, "SELECT * FROM presets ORDER BY name")
-    db.close()
-    return templates.TemplateResponse("presets.html", {"request": request, "presets": rows, "created": False})
-
-@app.post("/settings/presets/create")
-def presets_create(request: Request, name: str = Form(...), description: Optional[str] = Form(None)):
-    db = get_db()
-    db.execute("INSERT INTO presets (name, description) VALUES (?, ?)", (name.strip(), (description or "").strip() or None))
-    db.commit()
-    rows = q(db, "SELECT * FROM presets ORDER BY name")
-    db.close()
-    return templates.TemplateResponse("presets.html", {"request": request, "presets": rows, "created": True})
-
-@app.get("/settings/presets/{preset_id}", response_class=HTMLResponse)
-def preset_detail(request: Request, preset_id: int):
-    db = get_db()
-    preset = one(db, "SELECT * FROM presets WHERE id=?", (preset_id,))
-    items = q(db, "SELECT * FROM preset_items WHERE preset_id=? ORDER BY id", (preset_id,))
-    parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
-    db.close()
-    return templates.TemplateResponse("preset_detail.html", {"request": request, "preset": preset, "items": items, "parameters": parameters})
-
-@app.post("/settings/presets/{preset_id}/items/create")
-def preset_item_create(preset_id: int, additive_name: str = Form(...), parameter: str = Form(...), strength: Optional[str] = Form(None), unit: Optional[str] = Form(None), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None)):
-    db = get_db()
-    db.execute("INSERT INTO preset_items (preset_id, additive_name, parameter, strength, unit, max_daily, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", (preset_id, additive_name.strip(), parameter.strip(), to_float(strength), (unit or "").strip() or None, to_float(max_daily), (notes or "").strip() or None))
-    db.commit()
-    db.close()
-    return redirect(f"/settings/presets/{preset_id}")
-
-@app.post("/settings/presets/{preset_id}/items/{item_id}/save")
-def preset_item_save(preset_id: int, item_id: int, additive_name: str = Form(...), parameter: str = Form(...), strength: Optional[str] = Form(None), unit: Optional[str] = Form(None), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None)):
-    db = get_db()
-    db.execute("UPDATE preset_items SET additive_name=?, parameter=?, strength=?, unit=?, max_daily=?, notes=? WHERE id=? AND preset_id=?", (additive_name.strip(), parameter.strip(), to_float(strength), (unit or "").strip() or None, to_float(max_daily), (notes or "").strip() or None, item_id, preset_id))
-    db.commit()
-    db.close()
-    return redirect(f"/settings/presets/{preset_id}")
-
-@app.post("/settings/presets/{preset_id}/items/{item_id}/delete")
-def preset_item_delete(preset_id: int, item_id: int):
-    db = get_db()
-    db.execute("DELETE FROM preset_items WHERE id=? AND preset_id=?", (item_id, preset_id))
-    db.commit()
-    db.close()
-    return redirect(f"/settings/presets/{preset_id}")
-
-@app.post("/settings/presets/{preset_id}/apply")
-def preset_apply(preset_id: int):
-    db = get_db()
-    cur = db.cursor()
-    items = q(db, "SELECT * FROM preset_items WHERE preset_id=?", (preset_id,))
-    for it in items: cur.execute("INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, COALESCE(?, 0), COALESCE(?, ''), ?, ?, 1)", (it["additive_name"], it["parameter"], it["strength"], it["unit"], it["max_daily"], it["notes"]))
     db.commit()
     db.close()
     return redirect("/additives")
