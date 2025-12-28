@@ -697,31 +697,41 @@ def edit_targets(request: Request, tank_id: int):
         defaults = RECOMMENDED_DEFAULTS.get(name, {})
         
         # Helper: Use DB value if it exists, otherwise use Default
+        # FIX: Uses row_get(t, key) instead of t.get(key) to prevent 500 Error
         def get_val(key_db, key_def):
-            if t and t.get(key_db) is not None:
-                return t[key_db]
+            val = row_get(t, key_db)
+            if val is not None:
+                return val
             return defaults.get(key_def)
 
         # 1. Target Low/High
         t_low = get_val("target_low", "low")
-        if t_low is None and t: t_low = t.get("low") # Legacy DB support
+        if t_low is None: t_low = row_get(t, "low") # Legacy DB support
 
         t_high = get_val("target_high", "high")
-        if t_high is None and t: t_high = t.get("high") # Legacy DB support
+        if t_high is None: t_high = row_get(t, "high") # Legacy DB support
 
         # 2. Alert Low/High
         a_low = get_val("alert_low", "a_low")
         a_high = get_val("alert_high", "a_high")
         
+        # 3. Resolve Unit and Enabled status safely
+        p_unit = row_get(p, "unit")
+        t_unit = row_get(t, "unit")
+        unit = p_unit or t_unit or ""
+        
+        t_enabled = row_get(t, "enabled")
+        enabled = t_enabled if t_enabled is not None else 1
+        
         rows.append({
-            "parameter": {"name": name, "unit": row_get(p, "unit") or (t["unit"] if t else "") or ""},
+            "parameter": {"name": name, "unit": unit},
             "key": slug_key(name),
             "target": compute_target(t_low, t_high),
             "target_low": t_low,
             "target_high": t_high,
             "alert_low": a_low,
             "alert_high": a_high,
-            "enabled": (t["enabled"] if t and "enabled" in t.keys() else 1)
+            "enabled": enabled
         })
         
     db.close()
