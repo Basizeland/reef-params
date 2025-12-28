@@ -1,16 +1,59 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Edit Profile: {{ tank.name }}</h2>
-<form method="post" class="card p-4 shadow-sm" style="max-width:500px">
-  <div class="mb-3">
-    <label class="form-label">Total Volume (Litres)</label>
-    <input type="number" step="any" name="volume_l" class="form-control" value="{{ tank.profile.volume_l }}">
+<div class="row justify-content-center">
+  <div class="col-md-8 col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3">
+        <h4 class="mb-0">Edit Profile: {{ tank.name }}</h4>
+      </div>
+      <div class="card-body">
+        <form method="post" action="/tanks/{{ tank.id }}/profile">
+          <div class="mb-3">
+            <label class="form-label fw-bold">Total Water Volume (L)</label>
+            <input type="number" step="any" name="volume_l" class="form-control form-control-lg" 
+                   value="{{ tank.volume_l if tank.volume_l else '' }}" 
+                   placeholder="e.g. 500" required>
+            <div class="form-text">The total volume of your display tank + sump.</div>
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label fw-bold">Net Water %</label>
+            <div class="input-group">
+              <input type="number" step="any" name="net_percent" class="form-control" 
+                     value="{{ tank.net_percent if tank.net_percent is not none else 100 }}">
+              <span class="input-group-text">%</span>
+            </div>
+            <div class="form-text">
+              Adjusts for displacement by rocks/sand. Usually 85-90%. 
+              <br><strong>Effective Volume: </strong> 
+              <span id="effVol">-</span> L
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center mt-4">
+            <a href="/tanks/{{ tank.id }}" class="text-decoration-none">Cancel</a>
+            <button type="submit" class="btn btn-primary px-4">Save Profile</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
-  <div class="mb-3">
-    <label class="form-label">Net Water Volume (%)</label>
-    <input type="number" step="any" name="net_percent" class="form-control" value="{{ tank.profile.net_percent }}">
-    <div class="form-text">Percentage of volume that is actual water (accounting for rock/sand).</div>
-  </div>
-  <button type="submit" class="btn btn-primary">Save Profile</button>
-</form>
+</div>
+
+<script>
+  const volInput = document.querySelector('input[name="volume_l"]');
+  const pctInput = document.querySelector('input[name="net_percent"]');
+  const effDisplay = document.getElementById('effVol');
+
+  function updateEff() {
+    const v = parseFloat(volInput.value) || 0;
+    const p = parseFloat(pctInput.value) || 100;
+    const eff = v * (p / 100);
+    effDisplay.textContent = eff.toFixed(1);
+  }
+
+  volInput.addEventListener('input', updateEff);
+  pctInput.addEventListener('input', updateEff);
+  updateEff(); // init
+</script>
 {% endblock %}
