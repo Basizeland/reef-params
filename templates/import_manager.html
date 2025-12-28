@@ -1,37 +1,75 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="max-w-2xl mx-auto mt-5">
-    <h2 class="h3 mb-4">Excel Import Center</h2>
+@app.get("/admin/export-all")
+def export_all_data():
+    db = get_db()
+    tanks = q(db, "SELECT * FROM tanks")
+    params = list_parameters(db)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for tank in tanks:
+            df = get_tank_export_df(db, tank["id"], params)
+            if not df.empty:
+                # Sheet names are limited to 31 chars
+                sheet_name = re.sub(r'[\\/*?:[\]]', '', tank["name"])[:31]
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+        
+        # Check if no data exists to avoid empty file error
+        if not writer.sheets:
+            pd.DataFrame(columns=["No Data Found"]).to_excel(writer, sheet_name="Empty")
 
-    <div class="card mb-4 border-primary">
-        <div class="card-body">
-            <h5 class="card-title">1. Get the Template</h5>
-            <p class="text-muted small">Download our formatted Excel file to ensure your data matches the system requirements.</p>
-            <a href="/admin/download-template" class="btn btn-outline-primary btn-sm">
-                <i class="bi bi-download"></i> Download Template (.xlsx)
-            </a>
-        </div>
-    </div>
+    db.close()
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        headers={'Content-Disposition': 'attachment; filename="Full_Reef_Data_Export.xlsx"'},
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
-    <div class="card shadow-sm">
-        <div class="card-body">
-            <h5 class="card-title">2. Upload your Data</h5>
-            
-            {% if error %}
-                <div class="alert alert-danger">{{ error }}</div>
-            {% endif %}
-            {% if success %}
-                <div class="alert alert-success">{{ success }}</div>
-            {% endif %}
+@app.get("/tanks/{tank_id}/export")
+def export_single_tank(tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT name FROM tanks WHERE id=?", (tank_id,))
+    params = list_parameters(db)
+    
+    df = get_tank_export_df(db, tank_id, params)
+    db.close()
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Readings')
+    
+    output.seek(0)
+    filename = f"{slug_key(tank['name'])}_export.xlsx"
+    return StreamingResponse(
+        output,
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
-            <form action="/admin/upload-excel" method="post" enctype="multipart/form-data" class="mt-3">
-                <div class="mb-3">
-                    <label for="formFile" class="form-label">Select Excel File</label>
-                    <input class="form-control" type="file" id="formFile" name="file" accept=".xlsx, .xls" required>
-                </div>
-                <button type="submit" class="btn btn-primary w-100">Upload and Process</button>
-            </form>
-        </div>
-    </div>
-</div>
-{% endblock %}
+# --- Helper Function for Data Structuring ---
+def get_tank_export_df(db, tank_id, params):
+    # Get all samples for this tank
+    samples = q(db, "SELECT id, taken_at, notes FROM samples WHERE tank_id=? ORDER BY taken_at DESC", (tank_id,))
+    if not samples:
+        return pd.DataFrame()
+
+    data_list = []
+    for s in samples:
+        row = {
+            "Date": s["taken_at"],
+            "Notes": s["notes"]
+        }
+        # Get values for this sample
+        values = q(db, """
+            SELECT pd.name, sv.value FROM sample_values sv 
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id 
+            WHERE sv.sample_id=?""", (s["id"],))
+        
+        # Map values to columns
+        val_map = {v["name"]: v["value"] for v in values}
+        for p in params:
+            row[p["name"]] = val_map.get(p["name"])
+        
+        data_list.append(row)
+
+    return pd.DataFrame(data_list)
