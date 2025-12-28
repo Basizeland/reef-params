@@ -97,7 +97,7 @@
         <tr>
           <th>Date</th>
           {% for p in params %}
-            <th class="text-center">{{ p.name }} <small class="text-muted fw-normal">({{ p.unit }})</small></th>
+            <th class="text-center">{{ p.name }}</th>
           {% endfor %}
           <th>Notes</th>
           <th class="text-end">Actions</th>
@@ -112,7 +112,12 @@
               <td class="text-center">
                  {% set sv = sample_values.get(s.id, {}) %}
                  {% set val = sv.get(p.id) %}
-                 {{ val|fmt2 if val is not none else "-" }}
+                 
+                 {% if val is not none %}
+                    {{ val|fmt2 }} <small class="text-muted" style="font-size: 0.75em;">{{ p.unit }}</small>
+                 {% else %}
+                    <span class="text-muted">-</span>
+                 {% endif %}
               </td>
             {% endfor %}
 
