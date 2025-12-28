@@ -1418,28 +1418,50 @@ def import_page(request: Request):
 @app.get("/admin/download-template")
 def download_template():
     db = get_db()
+    # 1. Get your actual parameters for column headers
     params = list_parameters(db)
+    # 2. Get your actual tanks to pre-fill the rows
+    tanks = q(db, "SELECT name, volume_l FROM tanks ORDER BY name")
     db.close()
     
-    # Define columns based on your current scientific naming convention
+    # Define columns
     cols = ["Tank Name", "Volume (L)", "Date (YYYY-MM-DD)", "Notes"]
     for p in params:
         cols.append(p["name"])
     
+    # Create the DataFrame
     df = pd.DataFrame(columns=cols)
-    # Add a sample row to help the user
-    example = ["My Display Tank", 450, date.today().isoformat(), "Weekly log example"] + [None] * (len(cols) - 4)
-    df.loc[0] = example
     
-    # Write to a buffer in memory
+    # 3. Pre-fill with your existing tanks
+    today_str = date.today().isoformat()
+    for i, t in enumerate(tanks):
+        # We create a pre-filled row for every tank
+        row_data = [t["name"], t["volume_l"], today_str, "Manual Import"]
+        # Add empty cells for the parameter values
+        row_data += [None] * (len(cols) - 4)
+        df.loc[i] = row_data
+    
+    # If you have no tanks yet, add one example row so the file isn't empty
+    if len(tanks) == 0:
+        df.loc[0] = ["My First Tank", 450, today_str, "Example Entry"] + [None] * (len(cols) - 4)
+    
+    # Write to memory buffer
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Readings')
+        df.to_excel(writer, index=False, sheet_name='Log Entries')
+        
+        # Optional: Add some basic formatting to make it look professional
+        workbook  = writer.book
+        worksheet = writer.sheets['Log Entries']
+        header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1})
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+            worksheet.set_column(col_num, col_num, 18) # Make columns wider
     
     output.seek(0)
     
     headers = {
-        'Content-Disposition': 'attachment; filename="Reef_Params_Import_Template.xlsx"'
+        'Content-Disposition': 'attachment; filename="Reef_Log_Template.xlsx"'
     }
     
     return StreamingResponse(
@@ -1447,6 +1469,7 @@ def download_template():
         headers=headers,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+    
 @app.post("/admin/upload-excel")
 async def upload_excel(request: Request, file: UploadFile = File(...)):
     if not file.filename.endswith(('.xlsx', '.xls')):
