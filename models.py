@@ -46,6 +46,12 @@ class Sample(Base, DictMixin):
     tank = relationship("Tank", back_populates="samples")
     values = relationship("SampleValue", back_populates="sample", cascade="all, delete-orphan")
 
+    # --- NEW HELPER PROPERTY ---
+    @property
+    def values_dict(self):
+        """Returns a dict of {parameter_id: value} for easy lookup in templates."""
+        return {v.parameter_id: v.value for v in self.values}
+
 class SampleValue(Base, DictMixin):
     __tablename__ = "sample_values"
     sample_id = Column(Integer, ForeignKey("samples.id"), primary_key=True)
