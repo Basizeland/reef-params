@@ -3,10 +3,7 @@
 <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-4">
   <div>
     <h1 class="display-6 fw-bold mb-1">Dose plan</h1>
-    <div class="text-secondary">
-      Calculates dosing to reach the <strong>midpoint</strong> of your target range.<br>
-      <small>Based on your most recent test results.</small>
-    </div>
+    <div class="text-secondary">Based on most recent test results and your targets.</div>
   </div>
   <div class="d-flex align-items-center gap-2">
     <span class="badge rounded-pill bg-light text-dark border">
@@ -19,100 +16,151 @@
   {% for plan in plans %}
     <div class="card shadow-sm mb-4">
       <div class="card-body">
-        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 border-bottom pb-3">
           <div class="d-flex align-items-center gap-2 flex-wrap">
             <h2 class="h4 fw-bold mb-0">{{ plan.tank["name"] }}</h2>
-            <a class="btn btn-sm btn-outline-secondary" href="/tanks/{{ plan.tank['id'] }}">View</a>
+            <a class="btn btn-sm btn-outline-secondary" href="/tanks/{{ plan.tank['id'] }}">View Tank</a>
           </div>
           <div class="text-secondary small">
-            Effective volume: {{ plan.eff_volume_l|default(0)|round(0) }} L • Total dose: {{ plan.total_ml|fmt2 }} ml
+            <span class="me-2">Vol: {{ plan.eff_volume_l|default(0)|round(0) }} L</span>
+            <span class="badge bg-primary-subtle text-primary-emphasis rounded-pill">Total: {{ plan.total_ml|fmt2 }} ml</span>
           </div>
         </div>
 
         {% if plan.rows and plan.rows|length %}
-          <div class="table-responsive">
+          
+          <div class="table-responsive d-none d-lg-block">
             <table class="table align-middle">
               <thead class="table-light">
                 <tr>
-                  <th style="min-width: 180px;">Additive</th>
-                  <th style="min-width: 180px;">Parameter</th>
-                  <th class="text-end" style="min-width: 120px;">Current</th>
-                  <th class="text-end" style="min-width: 120px;">Target (Mid)</th>
-                  <th style="min-width: 260px;">Schedule</th>
-                  <th class="text-center" style="min-width: 120px;">Dosed</th>
+                  <th style="width: 20%;">Additive</th>
+                  <th style="width: 15%;">Parameter</th>
+                  <th class="text-end" style="width: 10%;">Current</th>
+                  <th class="text-end" style="width: 10%;">Target</th>
+                  <th style="width: 30%;">Schedule</th>
+                  <th class="text-center" style="width: 15%;">Dosed</th>
                 </tr>
               </thead>
               <tbody>
                 {% for r in plan.rows %}
-                  {% if r.additives and r.additives|length > 0 %}
-                    {% for a in r.additives %}
-                      <tr>
-                        <td class="fw-semibold">{{ a.additive_name }}</td>
-                        <td>{{ r.parameter }}</td>
-                        <td class="text-end">{{ r.latest|fmt2 }} {{ r.unit }}</td>
-                        <td class="text-end">{{ r.target|fmt2 }} {{ r.unit }}</td>
-                        <td>
-                          {% if a.schedule and a.schedule|length %}
-                            <div class="small text-secondary">
-                              {{ a.schedule|length }} day(s) • {{ a.total_ml|fmt2 }} ml total • {{ a.per_day_ml|fmt2 }} ml/day
-                            </div>
-                            <div class="d-flex flex-wrap gap-2 mt-1">
-                              {% for s in a.schedule %}
-                                <span class="badge bg-light text-dark border">
-                                  Day {{ s.day }}: {{ s.ml|fmt2 }} ml
-                                </span>
-                              {% endfor %}
-                            </div>
-                          {% else %}
-                            <span class="text-secondary small">—</span>
-                          {% endif %}
-                        </td>
-                        <td class="text-center">
-                          {% if a.schedule and a.schedule|length %}
-                            <div class="d-inline-flex flex-column gap-1">
-                              {% for s in a.schedule %}
-                                <label class="form-check form-check-inline m-0">
-                                  <input class="form-check-input dose-check"
-                                         type="checkbox"
-                                         data-tank-id="{{ plan.tank['id'] }}"
-                                         data-additive-id="{{ a.additive_id }}"
-                                         data-parameter="{{ r.parameter }}"
-                                         data-planned-date="{{ s.date }}"
-                                         data-amount-ml="{{ s.ml }}"
-                                         {% if s.checked %}checked{% endif %}>
-                                  <span class="form-check-label small">Day {{ s.day }}</span>
-                                </label>
-                              {% endfor %}
-                            </div>
-                          {% else %}
-                            <span class="text-secondary small">—</span>
-                          {% endif %}
-                        </td>
-                      </tr>
-                    {% endfor %}
-                  {% else %}
-                    <tr class="table-warning">
-                      <td class="text-danger fw-bold">No Additive Linked</td>
-                      <td>{{ r.parameter }}</td>
-                      <td class="text-end">{{ r.latest|fmt2 }} {{ r.unit }}</td>
-                      <td class="text-end">{{ r.target|fmt2 }} {{ r.unit }}</td>
-                      <td colspan="2" class="text-muted small fst-italic">
-                        Go to <a href="/additives" class="alert-link">Additives</a> and link a product to <strong>{{ r.parameter }}</strong>.
+                  {% for a in r.additives %}
+                    <tr>
+                      <td class="fw-semibold">{{ a.additive_name }}</td>
+                      <td><span class="badge bg-light text-secondary border fw-normal">{{ r.parameter }}</span></td>
+                      <td class="text-end">{{ r.latest|fmt2 }} <small class="text-muted">{{ r.unit }}</small></td>
+                      <td class="text-end">{{ r.target|fmt2 }} <small class="text-muted">{{ r.unit }}</small></td>
+                      <td>
+                        {% if a.schedule and a.schedule|length %}
+                          <div class="small text-secondary mb-1">
+                            {{ a.schedule|length }} day(s) • {{ a.total_ml|fmt2 }} ml total
+                          </div>
+                          <div class="d-flex flex-wrap gap-1">
+                            {% for s in a.schedule %}
+                              <span class="badge bg-light text-dark border fw-normal">
+                                D{{ s.day }}: {{ s.ml|fmt2 }}ml
+                              </span>
+                            {% endfor %}
+                          </div>
+                        {% else %}
+                          <span class="text-secondary small">—</span>
+                        {% endif %}
+                      </td>
+                      <td class="text-center">
+                        {% if a.schedule and a.schedule|length %}
+                          <div class="d-flex flex-column gap-1 align-items-center">
+                            {% for s in a.schedule %}
+                              <label class="form-check form-check-inline m-0 pointer" style="cursor: pointer;">
+                                <input class="form-check-input dose-check"
+                                       type="checkbox"
+                                       data-tank-id="{{ plan.tank['id'] }}"
+                                       data-additive-id="{{ a.additive_id }}"
+                                       data-parameter="{{ r.parameter }}"
+                                       data-planned-date="{{ s.date }}"
+                                       data-amount-ml="{{ s.ml }}"
+                                       {% if s.checked %}checked{% endif %}>
+                                <span class="form-check-label small user-select-none">Day {{ s.day }}</span>
+                              </label>
+                            {% endfor %}
+                          </div>
+                        {% else %}
+                          <span class="text-secondary small">—</span>
+                        {% endif %}
                       </td>
                     </tr>
-                  {% endif %}
+                  {% endfor %}
                 {% endfor %}
               </tbody>
             </table>
           </div>
+
+          <div class="d-lg-none">
+            {% for r in plan.rows %}
+              {% for a in r.additives %}
+                <div class="card mb-3 bg-light bg-opacity-25 border">
+                  <div class="card-body p-3">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                      <div>
+                        <div class="fw-bold text-dark">{{ a.additive_name }}</div>
+                        <div class="small text-muted">{{ r.parameter }}</div>
+                      </div>
+                      <span class="badge bg-white text-dark border">
+                        {{ a.total_ml|fmt2 }} ml total
+                      </span>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center bg-white border rounded p-2 mb-3">
+                      <div class="text-center w-50 border-end">
+                        <div class="text-muted" style="font-size: 0.7rem;">CURRENT</div>
+                        <div class="fw-medium">{{ r.latest|fmt2 }} {{ r.unit }}</div>
+                      </div>
+                      <div class="text-center w-50">
+                        <div class="text-muted" style="font-size: 0.7rem;">TARGET</div>
+                        <div class="fw-medium">{{ r.target|fmt2 }} {{ r.unit }}</div>
+                      </div>
+                    </div>
+
+                    {% if a.schedule and a.schedule|length %}
+                      <h6 class="small fw-bold text-muted mb-2 text-uppercase">Schedule & Log</h6>
+                      <div class="d-flex flex-column gap-2">
+                        {% for s in a.schedule %}
+                          <label class="d-flex align-items-center justify-content-between p-2 rounded border bg-white" style="cursor: pointer;">
+                             <div class="d-flex align-items-center gap-2">
+                                <input class="form-check-input fs-5 m-0 dose-check"
+                                       type="checkbox"
+                                       data-tank-id="{{ plan.tank['id'] }}"
+                                       data-additive-id="{{ a.additive_id }}"
+                                       data-parameter="{{ r.parameter }}"
+                                       data-planned-date="{{ s.date }}"
+                                       data-amount-ml="{{ s.ml }}"
+                                       {% if s.checked %}checked{% endif %}>
+                                <span class="fw-medium">Day {{ s.day }}</span>
+                             </div>
+                             <span class="badge bg-light text-dark border">{{ s.ml|fmt2 }} ml</span>
+                          </label>
+                        {% endfor %}
+                      </div>
+                    {% else %}
+                      <div class="text-center text-muted small fst-italic py-2">No dosing required</div>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endfor %}
+            {% endfor %}
+          </div>
+
         {% else %}
-          <div class="text-secondary">Nothing to dose right now.</div>
+          <div class="text-center py-4 text-muted">
+            <p class="mb-0">All parameters are within target range.</p>
+          </div>
         {% endif %}
       </div>
     </div>
   {% endfor %}
 {% else %}
-  <div class="alert alert-info">No tanks found.</div>
+  <div class="alert alert-light border shadow-sm text-center py-5">
+    <h4 class="alert-heading h5">No Dose Plans Available</h4>
+    <p class="mb-0 text-muted">Ensure you have created tanks, set targets, and logged recent test results.</p>
+  </div>
 {% endif %}
 
 <script>
@@ -124,6 +172,9 @@
     const parameter = input.dataset.parameter;
     const amountMl = input.dataset.amountMl;
     const checked = input.checked ? 1 : 0;
+
+    // Visual Feedback (optional): disable input briefly
+    input.disabled = true;
 
     try{
       const res = await fetch("/tools/dose-plan/check", {
@@ -142,9 +193,11 @@
         throw new Error(await res.text());
       }
     }catch(e){
-      // revert UI state on error
+      // Revert UI state on error
       input.checked = !input.checked;
       alert("Failed to update dose check. " + (e && e.message ? e.message : ""));
+    } finally {
+      input.disabled = false;
     }
   }
 
