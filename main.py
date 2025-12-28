@@ -750,30 +750,77 @@ def parameter_edit(request: Request, param_id: int):
 def parameter_save(param_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), sort_order: Optional[str] = Form(None), max_daily_change: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
+    
+    # 1. Prepare Data
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     order = int(to_float(sort_order) or 0)
     mdc = to_float(max_daily_change)
-    data = (name.strip(), (unit or "").strip() or None, mdc, order, is_active)
-    if param_id and str(param_id).strip().isdigit():
-        pid = int(param_id)
-        old = one(db, "SELECT * FROM parameter_defs WHERE id=?", (pid,))
-        old_name = (old["name"] if old else "").strip()
-        new_name = name.strip()
-        if old_name and new_name and old_name != new_name:
-            existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (new_name,))
-            existing_id = int(existing["id"]) if existing else None
-            for tbl, col in (("parameters", "name"), ("targets", "parameter"), ("additives", "parameter"), ("test_kits", "parameter")):
-                if table_exists(db, tbl): cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new_name, old_name))
-            if existing_id is not None and existing_id != pid:
-                keep_id, drop_id = max(existing_id, pid), min(existing_id, pid)
-                cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, keep_id))
-                if table_exists(db, "sample_values"): cur.execute("UPDATE sample_values SET parameter_id=? WHERE parameter_id=?", (keep_id, drop_id))
-                cur.execute("DELETE FROM parameter_defs WHERE id=?", (drop_id,))
-            else: cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, pid))
-        else: cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, pid))
-    else: cur.execute("INSERT INTO parameter_defs (name, unit, max_daily_change, sort_order, active) VALUES (?, ?, ?, ?, ?)", data)
-    db.commit()
-    db.close()
+    clean_name = name.strip()
+    
+    if not clean_name:
+        db.close()
+        return redirect("/settings/parameters")
+
+    data = (clean_name, (unit or "").strip() or None, mdc, order, is_active)
+
+    try:
+        # 2. Logic for Update/Merge
+        if param_id and str(param_id).strip().isdigit():
+            pid = int(param_id)
+            old = one(db, "SELECT * FROM parameter_defs WHERE id=?", (pid,))
+            old_name = (old["name"] if old else "").strip()
+            
+            # Check if we are renaming
+            if old_name and clean_name and old_name != clean_name:
+                # Does the target name already exist?
+                existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (clean_name,))
+                
+                if existing:
+                    # MERGE SCENARIO: 
+                    existing_id = int(existing["id"])
+                    
+                    if table_exists(db, "sample_values"):
+                        cur.execute("UPDATE sample_values SET parameter_id=? WHERE parameter_id=?", (existing_id, pid))
+                    
+                    for tbl, col in (("parameters", "name"), ("targets", "parameter"), ("additives", "parameter"), ("test_kits", "parameter")):
+                        if table_exists(db, tbl): 
+                            cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
+
+                    cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
+                    cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, existing_id))
+                    
+                else:
+                    # RENAME SCENARIO (No conflict):
+                    for tbl, col in (("parameters", "name"), ("targets", "parameter"), ("additives", "parameter"), ("test_kits", "parameter")):
+                        if table_exists(db, tbl): 
+                            cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
+                            
+                    cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, pid))
+            else:
+                # SIMPLE UPDATE
+                cur.execute("UPDATE parameter_defs SET name=?, unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (*data, pid))
+        
+        # 3. Logic for Insert
+        else:
+            existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (clean_name,))
+            if existing:
+                cur.execute("UPDATE parameter_defs SET unit=?, max_daily_change=?, sort_order=?, active=? WHERE id=?", (data[1], data[2], data[3], data[4], existing["id"]))
+            else:
+                cur.execute("INSERT INTO parameter_defs (name, unit, max_daily_change, sort_order, active) VALUES (?, ?, ?, ?, ?)", data)
+
+        db.commit()
+        
+    except sqlite3.IntegrityError:
+        print("Database Integrity Error ignored.")
+        db.rollback()
+        
+    except Exception as e:
+        print(f"Error saving parameter: {e}")
+        db.rollback()
+        
+    finally:
+        db.close()
+        
     return redirect("/settings/parameters")
 
 @app.post("/settings/parameters/{param_id}/delete")
