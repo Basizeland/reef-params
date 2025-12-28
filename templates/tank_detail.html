@@ -82,10 +82,13 @@
     <h5 class="card-title mb-0">Log</h5>
   </div>
   <div class="table-responsive">
-    <table class="table table-hover mb-0 align-middle">
+    <table class="table table-hover mb-0 align-middle text-nowrap">
       <thead class="table-light">
         <tr>
           <th>Date</th>
+          {% for p in params %}
+            <th class="text-center">{{ p.name }} <small class="text-muted fw-normal">({{ p.unit }})</small></th>
+          {% endfor %}
           <th>Notes</th>
           <th class="text-end">Actions</th>
         </tr>
@@ -94,7 +97,15 @@
         {% for s in recent_samples %}
           <tr>
             <td class="fw-medium">{{ s.taken_at|dtfmt }}</td>
-            <td class="text-muted small">{{ s.notes or "" }}</td>
+            
+            {% for p in params %}
+              <td class="text-center">
+                 {% set val = s.values.get(p.id) if s.values else None %}
+                 {{ val|fmt2 if val is not none else "-" }}
+              </td>
+            {% endfor %}
+
+            <td class="text-muted small text-wrap" style="max-width: 200px;">{{ s.notes or "" }}</td>
             <td class="text-end">
                <a href="/tanks/{{ tank.id }}/samples/{{ s.id }}" class="btn btn-sm btn-light">View</a>
             </td>
@@ -106,62 +117,91 @@
 </div>
 
 <script>
-  const seriesData = {{ series|tojson }};
-  const targets = {{ chart_targets|tojson }};
-  
-  const ctx = document.getElementById('historyChart');
-  
-  const labels = seriesData.map(d => {
-    const date = new Date(d.x);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-  });
-  const dataPoints = seriesData.map(d => d.y);
+  document.addEventListener('DOMContentLoaded', function() {
+      const seriesData = {{ series|tojson }};
+      const targets = {{ chart_targets|tojson }};
+      
+      const ctx = document.getElementById('historyChart');
 
-  // Calculate annotation lines for Chart.js
-  const annotations = {};
-  if (targets.length > 0) {
-      const t = targets[0]; // Active parameter target
-      if (t.low !== null) {
-          annotations.lineLow = {
-              type: 'line', yMin: t.low, yMax: t.low, borderColor: 'rgba(25, 135, 84, 0.6)', borderWidth: 2, borderDash: [5, 5], label: { content: 'Low: ' + t.low, enabled: true, position: 'start' }
-          };
+      // 1. Data Safety Check
+      if (!seriesData || seriesData.length === 0) {
+          // If no data, we could draw an empty chart or just return
+          // returning prevents a chartjs error on empty datasets
+          if(ctx) {
+             // Optional: Display "No Data" text
+             ctx.getContext('2d').fillText("No data available for this parameter", 10, 50);
+          }
+          return; 
       }
-      if (t.high !== null) {
-          annotations.lineHigh = {
-              type: 'line', yMin: t.high, yMax: t.high, borderColor: 'rgba(25, 135, 84, 0.6)', borderWidth: 2, borderDash: [5, 5], label: { content: 'High: ' + t.high, enabled: true, position: 'start' }
-          };
-      }
-  }
 
-  new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: '{{ selected_parameter_id }}',
-        data: dataPoints,
-        borderColor: '#0d6efd',
-        backgroundColor: 'rgba(13, 110, 253, 0.1)',
-        borderWidth: 2,
-        tension: 0.3,
-        fill: true,
-        pointRadius: 4,
-        pointHoverRadius: 6
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        annotation: { annotations: annotations }
-      },
-      scales: {
-        y: { beginAtZero: false, grid: { borderDash: [2, 4] } },
-        x: { display: false }
+      const labels = seriesData.map(d => {
+        const date = new Date(d.x);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+      });
+      const dataPoints = seriesData.map(d => d.y);
+
+      // 2. Prepare Annotations (Target Lines)
+      const annotations = {};
+      if (targets.length > 0) {
+          const t = targets[0]; 
+          if (t.low !== null) {
+              annotations.lineLow = {
+                  type: 'line', yMin: t.low, yMax: t.low, 
+                  borderColor: 'rgba(25, 135, 84, 0.6)', borderWidth: 2, borderDash: [5, 5], 
+                  label: { content: 'Low: ' + t.low, enabled: true, position: 'start' }
+              };
+          }
+          if (t.high !== null) {
+              annotations.lineHigh = {
+                  type: 'line', yMin: t.high, yMax: t.high, 
+                  borderColor: 'rgba(25, 135, 84, 0.6)', borderWidth: 2, borderDash: [5, 5], 
+                  label: { content: 'High: ' + t.high, enabled: true, position: 'start' }
+              };
+          }
       }
-    }
+
+      // 3. Configure Plugins safely
+      const chartPlugins = {
+        legend: { display: false }
+      };
+
+      // Only add annotation config if the plugin is actually registered in Chart.js
+      if (typeof window['chartjs-plugin-annotation'] !== 'undefined' || Chart.registry.plugins.get('annotation')) {
+          chartPlugins.annotation = { annotations: annotations };
+      } else {
+          console.warn("ChartJS Annotation plugin not found. Target lines will be hidden.");
+      }
+
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: '{{ selected_parameter_id }}',
+            data: dataPoints,
+            borderColor: '#0d6efd',
+            backgroundColor: 'rgba(13, 110, 253, 0.1)',
+            borderWidth: 2,
+            tension: 0.3,
+            fill: true,
+            pointRadius: 4,
+            pointHoverRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: chartPlugins,
+          scales: {
+            y: { beginAtZero: false, grid: { borderDash: [2, 4] } },
+            x: { 
+                display: false,
+                grid: { display: false } 
+            }
+          }
+        }
+      });
   });
 </script>
 {% endblock %}
