@@ -97,35 +97,32 @@
         <tr>
           <th>Date</th>
           {% for p in params %}
-            <th class="text-center">{{ p.name }}</th>
+            {% if p.name not in ['Temperature', 'Salinity'] %}
+                <th class="text-center">{{ p.name }}</th>
+            {% endif %}
           {% endfor %}
-          <th>Notes</th>
-          <th class="text-end">Actions</th>
-        </tr>
+          </tr>
       </thead>
       <tbody>
         {% for s in recent_samples %}
-          <tr>
+          <tr style="cursor: pointer;" onclick="window.location.href='/tanks/{{ tank.id }}/samples/{{ s.id }}'">
             <td class="fw-medium">{{ s.taken_at|dtfmt }}</td>
             
             {% for p in params %}
-              <td class="text-center">
-                 {% set sv = sample_values.get(s.id, {}) %}
-                 {% set val = sv.get(p.id) %}
-                 
-                 {% if val is not none %}
-                    {{ val|fmt2 }} <small class="text-muted" style="font-size: 0.75em;">{{ p.unit }}</small>
-                 {% else %}
-                    <span class="text-muted">-</span>
-                 {% endif %}
-              </td>
+              {% if p.name not in ['Temperature', 'Salinity'] %}
+                  <td class="text-center">
+                     {% set sv = sample_values.get(s.id, {}) %}
+                     {% set val = sv.get(p.id) %}
+                     
+                     {% if val is not none %}
+                        {{ val|fmt2 }} <small class="text-muted" style="font-size: 0.75em;">{{ p.unit }}</small>
+                     {% else %}
+                        <span class="text-muted">-</span>
+                     {% endif %}
+                  </td>
+              {% endif %}
             {% endfor %}
-
-            <td class="text-muted small text-wrap" style="max-width: 200px;">{{ s.notes or "" }}</td>
-            <td class="text-end">
-               <a href="/tanks/{{ tank.id }}/samples/{{ s.id }}" class="btn btn-sm btn-light">View</a>
-            </td>
-          </tr>
+            </tr>
         {% endfor %}
       </tbody>
     </table>
