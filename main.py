@@ -33,7 +33,7 @@ def fmt2(v: Any) -> str:
         fv = float(v)
     except Exception: return str(v)
     
-    # NEW: Updated logic for 4 decimal places
+    # Updated logic for 4 decimal places
     s = f"{fv:.4f}" 
     if "." in s:
         s = s.rstrip("0").rstrip(".")
@@ -184,7 +184,7 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
     else:
         cur.execute("INSERT INTO parameters (sample_id, name, value, unit) VALUES (?, ?, ?, ?)", (sample_id, pname, value, unit or None))
 
-# --- DATABASE MODELS ---
+# --- DATABASE MODELS (SQLAlchemy) ---
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
@@ -231,12 +231,6 @@ class Sample(Base, DictMixin):
 
     tank = relationship("Tank", back_populates="samples")
     values = relationship("SampleValue", back_populates="sample", cascade="all, delete-orphan")
-
-    # --- NEW HELPER PROPERTY FOR TABLE DISPLAY ---
-    @property
-    def values_dict(self):
-        """Returns a dict of {parameter_id: value} for easy lookup in templates."""
-        return {v.parameter_id: v.value for v in self.values}
 
 class SampleValue(Base, DictMixin):
     __tablename__ = "sample_values"
@@ -433,6 +427,7 @@ def tank_detail(request: Request, tank_id: int):
     if not tank:
         db.close()
         return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": None, "params": [], "recent_samples": [], "sample_values": {}, "latest_vals": {}, "status_by_param_id": {}, "targets": [], "series": [], "chart_targets": [], "selected_parameter_id": "", "format_value": format_value, "target_map": {}})
+    
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
     for _row in samples_rows:
@@ -440,8 +435,10 @@ def tank_detail(request: Request, tank_id: int):
         dt = parse_dt_any(_s.get("taken_at"))
         if dt is not None: _s["taken_at"] = dt
         samples.append(_s)
+        
     targets = q(db, "SELECT * FROM targets WHERE tank_id=? ORDER BY parameter", (tank_id,))
     series_map, sample_values, unit_by_name = {}, {}, {}
+    
     if samples:
         sample_ids = [s["id"] for s in samples]
         placeholders = ",".join(["?"] * len(sample_ids))
@@ -450,37 +447,54 @@ def tank_detail(request: Request, tank_id: int):
             rows = q(db, f"SELECT pd.name AS name, sv.value AS value, COALESCE(pd.unit, '') AS unit, s.taken_at AS taken_at, s.id AS sample_id FROM sample_values sv JOIN parameter_defs pd ON pd.id = sv.parameter_id JOIN samples s ON s.id = sv.sample_id WHERE sv.sample_id IN ({placeholders}) ORDER BY s.taken_at ASC", tuple(sample_ids))
         else:
             rows = q(db, f"SELECT p.name AS name, p.value AS value, COALESCE(pd.unit, p.unit, '') AS unit, s.taken_at AS taken_at, s.id AS sample_id FROM parameters p JOIN samples s ON s.id = p.sample_id LEFT JOIN parameter_defs pd ON pd.name = p.name WHERE p.sample_id IN ({placeholders}) ORDER BY s.taken_at ASC", tuple(sample_ids))
+            
         for r in rows:
             name = r["name"]
             if name is None: continue
             try: value = float(r["value"]) if r["value"] is not None else None
             except Exception: value = r["value"]
-            taken_at = r["taken_at"]
+            
+            # --- FIX FOR CHART: Ensure date is ISO format string ---
+            raw_date = r["taken_at"]
+            dt_obj = parse_dt_any(raw_date)
+            iso_date = dt_obj.isoformat() if dt_obj else str(raw_date)
+            # -------------------------------------------------------
+
             sid = int(r["sample_id"])
             if value is not None:
                 try: y = float(value)
                 except Exception: y = None
-                if y is not None: series_map.setdefault(name, []).append({"x": taken_at, "y": y})
+                if y is not None: series_map.setdefault(name, []).append({"x": iso_date, "y": y})
+            
+            # Ensure sample_values keys are integers for template lookup
             sample_values.setdefault(sid, {})[name] = value
+            
             try: u = r["unit"] or ""
             except Exception: u = ""
             if name not in unit_by_name and u: unit_by_name[name] = u
+
     all_param_names = set(series_map.keys())
     if samples: all_param_names.update(sample_values.get(int(samples[0]["id"]), {}).keys())
     available_params = sorted(all_param_names, key=lambda s: s.lower())
+    
     selected_parameter_id = request.query_params.get("parameter") or ""
-    if not selected_parameter_id or selected_parameter_id not in series_map: selected_parameter_id = available_params[0] if available_params else ""
+    if not selected_parameter_id or selected_parameter_id not in series_map: 
+        selected_parameter_id = available_params[0] if available_params else ""
+        
     series = series_map.get(selected_parameter_id, [])
+    
     chart_targets = []
     for t in targets:
         if (t["parameter"] or "") == selected_parameter_id:
-            # Fallback to legacy low/high if target_low/target_high are missing
             t_low = row_get(t, "target_low") if row_get(t, "target_low") is not None else row_get(t, "low")
             t_high = row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high")
             chart_targets.append({"parameter": t["parameter"], "low": t_low, "high": t_high, "unit": row_get(t, "unit") or unit_by_name.get(selected_parameter_id, "")})
+            
     params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
+    
     latest_by_param_id = dict(sample_values.get(int(samples[0]["id"]), {})) if samples else {}
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
+    
     status_by_param_id = {}
     for pname in available_params:
         v = latest_by_param_id.get(pname)
@@ -488,7 +502,6 @@ def tank_detail(request: Request, tank_id: int):
         t = targets_by_param.get(pname)
         if not t: continue
         al, ah, tl, th = row_get(t, "alert_low"), row_get(t, "alert_high"), row_get(t, "target_low"), row_get(t, "target_high")
-        # fallback for status checks
         if tl is None: tl = row_get(t, "low")
         if th is None: th = row_get(t, "high")
         try:
@@ -499,6 +512,7 @@ def tank_detail(request: Request, tank_id: int):
             if th is not None and fv > float(th): status_by_param_id[pname] = "warn"; continue
             status_by_param_id[pname] = "ok"
         except Exception: continue
+        
     recent_samples = samples[:10] if samples else []
     db.close()
     return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
