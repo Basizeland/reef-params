@@ -1,16 +1,5 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="alert alert-warning mb-4">
-    <h5 class="alert-heading">🛠️ Debug Information</h5>
-    <p>Please share a screenshot of this box:</p>
-    <ul>
-        <li><strong>Series Data (Chart):</strong> {{ series|length }} points found.</li>
-        <li><strong>First Chart Point:</strong> {{ series[0] if series else 'None' }}</li>
-        <li><strong>Recent Samples (Log):</strong> {{ recent_samples|length }} rows found.</li>
-        <li><strong>Sample #1 ID:</strong> {{ recent_samples[0].id if recent_samples else 'None' }}</li>
-        <li><strong>Sample #1 Raw Values:</strong> {{ recent_samples[0].values_dict if recent_samples else 'None' }}</li>
-    </ul>
-</div>
 <div class="d-flex align-items-center justify-content-between mb-4">
   <div>
     <h1 class="h2 mb-0 fw-bold">{{ tank.name }}</h1>
@@ -129,43 +118,34 @@
 
 <script>
   document.addEventListener('DOMContentLoaded', function() {
-      // 1. Get Data
       const seriesData = {{ series|tojson }};
       const targets = {{ chart_targets|tojson }};
       const ctx = document.getElementById('historyChart');
 
-      console.log("Chart Data Received:", seriesData); // Check your browser console (F12) to see this
-
-      // 2. Safety Check: Is there data?
+      // 1. Safety Check
       if (!seriesData || seriesData.length === 0) {
           if (ctx) {
-             const msg = "No history data found for this parameter.";
              const c = ctx.getContext('2d');
              c.font = "14px sans-serif";
              c.fillStyle = "#6c757d";
              c.textAlign = "center";
-             c.fillText(msg, ctx.width / 2, ctx.height / 2);
+             c.fillText("No history data found for this parameter.", ctx.width / 2, ctx.height / 2);
           }
           return; 
       }
 
-      // 3. Robust Date Parsing Helper
-      // Handles ISO (2025-12-28) and EU/AU (28/12/2025) formats
+      // 2. Robust Date Parsing (Fixes the blank chart)
       function parseDate(dateStr) {
           if (!dateStr) return new Date();
           
-          // Try standard parsing first
-          let d = new Date(dateStr);
+          // Fix 1: Replace space with T (e.g., "2024-12-09 10:00" -> "2024-12-09T10:00")
+          // This makes the format ISO-8601 compliant, which JS parses reliably.
+          let cleanStr = dateStr.replace(" ", "T");
+          
+          let d = new Date(cleanStr);
           if (!isNaN(d.getTime())) return d;
 
-          // If invalid, try manually parsing DD/MM/YYYY or DD-MM-YYYY
-          // Assumes format: DD/MM/YYYY HH:MM...
-          const parts = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{1,2}))?/);
-          if (parts) {
-              // parts[1]=Day, parts[2]=Month, parts[3]=Year, parts[4]=Hour, parts[5]=Min
-              return new Date(parts[3], parts[2] - 1, parts[1], parts[4] || 0, parts[5] || 0);
-          }
-          return new Date(); // Fallback
+          return new Date(); 
       }
 
       const labels = seriesData.map(d => {
@@ -175,7 +155,7 @@
       
       const dataPoints = seriesData.map(d => d.y);
 
-      // 4. Prepare Annotations (Target Lines)
+      // 3. Prepare Target Lines
       const annotations = {};
       if (targets && targets.length > 0) {
           const t = targets[0]; 
@@ -195,7 +175,7 @@
           }
       }
 
-      // 5. Configure Plugins safely
+      // 4. Configure Chart
       const chartPlugins = {
         legend: { display: false }
       };
