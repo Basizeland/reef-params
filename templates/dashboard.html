@@ -16,7 +16,7 @@
     {% set ts = c.latest_time if c.latest_time is defined else (latest.taken_at if latest else None) %}
 
     <div class="col">
-      <div class="card h-100 shadow-sm border-0 position-relative">
+      <div class="card h-100 shadow-sm border-0 position-relative card-hover">
         <div class="card-body">
           <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
             <div class="min-w-0">
@@ -84,7 +84,7 @@
   {% endfor %}
 
   <div class="col">
-    <a href="/tanks/new" class="card h-100 shadow-sm border-0 text-decoration-none text-center d-flex align-items-center justify-content-center bg-light text-muted p-5" style="min-height: 250px; border: 2px dashed #dee2e6 !important;">
+    <a href="/tanks/new" class="card h-100 shadow-sm border-0 text-decoration-none text-center d-flex align-items-center justify-content-center bg-light text-muted p-5 card-hover" style="min-height: 250px; border: 2px dashed #dee2e6 !important;">
         <div>
             <div class="display-4 mb-2">+</div>
             <div class="fw-medium">Add New Tank</div>
