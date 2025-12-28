@@ -6,43 +6,70 @@
     <title>Reef Metrics</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="/static/style.css">
     <style>
-        /* Floating logo styling */
-        .brand-icon {
-            font-size: 1.5rem;
-            color: var(--reef-cyan);
+        body { background-color: #f8f9fa; }
+        .navbar-brand { font-weight: 700; letter-spacing: -0.5px; }
+        .card { border-radius: 0.75rem; border: 1px solid rgba(0,0,0,0.05); }
+        .btn { border-radius: 0.5rem; font-weight: 500; }
+        
+        /* Hover effect for dashboard cards */
+        .card-hover {
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .card-hover:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15) !important;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark sticky-top shadow-sm">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 sticky-top shadow-sm">
         <div class="container">
-            <a class="navbar-brand" href="/">
-                <i class="bi bi-moisture brand-icon"></i>
-                Reef<span>Metrics</span>
+            <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" class="bi bi-water" viewBox="0 0 16 16">
+                  <path d="M.036 11.735a.5.5 0 0 1 .5-.214c.244 0 .439.114.656.326.216.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427.218 0 .442.213.655.427.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427.218 0 .442.213.655.427.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427s.442.213.655.427c.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427.218 0 .442.213.655.427.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427"/>
+                  <path d="M.036 8.735a.5.5 0 0 1 .5-.214c.244 0 .439.114.656.326.216.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427.218 0 .442.213.655.427.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427.218 0 .442.213.655.427.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427s.442.213.655.427c.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427.218 0 .442.213.655.427.213.213.432.427.65.427.22 0 .445-.213.66-.426.213-.213.435-.427.655-.427"/>
+                </svg>
+                Reef Metrics
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto align-items-center">
-                    <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/tools/dose-plan"><i class="bi bi-calendar-check"></i> Dose Plan</a></li>
-                    <li class="nav-item ms-lg-3">
-                        <a href="/admin/import" class="btn btn-primary btn-sm rounded-pill px-3">
-                            <i class="bi bi-arrow-down-up"></i> Data Center
-                        </a>
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
+                    
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Tools</a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="/tools/calculators">Dosing Calculator</a></li>
+                            <li><a class="dropdown-item" href="/tools/dose-plan">Dose Planner</a></li>
+                        </ul>
+                    </li>
+
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Manage</a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="/settings/parameters">Parameters</a></li>
+                            <li><a class="dropdown-item" href="/additives">Additives</a></li>
+                            <li><a class="dropdown-item" href="/settings/test-kits">Test Kits</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/admin/import">Import Center</a></li>
+                            <li><a class="dropdown-item" href="/admin/merge-parameters">Merge Params</a></li>
+                        </ul>
                     </li>
                 </ul>
             </div>
         </div>
     </nav>
 
-    <main class="py-4">
+    <div class="container pb-5">
         {% block content %}{% endblock %}
-    </main>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
 </body>
 </html>
