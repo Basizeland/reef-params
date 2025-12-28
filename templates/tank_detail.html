@@ -12,6 +12,21 @@
         </div>
     </div>
 
+    <div class="row row-cols-2 row-cols-md-4 g-3 mb-4">
+        {% for p in params %}
+        {% set data = latest_vals.get(p.name) %}
+        {% set status = status_by_param_id.get(p.name, 'missing') %}
+        <div class="col">
+            <div class="card h-100 shadow-sm border-0 bg-light text-center py-2">
+                <div class="small fw-bold text-muted">{{ p.name }}</div>
+                <div class="h4 mb-0 {% if status == 'danger' %}text-danger{% elif status == 'warn' %}text-warning{% elif status == 'ok' %}text-success{% else %}text-muted{% endif %}">
+                    {{ data.value|fmt2 if data else '--' }} <small class="text-muted" style="font-size: 0.6em;">{{ p.unit }}</small>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
     <div class="card shadow-sm mb-4">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <span class="fw-bold">Parameter History</span>
@@ -32,30 +47,23 @@
         <div class="card-header bg-white fw-bold">Recent Logs</div>
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
-                <thead class="table-light small">
+                <thead class="table-light small text-center">
                     <tr>
-                        <th>Date</th>
+                        <th class="text-start">Date</th>
                         {% for p in params %}
-                        <th class="text-center">{{ p.name }}</th>
+                        <th>{{ p.name }}</th>
                         {% endfor %}
                         <th>Notes</th>
-                        <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody class="small">
+                <tbody class="small text-center">
                     {% for sample in recent_samples %}
                     <tr style="cursor: pointer;" onclick="window.location='/tanks/{{ tank.id }}/samples/{{ sample.id }}'">
-                        <td class="text-nowrap fw-bold">{{ sample.taken_at|dtfmt }}</td>
+                        <td class="text-start fw-bold">{{ sample.taken_at|dtfmt }}</td>
                         {% for p in params %}
-                        <td class="text-center">{{ sample_values[sample.id][p.id]|fmt2 }}</td>
+                        <td>{{ sample_values[sample.id][p.name]|fmt2 }}</td>
                         {% endfor %}
                         <td class="text-muted text-truncate" style="max-width: 150px;">{{ sample.notes or '' }}</td>
-                        <td onclick="event.stopPropagation()">
-                            <form action="/samples/{{ sample.id }}/delete" method="post" onsubmit="return confirm('Delete?');">
-                                <input type="hidden" name="tank_id" value="{{ tank.id }}">
-                                <button type="submit" class="btn text-danger btn-sm p-0"><i class="bi bi-trash"></i></button>
-                            </form>
-                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -76,7 +84,8 @@
                 borderColor: '#0d6efd',
                 backgroundColor: 'rgba(13, 110, 253, 0.1)',
                 tension: 0.2,
-                fill: true
+                fill: true,
+                pointRadius: 4
             }]
         },
         options: {
