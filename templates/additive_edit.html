@@ -1,19 +1,59 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>{% if additive %}Edit{% else %}New{% endif %} Additive</h2>
-<form method="post" action="/additives/save" class="card p-4" style="max-width:500px">
-  {% if additive %}<input type="hidden" name="additive_id" value="{{ additive.id }}">{% endif %}
-  <div class="mb-3"><label>Name</label><input name="name" class="form-control" value="{{ additive.name if additive else '' }}" required></div>
-  <div class="mb-3"><label>Affects Parameter</label>
-    <select name="parameter" class="form-select">
-      {% for p in parameters %}<option {% if additive and additive.parameter == p.name %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
-    </select>
+<form method="post" action="/additives/save">
+  {% if additive %}<input type="hidden" name="additive_id" value="{{ additive.id }}"/>{% endif %}
+  
+  <div class="mb-3">
+    <label class="form-label">Name</label>
+    <input name="name" class="form-control" value="{{ additive.name if additive else '' }}" required autofocus>
   </div>
-  <div class="mb-3"><label>Strength (e.g. raises by 1 unit)</label><input type="number" step="any" name="strength" class="form-control" value="{{ additive.strength if additive else '' }}"></div>
-  <div class="mb-3"><label>Unit (e.g. ppm/L)</label><input name="unit" class="form-control" value="{{ additive.unit if additive else '' }}"></div>
-  <button class="btn btn-success">Save</button>
+
+  <div class="mb-3">
+    <label class="form-label">Parameter to Dose</label>
+    <select name="parameter" class="form-select" required>
+      <option value="" disabled {% if not additive %}selected{% endif %}>Select parameter...</option>
+      {% for p in parameters %}
+        <option value="{{ p.name }}" {% if additive and additive.parameter == p.name %}selected{% endif %}>
+          {{ p.name }}
+        </option>
+      {% endfor %}
+    </select>
+    <div class="form-text">Must match your Target parameter name exactly.</div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col">
+      <label class="form-label">Strength</label>
+      <input name="strength" type="number" step="any" class="form-control" value="{{ additive.strength if additive else '' }}" required>
+    </div>
+    <div class="col">
+      <label class="form-label">Unit</label>
+      <input name="unit" class="form-control" value="{{ additive.unit if additive else 'ml' }}" required>
+      <div class="form-text">e.g. dKH, ppm, etc.</div>
+    </div>
+  </div>
+
+  <div class="mb-3">
+    <label class="form-label">Max Daily Dose (optional)</label>
+    <input name="max_daily" type="number" step="any" class="form-control" value="{{ additive.max_daily if additive else '' }}">
+  </div>
+
+  <div class="mb-3">
+    <label class="form-label">Notes</label>
+    <textarea name="notes" class="form-control" rows="2">{{ additive.notes if additive else '' }}</textarea>
+  </div>
+
+  <div class="mb-4 form-check">
+    <input type="checkbox" class="form-check-input" name="active" id="activeCheck" value="1" {% if not additive or additive.active %}checked{% endif %}>
+    <label class="form-check-label" for="activeCheck">Active (Available for dosing plans)</label>
+  </div>
+
+  <button type="submit" class="btn btn-primary">Save</button>
+  <a href="/additives" class="btn btn-outline-secondary">Cancel</a>
+  
   {% if additive %}
-  <button type="submit" formaction="/additives/{{ additive.id }}/delete" class="btn btn-danger float-end" onclick="return confirm('Delete?');">Delete</button>
+  <button type="submit" formaction="/additives/{{ additive.id }}/delete" class="btn btn-danger float-end" onclick="return confirm('Delete this additive?');">Delete</button>
   {% endif %}
 </form>
 {% endblock %}
