@@ -100,7 +100,7 @@
             
             {% for p in params %}
               <td class="text-center">
-                 {% set val = s.values.get(p.id) if s.values else None %}
+                 {% set val = s.values_dict.get(p.id) if s.values_dict else None %}
                  {{ val|fmt2 if val is not none else "-" }}
               </td>
             {% endfor %}
@@ -125,10 +125,7 @@
 
       // 1. Data Safety Check
       if (!seriesData || seriesData.length === 0) {
-          // If no data, we could draw an empty chart or just return
-          // returning prevents a chartjs error on empty datasets
           if(ctx) {
-             // Optional: Display "No Data" text
              ctx.getContext('2d').fillText("No data available for this parameter", 10, 50);
           }
           return; 
