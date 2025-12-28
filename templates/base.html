@@ -24,8 +24,14 @@
             font-weight: 800; 
             letter-spacing: -0.5px; 
             color: white !important;
+            font-size: 1.5rem;
         }
-        .navbar-brand span { color: var(--reef-cyan); }
+        /* Styling for the "Metrics" part of the logo */
+        .navbar-brand span { 
+            color: var(--reef-cyan); 
+            border-bottom: 2px solid var(--reef-cyan);
+            padding-bottom: 2px;
+        }
         
         .card { border-radius: 0.75rem; border: 1px solid rgba(0,0,0,0.05); }
         .btn { border-radius: 0.5rem; font-weight: 500; }
@@ -40,15 +46,18 @@
             cursor: pointer;
         }
         
-        /* Updated brand icon color */
-        .brand-icon { color: var(--reef-cyan); }
+        /* Brand Icon styling to match the coral/tech logo vibe */
+        .brand-icon { 
+            color: var(--reef-cyan);
+            filter: drop-shadow(0 0 2px rgba(0, 210, 211, 0.5));
+        }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark mb-4 sticky-top shadow-sm">
         <div class="container">
             <a class="navbar-brand d-flex align-items-center gap-2" href="/">
-                <i class="bi bi-moisture brand-icon fs-4"></i>
+                <i class="bi bi-diagram-3-fill brand-icon fs-3"></i>
                 Reef<span>Metrics</span>
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
