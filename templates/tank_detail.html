@@ -119,20 +119,20 @@
 
 <script>
   document.addEventListener('DOMContentLoaded', function() {
-      // Wrap everything in a try/catch to display errors on screen if chart fails
       try {
-          const seriesData = {{ series|tojson }};
-          const targets = {{ chart_targets|tojson }};
+          // --- THE FIX IS HERE: Added |safe to prevent "&quot;" errors ---
+          const seriesData = {{ series|tojson|safe }};
+          const targets = {{ chart_targets|tojson|safe }};
+          // ---------------------------------------------------------------
+
           const ctx = document.getElementById('historyChart');
           
           if (!ctx) return;
 
-          // 1. Check if Chart.js is loaded
           if (typeof Chart === 'undefined') {
-              throw new Error("Chart.js library not loaded. Check your internet connection or base template.");
+              throw new Error("Chart.js library not loaded.");
           }
 
-          // 2. Handle Empty Data
           if (!seriesData || seriesData.length === 0) {
               const c = ctx.getContext('2d');
               c.font = "14px sans-serif";
@@ -142,14 +142,11 @@
               return; 
           }
 
-          // 3. Ultra-Safe Date Parsing
-          // This strips microseconds and ensures proper T separator for all browsers (iOS/Safari friendly)
           function cleanDate(dStr) {
               if (!dStr) return new Date();
-              // Force string, remove microseconds (anything after dot), replace space with T
               let s = String(dStr).split('.')[0].replace(" ", "T");
               let d = new Date(s);
-              if (isNaN(d.getTime())) return new Date(); // Fallback
+              if (isNaN(d.getTime())) return new Date();
               return d;
           }
 
@@ -160,7 +157,6 @@
           
           const dataPoints = seriesData.map(d => d.y);
 
-          // 4. Prepare Target Lines (safely)
           const annotations = {};
           if (targets && targets.length > 0) {
               const t = targets[0]; 
@@ -180,16 +176,12 @@
               }
           }
 
-          // 5. Configure Chart Plugins
           const chartPlugins = {
             legend: { display: false }
           };
 
-          // Check if annotation plugin is available before using it
           if (typeof window['chartjs-plugin-annotation'] !== 'undefined' || (Chart.registry && Chart.registry.plugins.get('annotation'))) {
               chartPlugins.annotation = { annotations: annotations };
-          } else {
-              console.warn("Annotation plugin missing - target lines will not show.");
           }
 
           new Chart(ctx, {
@@ -224,17 +216,7 @@
           });
 
       } catch (err) {
-          // If ANY error happens, write it to the screen so we can see it
-          const ctx = document.getElementById('historyChart');
-          if (ctx) {
-              const c = ctx.getContext('2d');
-              c.clearRect(0, 0, ctx.width, ctx.height);
-              c.font = "14px monospace";
-              c.fillStyle = "red";
-              c.textAlign = "center";
-              c.fillText("Chart Error: " + err.message, ctx.width / 2, ctx.height / 2);
-              console.error(err);
-          }
+          console.error("Chart Error:", err);
       }
   });
 </script>
