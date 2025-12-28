@@ -1,69 +1,63 @@
 :root {
-    --reef-navy: #042f4b;      /* Deep Navy Header */
-    --reef-cyan: #00d2d3;      /* Primary Action/Cyan */
-    --reef-teal: #1dd1a1;      /* Success/Teal */
-    --reef-bg: #f8f9fa;        /* Light Background */
+    --reef-navy: #042f4b;      /* Brand Primary Navy */
+    --reef-cyan: #00d2d3;      /* Brand Accent Cyan */
+    --reef-teal: #1dd1a1;      /* Brand Success Teal */
+    --reef-bg: #f4f7f9;        /* Soft Background */
     --reef-text: #2d3436;
 }
 
 body {
     background-color: var(--reef-bg);
     color: var(--reef-text);
-    font-family: 'Inter', -apple-system, sans-serif;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
 }
 
-/* Header & Navbar */
-.navbar {
-    background-color: var(--reef-navy) !important;
-    padding: 0.8rem 1rem;
-    border-bottom: 3px solid var(--reef-cyan);
-}
-
-.navbar-brand {
-    font-weight: 800;
-    letter-spacing: -0.5px;
-    color: white !important;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.navbar-brand span {
-    color: var(--reef-cyan);
-}
-
-/* Brand Button Styles */
+/* Global Button Overrides */
 .btn-primary {
-    background-color: var(--reef-cyan);
-    border-color: var(--reef-cyan);
-    color: var(--reef-navy);
+    background-color: var(--reef-cyan) !important;
+    border-color: var(--reef-cyan) !important;
+    color: var(--reef-navy) !important;
     font-weight: 600;
 }
 
 .btn-primary:hover {
-    background-color: #00b8b9;
-    border-color: #00b8b9;
+    background-color: #00b8b9 !important;
+    border-color: #00b8b9 !important;
+    color: white !important;
+}
+
+.btn-outline-secondary {
+    color: var(--reef-navy);
+    border-color: var(--reef-navy);
+}
+
+.btn-outline-secondary:hover {
+    background-color: var(--reef-navy);
     color: white;
 }
 
-.btn-success {
-    background-color: var(--reef-teal);
-    border-color: var(--reef-teal);
-}
-
-/* Card Improvements */
+/* Card Styling */
 .card {
     border: none;
     border-radius: 12px;
-    transition: transform 0.2s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
 }
 
 .card-header {
+    background-color: white !important;
     border-bottom: 1px solid rgba(0,0,0,0.05);
-    font-weight: 700;
     color: var(--reef-navy);
+    font-weight: 700;
 }
 
-/* Latest Reading "Glow" */
-.border-danger-subtle { border-left: 5px solid #ff7675 !important; }
-.border-success-subtle { border-left: 5px solid var(--reef-teal) !important; }
+/* Badge Styling */
+.badge.bg-primary {
+    background-color: var(--reef-cyan) !important;
+    color: var(--reef-navy) !important;
+}
+
+/* Alert/Status Indicators */
+.bg-danger-subtle {
+    background-color: #fff5f5 !important;
+    border: 1px solid #feb2b2 !important;
+}
