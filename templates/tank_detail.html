@@ -100,7 +100,8 @@
             
             {% for p in params %}
               <td class="text-center">
-                 {% set val = s.values_dict.get(p.id) if s.values_dict else None %}
+                 {% set sv = sample_values.get(s.id, {}) %}
+                 {% set val = sv.get(p.id) %}
                  {{ val|fmt2 if val is not none else "-" }}
               </td>
             {% endfor %}
@@ -134,28 +135,15 @@
           return; 
       }
 
-      // 2. Robust Date Parsing (Fixes the blank chart)
-      function parseDate(dateStr) {
-          if (!dateStr) return new Date();
-          
-          // Fix 1: Replace space with T (e.g., "2024-12-09 10:00" -> "2024-12-09T10:00")
-          // This makes the format ISO-8601 compliant, which JS parses reliably.
-          let cleanStr = dateStr.replace(" ", "T");
-          
-          let d = new Date(cleanStr);
-          if (!isNaN(d.getTime())) return d;
-
-          return new Date(); 
-      }
-
       const labels = seriesData.map(d => {
-        const date = parseDate(d.x);
+        // Date is now guaranteed to be ISO string from Python, so new Date() is safe
+        const date = new Date(d.x);
         return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       });
       
       const dataPoints = seriesData.map(d => d.y);
 
-      // 3. Prepare Target Lines
+      // 2. Prepare Target Lines
       const annotations = {};
       if (targets && targets.length > 0) {
           const t = targets[0]; 
@@ -175,7 +163,7 @@
           }
       }
 
-      // 4. Configure Chart
+      // 3. Configure Chart
       const chartPlugins = {
         legend: { display: false }
       };
