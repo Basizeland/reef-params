@@ -19,13 +19,13 @@ app = FastAPI(title="Reef Tank Parameters")
 # --- RECOMMENDED DEFAULTS ---
 # These values will pre-fill the Targets form for new tanks/parameters.
 RECOMMENDED_DEFAULTS = {
-    "Alkalinity/KH": {"low": 8.0, "high": 9.5, "a_low": 7.0, "a_high": 11.0},
-    "Calcium": {"low": 400, "high": 450, "a_low": 350, "a_high": 500},
-    "Magnesium": {"low": 1300, "high": 1400, "a_low": 1200, "a_high": 1500},
-    "Phosphate": {"low": 0.03, "high": 0.1, "a_low": 0.0, "a_high": 0.25},
-    "Nitrate": {"low": 2, "high": 10, "a_low": 0, "a_high": 25},
-    "Salinity": {"low": 34, "high": 35.5, "a_low": 32, "a_high": 37},
-    "Temperature": {"low": 25, "high": 26.5, "a_low": 23, "a_high": 29},
+    "Alkalinity - KH": {"low": 8.0, "high": 9.5, "a_low": 7.0, "a_high": 11.0},
+    "Calcium - CA": {"low": 400, "high": 450, "a_low": 350, "a_high": 500},
+    "Magnesium - MG": {"low": 1300, "high": 1400, "a_low": 1200, "a_high": 1500},
+    "Phosphate - P04": {"low": 0.03, "high": 0.1, "a_low": 0.02, "a_high": 0.15},
+    "Nitrate - N03": {"low": 2, "high": 10, "a_low": 1, "a_high": 15},
+    "Salinity": {"low": 34.5, "high": 35.5, "a_low": 34, "a_high": 36},
+    "Temperature": {"low": 24.5, "high": 25.5, "a_low": 24, "a_high": 26},
 }
 
 static_dir = os.path.join(BASE_DIR, "static")
