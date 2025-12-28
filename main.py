@@ -16,8 +16,8 @@ DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
 
 app = FastAPI(title="Reef Tank Parameters")
 
-# --- INITIAL SEED DEFAULTS (Used only for migration/fresh DB) ---
-INITIAL_DEFAULTS = {
+# --- RECOMMENDED DEFAULTS ---
+RECOMMENDED_DEFAULTS = {
     "Alkalinity/KH": {"default_target_low": 8.0, "default_target_high": 9.5, "default_alert_low": 7.0, "default_alert_high": 11.0},
     "Calcium": {"default_target_low": 400, "default_target_high": 450, "default_alert_low": 350, "default_alert_high": 500},
     "Magnesium": {"default_target_low": 1300, "default_target_high": 1400, "default_alert_low": 1200, "default_alert_high": 1500},
@@ -53,11 +53,28 @@ def dtfmt(v: Any) -> str:
     if dt is None: return ""
     return dt.strftime("%H:%M - %d/%m/%Y")
 
+def time_ago(v: Any) -> str:
+    """Returns a string like '2 days ago' or 'Today'."""
+    dt = parse_dt_any(v)
+    if not dt: return ""
+    now = datetime.now()
+    diff = now - dt
+    
+    if diff.days == 0:
+        return "Today"
+    if diff.days == 1:
+        return "Yesterday"
+    if diff.days < 30:
+        return f"{diff.days} days ago"
+    months = int(diff.days / 30)
+    return f"{months} mo ago"
+
 def tojson_filter(v: Any) -> str:
     return json.dumps(v, default=str)
 
 templates.env.filters["fmt2"] = fmt2
 templates.env.filters["dtfmt"] = dtfmt
+templates.env.filters["time_ago"] = time_ago
 templates.env.filters["tojson"] = tojson_filter
 
 def _finalize(v: Any) -> Any:
@@ -193,7 +210,46 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
     else:
         cur.execute("INSERT INTO parameters (sample_id, name, value, unit) VALUES (?, ?, ?, ?)", (sample_id, pname, value, unit or None))
 
-# --- DATABASE MODELS (SQLAlchemy) ---
+# --- NEW HELPER: Get the Latest Reading per Parameter ---
+def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
+    """
+    Returns a dictionary of the absolute most recent reading for each parameter.
+    Format: {'Alkalinity': {'value': 8.5, 'taken_at': datetime(...)}, ...}
+    """
+    latest_map = {}
+    mode = values_mode(db)
+    
+    # We query all samples for the tank, ordered by newest first.
+    # We then iterate and pick the first value we see for each parameter.
+    if mode == "sample_values":
+        rows = q(db, """
+            SELECT pd.name, sv.value, s.taken_at 
+            FROM sample_values sv 
+            JOIN samples s ON s.id = sv.sample_id 
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE s.tank_id=? 
+            ORDER BY s.taken_at DESC
+        """, (tank_id,))
+    else:
+        rows = q(db, """
+            SELECT p.name, p.value, s.taken_at 
+            FROM parameters p
+            JOIN samples s ON s.id = p.sample_id 
+            WHERE s.tank_id=? 
+            ORDER BY s.taken_at DESC
+        """, (tank_id,))
+
+    for r in rows:
+        name = r["name"]
+        if name not in latest_map:
+            latest_map[name] = {
+                "value": r["value"],
+                "taken_at": parse_dt_any(r["taken_at"])
+            }
+    
+    return latest_map
+
+# --- DATABASE MODELS ---
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
@@ -244,6 +300,11 @@ class Sample(Base, DictMixin):
 
     tank = relationship("Tank", back_populates="samples")
     values = relationship("SampleValue", back_populates="sample", cascade="all, delete-orphan")
+
+    @property
+    def values_dict(self):
+        """Returns a dict of {parameter_id: value} for easy lookup in templates."""
+        return {v.parameter_id: v.value for v in self.values}
 
 class SampleValue(Base, DictMixin):
     __tablename__ = "sample_values"
@@ -361,8 +422,6 @@ def init_db() -> None:
     ensure_col("targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
     ensure_col("targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
     ensure_col("targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
-    
-    # NEW: Add default target columns
     ensure_col("parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
     ensure_col("parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
     ensure_col("parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
@@ -373,8 +432,7 @@ def init_db() -> None:
     if cnt == 0:
         defaults = [("Alkalinity/KH", "dKH", 1, 10), ("Calcium", "ppm", 1, 20), ("Magnesium", "ppm", 1, 30), ("Phosphate", "ppm", 1, 40), ("Nitrate", "ppm", 1, 50), ("Salinity", "ppt", 1, 60), ("Temperature", "°C", 1, 70)]
         cur.executemany("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)", defaults)
-        
-    # MIGRATION: Populate defaults if they are null
+    
     for name, d in INITIAL_DEFAULTS.items():
         cur.execute("""
             UPDATE parameter_defs 
@@ -393,13 +451,28 @@ def dashboard(request: Request):
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     tank_cards = []
     for t in tanks:
-        latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
-        readings = []
-        if latest:
-            for r in get_sample_readings(db, latest["id"]):
-                readings.append({"name": r["name"], "value": r["value"], "unit": (row_get(r, "unit") or "")})
+        # Use new helper to get latest for EACH parameter
+        latest_map = get_latest_per_parameter(db, t["id"])
         
-        # Ensure tank dict has volume_l for display
+        # Keep 'latest' for backward compatibility if needed, though we should prefer individual dates now
+        latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
+        
+        readings = []
+        # Convert map to list for the dashboard card
+        # We need parameter definitions to know order and units
+        pdefs = get_active_param_defs(db)
+        
+        for p in pdefs:
+            pname = p["name"]
+            data = latest_map.get(pname)
+            if data:
+                readings.append({
+                    "name": pname, 
+                    "value": data["value"], 
+                    "unit": (row_get(p, "unit") or ""),
+                    "taken_at": data["taken_at"] # Pass date for dashboard if we want to show it there too
+                })
+        
         tank_data = dict(t)
         if "volume_l" not in tank_data:
             tank_data["volume_l"] = None 
@@ -483,11 +556,9 @@ def tank_detail(request: Request, tank_id: int):
             try: value = float(r["value"]) if r["value"] is not None else None
             except Exception: value = r["value"]
             
-            # --- FIX FOR CHART: Ensure date is ISO format string ---
             raw_date = r["taken_at"]
             dt_obj = parse_dt_any(raw_date)
             iso_date = dt_obj.isoformat() if dt_obj else str(raw_date)
-            # -------------------------------------------------------
 
             sid = int(r["sample_id"])
             if value is not None:
@@ -495,9 +566,7 @@ def tank_detail(request: Request, tank_id: int):
                 except Exception: y = None
                 if y is not None: series_map.setdefault(name, []).append({"x": iso_date, "y": y})
             
-            # Ensure sample_values keys are integers for template lookup
             sample_values.setdefault(sid, {})[name] = value
-            
             try: u = r["unit"] or ""
             except Exception: u = ""
             if name not in unit_by_name and u: unit_by_name[name] = u
@@ -521,12 +590,20 @@ def tank_detail(request: Request, tank_id: int):
             
     params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
     
-    latest_by_param_id = dict(sample_values.get(int(samples[0]["id"]), {})) if samples else {}
+    # --- UPDATED LOGIC: Get absolute latest reading per parameter ---
+    # Instead of just taking the last sample, we use our helper
+    latest_by_param_id = get_latest_per_parameter(db, tank_id)
+    # ----------------------------------------------------------------
+
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
     
     status_by_param_id = {}
     for pname in available_params:
-        v = latest_by_param_id.get(pname)
+        # Note: latest_by_param_id now returns a dict {value: ..., taken_at: ...}
+        # We need to extract just the value for status checking
+        data = latest_by_param_id.get(pname)
+        v = data.get("value") if data else None
+        
         if v is None: status_by_param_id[pname] = "missing"; continue
         t = targets_by_param.get(pname)
         if not t: continue
@@ -1255,13 +1332,15 @@ def dose_plan(request: Request):
         try:
             if vol_l is not None: eff_vol_l = float(vol_l) * (net_pct / 100.0)
         except Exception: eff_vol_l = None
+        
+        # --- DOSE PLAN UPDATE: Use Latest Per Parameter ---
+        latest_map = get_latest_per_parameter(db, tank_id)
+        # --------------------------------------------------
+        
+        # Keep old 'latest' for timestamp reference if needed
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
-        latest_readings, latest_taken = {}, None
-        if latest:
-            latest_taken = parse_dt_any(latest["taken_at"]) or latest["taken_at"]
-            try:
-                for r in get_sample_readings(db, int(latest["id"])): latest_readings[r["name"]] = r["value"]
-            except Exception: latest_readings = {}
+        latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
+
         targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
         tank_rows = []
         for tr in targets:
@@ -1276,12 +1355,18 @@ def dose_plan(request: Request):
                 elif tl is not None: target_val = float(tl)
             except Exception: target_val = None
             if target_val is None: continue
-            cur_val = latest_readings.get(pname)
+            
+            # Use value from individual latest reading
+            p_data = latest_map.get(pname)
+            cur_val = p_data.get("value") if p_data else None
+            
             try: cur_val_f = float(cur_val) if cur_val is not None else None
             except Exception: cur_val_f = None
             if cur_val_f is None: continue
+            
             delta = target_val - cur_val_f
             if delta <= 0: continue
+            
             unit = ""
             if pname in pdef_map and pdef_map[pname]["unit"]: unit = pdef_map[pname]["unit"]
             elif "unit" in tr.keys() and tr["unit"]: unit = tr["unit"]
