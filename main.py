@@ -1411,6 +1411,82 @@ async def dose_plan_check(request: Request):
 
 # --- NEW: ADVANCED EXCEL IMPORT CENTER ---
 
+@app.get("/admin/export-all")
+def export_all_data():
+    db = get_db()
+    tanks = q(db, "SELECT * FROM tanks")
+    params = list_parameters(db)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        for tank in tanks:
+            df = get_tank_export_df(db, tank["id"], params)
+            if not df.empty:
+                # Sheet names are limited to 31 chars
+                sheet_name = re.sub(r'[\\/*?:[\]]', '', tank["name"])[:31]
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+        
+        # Check if no data exists to avoid empty file error
+        if not writer.sheets:
+            pd.DataFrame(columns=["No Data Found"]).to_excel(writer, sheet_name="Empty")
+
+    db.close()
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        headers={'Content-Disposition': 'attachment; filename="Full_Reef_Data_Export.xlsx"'},
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+@app.get("/tanks/{tank_id}/export")
+def export_single_tank(tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT name FROM tanks WHERE id=?", (tank_id,))
+    params = list_parameters(db)
+    
+    df = get_tank_export_df(db, tank_id, params)
+    db.close()
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Readings')
+    
+    output.seek(0)
+    filename = f"{slug_key(tank['name'])}_export.xlsx"
+    return StreamingResponse(
+        output,
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+# --- Helper Function for Data Structuring ---
+def get_tank_export_df(db, tank_id, params):
+    # Get all samples for this tank
+    samples = q(db, "SELECT id, taken_at, notes FROM samples WHERE tank_id=? ORDER BY taken_at DESC", (tank_id,))
+    if not samples:
+        return pd.DataFrame()
+
+    data_list = []
+    for s in samples:
+        row = {
+            "Date": s["taken_at"],
+            "Notes": s["notes"]
+        }
+        # Get values for this sample
+        values = q(db, """
+            SELECT pd.name, sv.value FROM sample_values sv 
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id 
+            WHERE sv.sample_id=?""", (s["id"],))
+        
+        # Map values to columns
+        val_map = {v["name"]: v["value"] for v in values}
+        for p in params:
+            row[p["name"]] = val_map.get(p["name"])
+        
+        data_list.append(row)
+
+    return pd.DataFrame(data_list)
+
 @app.get("/admin/import", response_class=HTMLResponse)
 def import_page(request: Request):
     return templates.TemplateResponse("import_manager.html", {"request": request})
