@@ -23,7 +23,7 @@
           </div>
           <div class="text-secondary small">
             <span class="me-2">Vol: {{ plan.eff_vol_l|default(0)|round(0) }} L</span>
-            <span class="badge bg-primary-subtle text-primary-emphasis rounded-pill tank-total">Total: {{ plan.total_ml|fmt2 }} ml</span>
+            <span class="badge bg-primary-subtle text-primary-emphasis rounded-pill tank-total">Total: 0.00 ml</span>
           </div>
         </div>
 
@@ -48,7 +48,7 @@
                       <td>
                         <select class="form-select form-select-sm additive-select desktop-select" 
                                 data-sync-key="{{ plan.tank['id'] }}-{{ r.parameter }}"
-                                onchange="handleSelectionChange(this, 'desktop')">
+                                onchange="handleSelectionChange(this)">
                           {% for a in r.additives %}
                             <option value="{{ a.additive_id }}" 
                                     data-ml="{{ a.total_ml }}" 
@@ -126,7 +126,7 @@
                         <div class="small text-muted mb-1">{{ r.parameter }}</div>
                         <select class="form-select form-select-sm w-100 additive-select mobile-select" 
                                 data-sync-key="{{ plan.tank['id'] }}-{{ r.parameter }}"
-                                onchange="handleSelectionChange(this, 'mobile')">
+                                onchange="handleSelectionChange(this)">
                           {% for a in r.additives %}
                             <option value="{{ a.additive_id }}" 
                                     data-ml="{{ a.total_ml }}"
@@ -199,64 +199,94 @@
 {% endif %}
 
 <script>
-// Master Handler: Syncs dropdowns, toggles views, calculates totals
-function handleSelectionChange(selectElement, sourceView) {
-    const selectedId = selectElement.value;
-    const syncKey = selectElement.dataset.syncKey;
-
-    // 1. Synchronize the 'other' dropdown (Desktop vs Mobile)
-    // Find all dropdowns with the same sync key
-    document.querySelectorAll(`.additive-select[data-sync-key="${syncKey}"]`).forEach(el => {
-        if (el !== selectElement) {
-            el.value = selectedId;
-            // We also need to trigger view updates for the synced element's container
-            updateViewVisibility(el, selectedId);
+// 1. Initialization logic (Runs on page load)
+document.addEventListener('DOMContentLoaded', function() {
+    // A. Restore preferences from Local Storage
+    document.querySelectorAll('.additive-select').forEach(select => {
+        const syncKey = select.dataset.syncKey; // e.g. "1-Magnesium"
+        const savedId = localStorage.getItem('dose_pref_' + syncKey);
+        
+        // If we have a saved preference, and that option still exists in the dropdown
+        if (savedId && select.querySelector(`option[value="${savedId}"]`)) {
+            select.value = savedId;
         }
     });
 
-    // 2. Update the view for the element actually clicked
-    updateViewVisibility(selectElement, selectedId);
+    // B. Apply views based on current dropdown states (Default or Restored)
+    const processedKeys = new Set();
+    document.querySelectorAll('.additive-select').forEach(select => {
+        const syncKey = select.dataset.syncKey;
+        // Only process each parameter group once (Desktop/Mobile share the same syncKey)
+        if (!processedKeys.has(syncKey)) {
+            // Force the 'other' view (e.g. if we are desktop, update mobile too) to match
+            handleSelectionChange(select, true); // true = skip saving to localstorage on initial load to avoid churn
+            processedKeys.add(syncKey);
+        }
+    });
 
-    // 3. Recalculate Totals
+    // C. Calculate Totals
+    recalculateTotals();
+});
+
+// 2. Main Handler for Dropdown Changes
+function handleSelectionChange(selectElement, skipSave = false) {
+    const selectedId = selectElement.value;
+    const syncKey = selectElement.dataset.syncKey;
+
+    // A. Synchronize all dropdowns for this parameter (Desktop & Mobile)
+    document.querySelectorAll(`.additive-select[data-sync-key="${syncKey}"]`).forEach(el => {
+        if (el.value !== selectedId) {
+            el.value = selectedId;
+        }
+        updateViewVisibility(el, selectedId);
+    });
+
+    // B. Save preference to Local Storage
+    if (!skipSave) {
+        localStorage.setItem('dose_pref_' + syncKey, selectedId);
+    }
+
+    // C. Update Totals
     recalculateTotals();
 }
 
+// 3. Toggle Visibility of Schedules/Checkboxes
 function updateViewVisibility(selectElement, selectedId) {
-    // Determine if we are in a Desktop Row or Mobile Card
     const row = selectElement.closest('tr');
     const card = selectElement.closest('.additive-card-group');
 
+    // If Desktop Table Row
     if (row) {
-        // Desktop Table Logic
         row.querySelectorAll('.dose-schedule-container, .dose-check-container').forEach(el => el.classList.add('d-none'));
         row.querySelectorAll(`[data-additive-id="${selectedId}"]`).forEach(el => el.classList.remove('d-none'));
     } 
     
+    // If Mobile Card
     if (card) {
-        // Mobile Card Logic
         card.querySelectorAll('.dose-mobile-container').forEach(el => el.classList.add('d-none'));
         card.querySelectorAll(`[data-additive-id="${selectedId}"]`).forEach(el => el.classList.remove('d-none'));
     }
 }
 
+// 4. Calculate Tank & Grand Totals
 function recalculateTotals() {
     let grandTotal = 0;
 
-    // Iterate over each tank wrapper
     document.querySelectorAll('.tank-wrapper').forEach(tank => {
         let tankTotal = 0;
 
-        // Use desktop dropdowns as the "Source of Truth" for math 
-        // (Since we keep them synced, values are always correct even if hidden)
+        // We use the "Desktop" dropdowns as the source of truth for math
+        // (Since they are synced with mobile, the values are consistent)
         const selects = tank.querySelectorAll('.desktop-select');
         
         selects.forEach(sel => {
             const selectedOption = sel.options[sel.selectedIndex];
+            // Read the ml volume from the data attribute
             const ml = parseFloat(selectedOption.dataset.ml) || 0;
             tankTotal += ml;
         });
 
-        // Update Tank Total Badge
+        // Update Tank Badge
         const tankBadge = tank.querySelector('.tank-total');
         if (tankBadge) {
             tankBadge.innerText = 'Total: ' + tankTotal.toFixed(2) + ' ml';
@@ -272,7 +302,7 @@ function recalculateTotals() {
     }
 }
 
-// Dose Check Logic
+// 5. Checkbox Logic
 (function(){
   async function toggleDoseCheck(input){
     const tankId = input.dataset.tankId;
