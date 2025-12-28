@@ -4,33 +4,41 @@
     <div class="d-flex justify-content-between align-items-start mb-4 border-bottom pb-3">
         <div>
             <h1 class="h2 mb-1">{{ tank.name }}</h1>
-            <p class="text-muted small mb-0">Volume: {{ tank.volume_l }}L | <a href="/tanks/{{ tank.id }}/profile" class="text-decoration-none">Edit Profile</a></p>
+            <p class="text-muted small mb-0">
+                Volume: {{ tank.volume_l }}L | 
+                <a href="/tanks/{{ tank.id }}/profile" class="text-decoration-none">Edit Profile</a>
+            </p>
         </div>
         <div class="btn-group shadow-sm">
-            <a href="/tanks/{{ tank.id }}/add" class="btn btn-primary">Add Reading</a>
-            <a href="/tanks/{{ tank.id }}/export" class="btn btn-outline-secondary">Export Excel</a>
+            <a href="/tanks/{{ tank.id }}/add" class="btn btn-primary">
+                <i class="bi bi-plus-lg"></i> Add Reading
+            </a>
+            <a href="/tanks/{{ tank.id }}/export" class="btn btn-outline-secondary">
+                <i class="bi bi-download"></i> Export Excel
+            </a>
         </div>
     </div>
 
     <div class="row row-cols-2 row-cols-md-4 g-3 mb-4">
         {% for p in params %}
-        {% set data = latest_vals.get(p.name) %}
-        {% set status = status_by_param_id.get(p.name, 'missing') %}
-        <div class="col">
-            <div class="card h-100 shadow-sm border-0 bg-light text-center py-2">
-                <div class="small fw-bold text-muted">{{ p.name }}</div>
-                <div class="h4 mb-0 {% if status == 'danger' %}text-danger{% elif status == 'warn' %}text-warning{% elif status == 'ok' %}text-success{% else %}text-muted{% endif %}">
-                    {{ data.value|fmt2 if data else '--' }} <small class="text-muted" style="font-size: 0.6em;">{{ p.unit }}</small>
+            {% set data = latest_vals.get(p.name) %}
+            {% set status = status_by_param_id.get(p.name, 'missing') %}
+            <div class="col">
+                <div class="card h-100 shadow-sm border-0 bg-light text-center py-2">
+                    <div class="small fw-bold text-muted">{{ p.name }}</div>
+                    <div class="h4 mb-0 {% if status == 'danger' %}text-danger{% elif status == 'warn' %}text-warning{% elif status == 'ok' %}text-success{% else %}text-muted{% endif %}">
+                        {{ data.value|fmt2 if data else '--' }} 
+                        <small class="text-muted" style="font-size: 0.6em;">{{ p.unit }}</small>
+                    </div>
                 </div>
             </div>
-        </div>
         {% endfor %}
     </div>
 
     <div class="card shadow-sm mb-4">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <span class="fw-bold">Parameter History</span>
-            <form method="get" class="d-inline-block">
+            <form id="paramFilter" method="get" class="d-inline-block">
                 <select name="parameter" class="form-select form-select-sm" onchange="this.form.submit()">
                     {% for p in params %}
                     <option value="{{ p.name }}" {% if p.name == selected_parameter_id %}selected{% endif %}>{{ p.name }}</option>
@@ -39,7 +47,9 @@
             </form>
         </div>
         <div class="card-body">
-            <div style="height: 300px;"><canvas id="historyChart"></canvas></div>
+            <div style="height: 300px;">
+                <canvas id="historyChart"></canvas>
+            </div>
         </div>
     </div>
 
@@ -54,16 +64,28 @@
                         <th>{{ p.name }}</th>
                         {% endfor %}
                         <th>Notes</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody class="small text-center">
                     {% for sample in recent_samples %}
                     <tr style="cursor: pointer;" onclick="window.location='/tanks/{{ tank.id }}/samples/{{ sample.id }}'">
-                        <td class="text-start fw-bold">{{ sample.taken_at|dtfmt }}</td>
+                        <td class="text-start text-nowrap fw-bold">{{ sample.taken_at|dtfmt }}</td>
                         {% for p in params %}
-                        <td>{{ sample_values[sample.id][p.name]|fmt2 }}</td>
+                        <td>
+                            {# Handles the nested sample_values[sample_id][parameter_name] logic #}
+                            {{ sample_values[sample.id][p.name]|fmt2 if sample_values[sample.id] else '--' }}
+                        </td>
                         {% endfor %}
-                        <td class="text-muted text-truncate" style="max-width: 150px;">{{ sample.notes or '' }}</td>
+                        <td class="text-muted text-truncate" style="max-width: 200px;">{{ sample.notes or '' }}</td>
+                        <td onclick="event.stopPropagation()">
+                            <form action="/samples/{{ sample.id }}/delete" method="post" onsubmit="return confirm('Delete this record?');" class="d-inline">
+                                <input type="hidden" name="tank_id" value="{{ tank.id }}">
+                                <button type="submit" class="btn text-danger btn-sm p-0">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -75,12 +97,16 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 <script>
-    new Chart(document.getElementById('historyChart'), {
+    const ctx = document.getElementById('historyChart').getContext('2d');
+    const seriesData = {{ series|tojson }};
+    const chartTargets = {{ chart_targets|tojson }};
+    
+    new Chart(ctx, {
         type: 'line',
         data: {
             datasets: [{
                 label: '{{ selected_parameter_id }}',
-                data: {{ series|tojson }},
+                data: seriesData,
                 borderColor: '#0d6efd',
                 backgroundColor: 'rgba(13, 110, 253, 0.1)',
                 tension: 0.2,
@@ -89,8 +115,20 @@
             }]
         },
         options: {
-            responsive: true, maintainAspectRatio: false,
-            scales: { x: { type: 'time', time: { unit: 'day' } } }
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { 
+                    type: 'time', 
+                    time: { unit: 'day', tooltipFormat: 'PPp' },
+                    title: { display: false } 
+                },
+                y: { beginAtZero: false }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: { mode: 'index', intersect: false }
+            }
         }
     });
 </script>
