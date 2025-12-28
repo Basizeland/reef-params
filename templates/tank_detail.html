@@ -1,123 +1,134 @@
 {% extends "base.html" %}
 {% block content %}
-<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+<div class="d-flex align-items-center justify-content-between mb-4">
   <div>
-    <h1 style="margin:0;">{{ tank.name }}</h1>
-    <div style="opacity:.75; margin-top:4px;">Tank ID: {{ tank.id }}</div>
+    <h1 class="h2 mb-0 fw-bold">{{ tank.name }}</h1>
+    <span class="text-muted small">ID: {{ tank.id }}</span>
   </div>
-  <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <a class="btn" href="/tanks/{{ tank.id }}/add">Add reading</a>
-    <a class="btn" href="/tanks/{{ tank.id }}/targets">Targets</a>
-	    <a class="btn" href="/tanks/{{ tank.id }}/edit">Edit</a>
-    <a class="btn" href="/tanks/{{ tank.id }}/dosing-log">Dosing log</a>
-    <form method="post" action="/tanks/{{ tank.id }}/delete" onsubmit="return confirm('Delete tank {{ tank.name }} and all readings?');" style="display:inline;">
-      <button class="btn" type="submit">Delete tank</button>
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="/tanks/{{ tank.id }}/add">Add Reading</a>
+    <div class="dropdown">
+      <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+        Settings
+      </button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/targets">Targets</a></li>
+        <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/profile">Edit Profile</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li>
+             <form method="post" action="/tanks/{{ tank.id }}/delete" onsubmit="return confirm('Really delete?');" class="d-inline">
+                <button class="dropdown-item text-danger" type="submit">Delete Tank</button>
+             </form>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<h4 class="mb-3">Latest Readings</h4>
+<div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
+  {% for p in params %}
+    {% set val = latest_vals.get(p.id) %}
+    {% set target = target_map.get(p.name) %}
+    
+    {% set status_class = "border-secondary-subtle" %}
+    {% if val is not none and target %}
+        {% if target.alert_low and val < target.alert_low %}{% set status_class = "border-danger bg-danger-subtle" %}{% endif %}
+        {% if target.alert_high and val > target.alert_high %}{% set status_class = "border-danger bg-danger-subtle" %}{% endif %}
+    {% endif %}
+
+    <div class="col">
+      <div class="card h-100 {{ status_class }} shadow-sm">
+        <div class="card-body p-3">
+          <div class="text-muted small text-uppercase fw-bold mb-1">{{ p.name }}</div>
+          <div class="d-flex align-items-baseline gap-1">
+             <span class="h3 mb-0 fw-bold">{{ val|fmt2 if val is not none else "-" }}</span>
+             <span class="text-muted small">{{ p.unit }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+    <h5 class="card-title mb-0">History</h5>
+    <form method="get" class="d-flex align-items-center gap-2">
+      <select name="parameter" class="form-select form-select-sm" onchange="this.form.submit()">
+        {% for p in params %}
+          <option value="{{ p.id }}" {% if selected_param and selected_param.id == p.id %}selected{% endif %}>
+            {{ p.name }}
+          </option>
+        {% endfor %}
+      </select>
     </form>
   </div>
-</div>
-
-<div style="display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; margin-top:16px;">
-  <div class="card" style="padding:16px;">
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-      <div style="font-weight:900;">Chart</div>
-      <form method="get" action="/tanks/{{ tank.id }}" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <select name="parameter">
-          {% for p in params %}
-            <option value="{{ p.id }}" {% if p.id==selected_parameter_id %}selected{% endif %}>
-              {{ p.name }}
-            </option>
-          {% endfor %}
-        </select>
-        <button class="btn" type="submit">Update</button>
-      </form>
+  <div class="card-body">
+    <div style="height: 350px;">
+      <canvas id="historyChart"></canvas>
     </div>
-
-    <div style="height:420px; margin-top:12px;">
-      <canvas id="chart" style="width:100%; height:100%;"></canvas>
-    </div>
-  </div>
-
-  <div class="card" style="padding:16px;">
-    <div style="font-weight:900; margin-bottom:10px;">Latest readings</div>
-    {% if params and params|length %}
-      <table>
-        <thead>
-          <tr>
-            <th>Parameter</th>
-            <th style="width:30%;">Latest</th>
-            <th style="width:18%;">Unit</th>
-            <th style="width:16%;">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for p in params %}
-            {% set v = latest_by_param_id.get(p.id) %}
-            {% set st = status_by_param_id.get(p.id, "") %}
-            <tr>
-              <td>{{ p.name }}</td>
-              <td>{{ format_value(p, v) }}</td>
-              <td>{{ p.unit }}</td>
-              <td>
-                {% if st %}
-                  <span class="badge {{ st }}">{{ st }}</span>
-                {% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <div style="opacity:.75;">No parameters found yet.</div>
-    {% endif %}
   </div>
 </div>
 
-<div class="card" style="padding:16px; margin-top:16px;">
-  <div style="font-weight:900; margin-bottom:10px;">Recent samples</div>
-  {% if recent_samples and recent_samples|length %}
-    <table>
-      <thead>
+<div class="card shadow-sm">
+  <div class="card-header bg-white">
+    <h5 class="card-title mb-0">Log</h5>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
         <tr>
-          <th style="width:26%;">Date/time</th>
+          <th>Date</th>
           <th>Notes</th>
-          <th style="width:18%;">Actions</th>
+          <th class="text-end">Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for s in recent_samples %}
           <tr>
-            <td>
-              <a href="/tanks/{{ tank.id }}/samples/{{ s.id }}" style="font-weight:800; text-decoration:none;">
-                {{ s.taken_at.strftime("%Y-%m-%d %H:%M") if s.taken_at is not string else s.taken_at }}
-              </a>
-            </td>
-            <td style="white-space:pre-wrap;">{{ s.notes or "" }}</td>
-            <td>
-              <a class="btn" href="/tanks/{{ tank.id }}/samples/{{ s.id }}">View</a>
-              <form method="post" action="/samples/{{ s.id }}/delete" onsubmit="return confirm('Delete this sample and all readings?');" style="display:inline;">
-                <button class="btn" type="submit">Delete</button>
-              </form>
+            <td class="fw-medium">{{ s.taken_at|dtfmt }}</td>
+            <td class="text-muted small">{{ s.notes or "" }}</td>
+            <td class="text-end">
+               <a href="/tanks/{{ tank.id }}/samples/{{ s.id }}" class="btn btn-sm btn-light">View</a>
             </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
-  {% else %}
-    <div style="opacity:.75;">No samples yet.</div>
-  {% endif %}
+  </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-const series = {{ series|tojson }};
-const labels = series.map(p => p.x);
-const data = series.map(p => p.y);
-
-const ctx = document.getElementById('chart');
-new Chart(ctx, {
-  type: 'line',
-  data: { labels, datasets: [{ label: "{{ selected_parameter_id }}", data }] },
-  options: { responsive: true, maintainAspectRatio: false }
-});
+  const seriesData = {{ series|tojson }};
+  const ctx = document.getElementById('historyChart');
+  const labels = seriesData.map(d => {
+    const date = new Date(d.x);
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  });
+  const dataPoints = seriesData.map(d => d.y);
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: '{{ selected_param.name if selected_param else "Value" }}',
+        data: dataPoints,
+        borderColor: '#0d6efd',
+        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+        borderWidth: 2,
+        tension: 0.3,
+        fill: true,
+        pointRadius: 3,
+        pointHoverRadius: 5
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: false, grid: { borderDash: [2, 4] } }, x: { grid: { display: false } } }
+    }
+  });
 </script>
 {% endblock %}
