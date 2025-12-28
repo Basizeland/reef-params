@@ -12,6 +12,7 @@ from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
@@ -1420,7 +1421,7 @@ def download_template():
     params = list_parameters(db)
     db.close()
     
-    # Define columns based on current scientific naming convention
+    # Define columns based on your current scientific naming convention
     cols = ["Tank Name", "Volume (L)", "Date (YYYY-MM-DD)", "Notes"]
     for p in params:
         cols.append(p["name"])
@@ -1430,17 +1431,22 @@ def download_template():
     example = ["My Display Tank", 450, date.today().isoformat(), "Weekly log example"] + [None] * (len(cols) - 4)
     df.loc[0] = example
     
+    # Write to a buffer in memory
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Readings')
     
     output.seek(0)
-    return FileResponse(
+    
+    headers = {
+        'Content-Disposition': 'attachment; filename="Reef_Params_Import_Template.xlsx"'
+    }
+    
+    return StreamingResponse(
         output, 
-        filename="Reef_Params_Import_Template.xlsx", 
+        headers=headers,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
-
 @app.post("/admin/upload-excel")
 async def upload_excel(request: Request, file: UploadFile = File(...)):
     if not file.filename.endswith(('.xlsx', '.xls')):
