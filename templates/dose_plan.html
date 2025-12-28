@@ -3,40 +3,23 @@
 <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-4">
   <div>
     <h1 class="display-6 fw-bold mb-1">Dose plan</h1>
-    <div class="text-secondary">Based on each tank’s most recent test result and the single target you set in Targets.</div>
-  </div>
-  <div class="d-flex align-items-center gap-2">
-    <span class="badge rounded-pill bg-light text-dark border">
-      Total across tanks: {{ grand_total_ml|fmt2 }} ml
-    </span>
+    <div class="text-secondary">Based on targets vs latest readings.</div>
   </div>
 </div>
-
 {% if plans and plans|length %}
   {% for plan in plans %}
     <div class="card shadow-sm mb-4">
       <div class="card-body">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-          <div class="d-flex align-items-center gap-2 flex-wrap">
-            <h2 class="h4 fw-bold mb-0">{{ plan.tank["name"] }}</h2>
-            <a class="btn btn-sm btn-outline-secondary" href="/tanks/{{ plan.tank['id'] }}">View</a>
-          </div>
-          <div class="text-secondary small">
-            Effective volume: {{ plan.eff_volume_l|default(0)|round(0) }} L • Total dose: {{ plan.total_ml|fmt2 }} ml
-          </div>
+          <h2 class="h4 fw-bold mb-0">{{ plan.tank.name }}</h2>
+          <div class="text-secondary small">Total dose: {{ plan.total_ml|fmt2 }} ml</div>
         </div>
-
         {% if plan.rows and plan.rows|length %}
           <div class="table-responsive">
             <table class="table align-middle">
               <thead class="table-light">
                 <tr>
-                  <th style="min-width: 180px;">Additive</th>
-                  <th style="min-width: 180px;">Parameter</th>
-                  <th class="text-end" style="min-width: 120px;">Current</th>
-                  <th class="text-end" style="min-width: 120px;">Target</th>
-                  <th style="min-width: 260px;">Schedule</th>
-                  <th class="text-center" style="min-width: 120px;">Dosed</th>
+                  <th>Additive</th><th>Param</th><th class="text-end">Current</th><th class="text-end">Target</th><th>Schedule</th><th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -48,41 +31,20 @@
                       <td class="text-end">{{ r.latest|fmt2 }} {{ r.unit }}</td>
                       <td class="text-end">{{ r.target|fmt2 }} {{ r.unit }}</td>
                       <td>
-                        {% if a.schedule and a.schedule|length %}
-                          <div class="small text-secondary">
-                            {{ a.schedule|length }} day(s) • {{ a.total_ml|fmt2 }} ml total • {{ a.per_day_ml|fmt2 }} ml/day
-                          </div>
-                          <div class="d-flex flex-wrap gap-2 mt-1">
+                        {% if a.schedule %}
+                          <div class="d-flex flex-wrap gap-2">
                             {% for s in a.schedule %}
-                              <span class="badge bg-light text-dark border">
-                                Day {{ s.day }}: {{ s.ml|fmt2 }} ml
-                              </span>
+                              <span class="badge bg-light text-dark border">Day {{ s.day }}: {{ s.ml|fmt2 }}ml</span>
                             {% endfor %}
                           </div>
-                        {% else %}
-                          <span class="text-secondary small">—</span>
                         {% endif %}
                       </td>
-                      <td class="text-center">
-                        {% if a.schedule and a.schedule|length %}
-                          <div class="d-inline-flex flex-column gap-1">
+                      <td>
+                         {% if a.schedule %}
                             {% for s in a.schedule %}
-                              <label class="form-check form-check-inline m-0">
-                                <input class="form-check-input dose-check"
-                                       type="checkbox"
-                                       data-tank-id="{{ plan.tank['id'] }}"
-                                       data-additive-id="{{ a.additive_id }}"
-                                       data-parameter="{{ r.parameter }}"
-                                       data-planned-date="{{ s.date }}"
-                                       data-amount-ml="{{ s.ml }}"
-                                       {% if s.checked %}checked{% endif %}>
-                                <span class="form-check-label small">D{{ s.day }}</span>
-                              </label>
+                              <label class="d-block"><input type="checkbox" class="dose-check" data-key="{{ s.key }}" {% if s.checked %}checked{% endif %}> D{{ s.day }}</label>
                             {% endfor %}
-                          </div>
-                        {% else %}
-                          <span class="text-secondary small">—</span>
-                        {% endif %}
+                         {% endif %}
                       </td>
                     </tr>
                   {% endfor %}
@@ -91,51 +53,22 @@
             </table>
           </div>
         {% else %}
-          <div class="text-secondary">Nothing to dose right now.</div>
+          <div class="text-secondary">Nothing to dose.</div>
         {% endif %}
       </div>
     </div>
   {% endfor %}
 {% else %}
-  <div class="alert alert-info">No tanks found.</div>
+  <div class="alert alert-info">No active tanks or targets found.</div>
 {% endif %}
-
 <script>
-(function(){
-  async function toggleDoseCheck(input){
-    const tankId = input.dataset.tankId;
-    const additiveId = input.dataset.additiveId;
-    const plannedDate = input.dataset.plannedDate;
-    const parameter = input.dataset.parameter;
-    const amountMl = input.dataset.amountMl;
-    const checked = input.checked ? 1 : 0;
-
-    try{
-      const res = await fetch("/tools/dose-plan/check", {
-        method: "POST",
-        headers: {"Content-Type":"application/x-www-form-urlencoded"},
-        body: new URLSearchParams({
-          tank_id: tankId,
-          additive_id: additiveId,
-          parameter: parameter,
-          planned_date: plannedDate,
-          amount_ml: amountMl,
-          checked: checked
-        })
-      });
-      if(!res.ok){
-        throw new Error(await res.text());
-      }
-    }catch(e){
-      // revert UI state on error
-      input.checked = !input.checked;
-      alert("Failed to update dose check. " + (e && e.message ? e.message : ""));
-    }
-  }
-
-  document.querySelectorAll(".dose-check").forEach((el)=>{
-    el.addEventListener("change", ()=>toggleDoseCheck(el));
+document.querySelectorAll(".dose-check").forEach(el => {
+  el.addEventListener("change", async () => {
+    const fd = new FormData();
+    fd.append("key", el.dataset.key);
+    fd.append("checked", el.checked ? "true" : "false");
+    await fetch("/tools/dose-plan/check", { method: "POST", body: fd });
   });
-})();
+});
 </script>
 {% endblock %}

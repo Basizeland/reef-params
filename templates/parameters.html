@@ -1,33 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Parameters</h2>
-<p><a class="btn" href="/settings/parameters/new">+ Add Parameter</a></p>
-
-<table class="table">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Unit</th>
-      <th>Order</th>
-      <th>Active</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
+<div class="d-flex justify-content-between mb-3"><h2>Parameters</h2><a href="/settings/parameters/new" class="btn btn-primary">New</a></div>
+<ul class="list-group">
   {% for p in parameters %}
-    <tr>
-      <td>{{ p.name }}</td>
-      <td>{{ p.unit or "" }}</td>
-      <td>{{ p.sort_order }}</td>
-      <td>{{ "Yes" if p.active else "No" }}</td>
-      <td style="white-space:nowrap;">
-        <a class="btn" href="/settings/parameters/{{ p.id }}/edit">Edit</a>
-        <form method="post" action="/settings/parameters/{{ p.id }}/delete" style="display:inline;">
-          <button class="btn btn-danger" type="submit" onclick="return confirm('Delete this parameter?')">Delete</button>
-        </form>
-      </td>
-    </tr>
+  <li class="list-group-item d-flex justify-content-between align-items-center">
+     <div><strong>{{ p.name }}</strong> ({{ p.unit }})</div>
+     <a href="/settings/parameters/{{ p.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+  </li>
   {% endfor %}
-  </tbody>
-</table>
+</ul>
 {% endblock %}

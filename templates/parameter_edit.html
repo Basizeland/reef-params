@@ -1,41 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>{{ "Edit Parameter" if param else "Add Parameter" }}</h2>
-
-<form method="post" action="/settings/parameters/save">
+<h2>{% if param %}Edit{% else %}New{% endif %} Parameter</h2>
+<form method="post" action="/settings/parameters/save" class="card p-4" style="max-width:500px">
+  {% if param %}<input type="hidden" name="param_id" value="{{ param.id }}">{% endif %}
+  <div class="mb-3"><label>Name</label><input name="name" class="form-control" value="{{ param.name if param else '' }}" required></div>
+  <div class="mb-3"><label>Unit</label><input name="unit" class="form-control" value="{{ param.unit if param else '' }}"></div>
+  <div class="mb-3"><label>Max Daily Change (Safety)</label><input type="number" step="any" name="max_daily_change" class="form-control" value="{{ param.max_daily_change if param else '' }}"></div>
+  <div class="mb-3 form-check"><input type="checkbox" name="active" class="form-check-input" {% if not param or param.active %}checked{% endif %}><label class="form-check-label">Active</label></div>
+  <button class="btn btn-success">Save</button>
   {% if param %}
-    <input type="hidden" name="param_id" value="{{ param.id }}">
+  <button type="submit" formaction="/settings/parameters/{{ param.id }}/delete" class="btn btn-danger float-end" onclick="return confirm('Delete?');">Delete</button>
   {% endif %}
-
-  <div class="form-group">
-    <label>Name</label>
-    <input name="name" required value="{{ param.name if param else '' }}">
-  </div>
-
-  <div class="form-group">
-    <label>Unit</label>
-    <input name="unit" value="{{ param.unit if param else '' }}">
-  </div>
-
-  <div class="form-group">
-    <label>Sort order</label>
-    <input name="sort_order" value="{{ param.sort_order if param else 0 }}">
-  </div>
-
-  <div class="form-group">
-    <label>Max daily change</label>
-    <input name="max_daily_change" type="number" step="any" value="{{ param.max_daily_change if param and (param.max_daily_change is not none) else "" }}" placeholder="e.g. 0.5">
-    <div class="form-text">Daily limit for dosing calculators (in this parameter's unit).</div>
-  </div>
-
-  <div class="form-group">
-    <label>
-      <input type="checkbox" name="active" {% if (param and param.active) or (not param) %}checked{% endif %}>
-      Active
-    </label>
-  </div>
-
-  <button class="btn" type="submit">Save</button>
-  <a class="btn" href="/settings/parameters">Cancel</a>
 </form>
 {% endblock %}

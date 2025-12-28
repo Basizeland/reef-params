@@ -1,76 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
-<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-  <div>
-    <h1 style="margin:0;">Dosing log</h1>
-    <div style="opacity:.8;">{{ tank.name }}</div>
+<h2>Dosing Log: {{ tank.name }}</h2>
+<div class="row mt-4">
+  <div class="col-md-4 mb-4">
+    <div class="card p-3 shadow-sm">
+      <h5>Log Dose</h5>
+      <form method="post">
+        <div class="mb-2">
+           <label>Additive</label>
+           <select name="additive_id" class="form-select" required>
+             {% for a in additives %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
+           </select>
+        </div>
+        <div class="mb-2">
+           <label>Amount (ml)</label>
+           <input type="number" step="any" name="amount_ml" class="form-control" required>
+        </div>
+        <div class="mb-3">
+           <label>Reason</label>
+           <input type="text" name="reason" class="form-control">
+        </div>
+        <button type="submit" class="btn btn-success w-100">Log</button>
+      </form>
+    </div>
   </div>
-  <a class="btn" href="/tanks/{{ tank_id }}">Back</a>
-</div>
-
-<div class="card" style="padding:16px; margin-top:16px;">
-  <h2 style="margin:0 0 10px;">Add entry</h2>
-  <form method="post" action="/tanks/{{ tank_id }}/dosing-log" style="display:grid; grid-template-columns: 1fr 140px 2fr 120px; gap:10px; align-items:end;">
-    <div>
-      <label>Additive</label>
-      <select name="additive_id">
-        <option value="">(none)</option>
-        {% for a in additives %}
-          <option value="{{ a.id }}">{{ a.name }} — {{ a.parameter }}</option>
+  <div class="col-md-8">
+    <table class="table table-striped">
+      <thead><tr><th>Date</th><th>Additive</th><th>Amount</th><th>Reason</th><th>Action</th></tr></thead>
+      <tbody>
+        {% for l in logs %}
+        <tr>
+          <td>{{ l.logged_at_dt|dtfmt }}</td>
+          <td>{{ l.additive_name }}</td>
+          <td>{{ l.amount_ml }}</td>
+          <td>{{ l.reason or "" }}</td>
+          <td>
+            <form method="post" action="/dose-logs/{{ l.id }}/delete" onsubmit="return confirm('Delete?');">
+              <input type="hidden" name="tank_id" value="{{ tank.id }}">
+              <button class="btn btn-sm btn-outline-danger">Del</button>
+            </form>
+          </td>
+        </tr>
         {% endfor %}
-      </select>
-    </div>
-    <div>
-      <label>Amount (mL)</label>
-      <input name="amount_ml" type="number" step="any" required />
-    </div>
-    <div>
-      <label>Reason / Notes</label>
-      <input name="reason" />
-    </div>
-    <div>
-      <button class="btn" type="submit">Add</button>
-    </div>
-  </form>
-</div>
-
-<div class="card" style="padding:16px; margin-top:16px;">
-  <h2 style="margin:0 0 10px;">History</h2>
-  <table style="width:100%; border-collapse:collapse;">
-    <thead>
-      <tr>
-        <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,.1);">Time</th>
-        <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,.1);">Additive</th>
-        <th style="text-align:right; padding:8px; border-bottom:1px solid rgba(0,0,0,.1);">mL</th>
-        <th style="text-align:left; padding:8px; border-bottom:1px solid rgba(0,0,0,.1);">Reason</th>
-        <th style="text-align:right; padding:8px; border-bottom:1px solid rgba(0,0,0,.1);"> </th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for l in logs %}
-      <tr>
-        <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.06);">
-          {% if l.logged_at_dt and l.logged_at_dt.strftime is defined %}
-            {{ l.logged_at_dt.strftime("%Y-%m-%d %H:%M") }}
-          {% else %}
-            {{ l.logged_at }}
-          {% endif %}
-        </td>
-        <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.06);">{{ l.additive_name or "" }}</td>
-        <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.06); text-align:right;">{{ l.amount_ml }}</td>
-        <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.06);">{{ l.reason or "" }}</td>
-        <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.06); text-align:right;">
-          <form method="post" action="/dose-logs/{{ l.id }}/delete" onsubmit="return confirm('Delete this dosing entry?');" style="display:inline;">
-            <input type="hidden" name="tank_id" value="{{ tank_id }}">
-            <button class="btn" type="submit">Delete</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-      {% if not logs %}
-      <tr><td colspan="5" style="padding:12px; opacity:.8;">No dosing entries yet.</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}

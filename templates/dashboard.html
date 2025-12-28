@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <div>
@@ -11,53 +10,38 @@
 
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">
   {% for c in tank_cards %}
-    {% set t = c.tank %}
-    {% set latest = c.latest %}
-    {% set readings = c.readings if c.readings is defined else [] %}
-    {% set ts = c.latest_time if c.latest_time is defined else (latest.taken_at if latest else None) %}
-
     <div class="col">
       <div class="card h-100 shadow-sm">
         <div class="card-body">
           <div class="d-flex align-items-start justify-content-between gap-2">
             <div class="min-w-0">
-              <div class="h5 mb-1 text-truncate">{{ t.name if t.name is defined else t['name'] }}</div>
-              <div class="small text-muted">Last sample: {{ ts|dtfmt if ts else "—" }}</div>
+              <div class="h5 mb-1 text-truncate">{{ c.tank.name }}</div>
+              <div class="small text-muted">Last: {{ c.latest.taken_at|dtfmt if c.latest else "—" }}</div>
             </div>
-            {% set vol = (t.volume_l if t.volume_l is defined else t.get('volume_l')) %}
-            {% if vol %}
-              <span class="badge text-bg-secondary align-self-start">{{ vol|fmt2 }} L</span>
+            {% if c.volume %}
+              <span class="badge text-bg-secondary align-self-start">{{ c.volume|fmt2 }} L</span>
             {% endif %}
           </div>
-
           <div class="mt-3">
-            {% if readings and readings|length > 0 %}
+            {% if c.readings %}
               <div class="d-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem;">
-                {% for r in readings %}
+                {% for r in c.readings %}
                   <div class="border rounded-2 p-2 bg-light">
-                    <div class="small text-muted text-truncate">{{ r.name if r.name is defined else r['name'] }}</div>
-                    <div class="fw-semibold">
-                      {% if r.value is defined %}
-                        {{ r.value|fmt2 }}
-                      {% else %}
-                        {{ r['value']|fmt2 }}
-                      {% endif %}
-                      <span class="text-muted fw-normal">{{ (r.unit if r.unit is defined else r.get('unit')) or "" }}</span>
-                    </div>
+                    <div class="small text-muted text-truncate">{{ r.name }}</div>
+                    <div class="fw-semibold">{{ r.value|fmt2 }} <span class="text-muted fw-normal">{{ r.unit }}</span></div>
                   </div>
                 {% endfor %}
               </div>
             {% else %}
-              <div class="text-muted small">No readings to show.</div>
+              <div class="text-muted small">No readings yet.</div>
             {% endif %}
           </div>
         </div>
-
         <div class="card-footer bg-white border-0 pt-0">
           <div class="d-flex flex-wrap gap-2">
-            <a class="btn btn-outline-secondary" href="/tanks/{{ t.id if t.id is defined else t['id'] }}">View</a>
-            <a class="btn btn-outline-secondary" href="/tanks/{{ t.id if t.id is defined else t['id'] }}/targets">Targets</a>
-            <a class="btn btn-dark ms-auto" href="/tanks/{{ t.id if t.id is defined else t['id'] }}/add">Add reading</a>
+            <a class="btn btn-outline-secondary" href="/tanks/{{ c.tank.id }}">View</a>
+            <a class="btn btn-outline-secondary" href="/tanks/{{ c.tank.id }}/targets">Targets</a>
+            <a class="btn btn-dark ms-auto" href="/tanks/{{ c.tank.id }}/add">Add reading</a>
           </div>
         </div>
       </div>

@@ -1,35 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container py-4">
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-    <div>
-      <h1 class="h3 mb-1">Tank profile</h1>
-      <div class="text-muted">{{ tank.name }}</div>
-    </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}">Back</a>
-    </div>
+<h2>Edit Profile: {{ tank.name }}</h2>
+<form method="post" class="card p-4 shadow-sm" style="max-width:500px">
+  <div class="mb-3">
+    <label class="form-label">Total Volume (Litres)</label>
+    <input type="number" step="any" name="volume_l" class="form-control" value="{{ tank.profile.volume_l }}">
   </div>
-
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <form method="post" action="/tanks/{{ tank.id }}/profile" class="row g-3">
-        <div class="col-md-6">
-          <label class="form-label">Tank volume (L)</label>
-          <input class="form-control" name="volume_l" type="number" step="any" value="{{ (profile.volume_l if profile else tank.volume_l) or '' }}" placeholder="e.g. 1500">
-          <div class="form-text">Used for dosing calculations and dashboard display.</div>
-        </div>
-        <div class="col-md-6">
-          <label class="form-label">Net water percent (%)</label>
-          <input class="form-control" name="net_percent" type="number" step="any" value="{{ (profile.net_percent if profile else 100) or 100 }}" placeholder="100">
-          <div class="form-text">Optional: account for displacement (rock/sand). 100% = full volume.</div>
-        </div>
-        <div class="col-12 d-flex gap-2">
-          <button class="btn btn-primary" type="submit">Save</button>
-          <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}">Cancel</a>
-        </div>
-      </form>
-    </div>
+  <div class="mb-3">
+    <label class="form-label">Net Water Volume (%)</label>
+    <input type="number" step="any" name="net_percent" class="form-control" value="{{ tank.profile.net_percent }}">
+    <div class="form-text">Percentage of volume that is actual water (accounting for rock/sand).</div>
   </div>
-</div>
+  <button type="submit" class="btn btn-primary">Save Profile</button>
+</form>
 {% endblock %}
