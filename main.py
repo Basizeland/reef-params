@@ -32,8 +32,13 @@ def fmt2(v: Any) -> str:
         if isinstance(v, int): return str(v)
         fv = float(v)
     except Exception: return str(v)
-    s = f"{fv:.2f}"
-    if "." in s: s = s.rstrip("0").rstrip(".")
+    
+    # NEW: Updated logic for 4 decimal places
+    # If it's a small decimal (like 0.26), keep precision.
+    # If it's a big number (like 1350), drop decimals.
+    s = f"{fv:.4f}" 
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
     return s
 
 def dtfmt(v: Any) -> str:
@@ -232,7 +237,13 @@ def dashboard(request: Request):
         if latest:
             for r in get_sample_readings(db, latest["id"]):
                 readings.append({"name": r["name"], "value": r["value"], "unit": (row_get(r, "unit") or "")})
-        tank_cards.append({"tank": t, "latest": latest, "readings": readings})
+        
+        # Ensure tank dict has volume_l for display
+        tank_data = dict(t)
+        if "volume_l" not in tank_data:
+            tank_data["volume_l"] = None 
+            
+        tank_cards.append({"tank": tank_data, "latest": latest, "readings": readings})
     db.close()
     return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
 
