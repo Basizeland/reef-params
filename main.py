@@ -1441,10 +1441,14 @@ def calculators(request: Request):
     db = get_db()
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    for a in additives_rows:
+        key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        grouped_additives.setdefault(key, []).append(a)
     profiles = q(db, "SELECT * FROM tank_profiles")
     profile_by_tank = {p["tank_id"]: p for p in profiles}
     db.close()
-    return templates.TemplateResponse("calculators.html", {"request": request, "tanks": tanks, "additives": additives_rows, "profiles": profile_by_tank})
+    return templates.TemplateResponse("calculators.html", {"request": request, "tanks": tanks, "additives": additives_rows, "grouped_additives": grouped_additives, "profiles": profile_by_tank})
 
 @app.post("/tools/calculators", response_class=HTMLResponse)
 def calculators_post(request: Request, tank_id: int = Form(...), additive_id: int = Form(...), desired_change: float = Form(...)):
@@ -1482,10 +1486,14 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
         except Exception: pass
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    for a in additives_rows:
+        key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        grouped_additives.setdefault(key, []).append(a)
     profiles = q(db, "SELECT * FROM tank_profiles")
     profile_by_tank = {p["tank_id"]: p for p in profiles}
     db.close()
-    return templates.TemplateResponse("calculators.html", {"request": request, "result": {"dose_ml": None if dose_ml is None else round(dose_ml, 2), "days": days, "daily_ml": None if daily_ml is None else round(daily_ml, 2), "daily_change": None if daily_change is None else round(daily_change, 4), "unit": unit, "error": error, "tank": tank, "additive": additive, "desired_change": desired_change}, "tanks": tanks, "additives": additives_rows, "profiles": profile_by_tank, "selected": {"tank_id": tank_id, "additive_id": additive_id}})
+    return templates.TemplateResponse("calculators.html", {"request": request, "result": {"dose_ml": None if dose_ml is None else round(dose_ml, 2), "days": days, "daily_ml": None if daily_ml is None else round(daily_ml, 2), "daily_change": None if daily_change is None else round(daily_change, 4), "unit": unit, "error": error, "tank": tank, "additive": additive, "desired_change": desired_change}, "tanks": tanks, "additives": additives_rows, "grouped_additives": grouped_additives, "profiles": profile_by_tank, "selected": {"tank_id": tank_id, "additive_id": additive_id}})
 
 @app.get("/tools/dose-plan", response_class=HTMLResponse)
 @app.get("/tools/dose-plan/", response_class=HTMLResponse, include_in_schema=False)

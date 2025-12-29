@@ -26,11 +26,19 @@
 
           <div class="mb-3">
             <label class="form-label">Additive</label>
-            <select class="form-select" id="additive-select" name="additive_id" required>
-              {% for a in additives %}
-                <option value="{{ a.id }}" data-unit="{{ a.unit or '' }}" {% if selected and selected.additive_id==a.id %}selected{% endif %}>
-                  {{ a.name }} ({{ a.parameter }})
-                </option>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-funnel"></i></span>
+              <input class="form-control" id="additive-filter" type="text" placeholder="Filter additives by name or parameter">
+            </div>
+            <select class="form-select mt-2" id="additive-select" name="additive_id" required size="6">
+              {% for parameter, items in grouped_additives.items() %}
+                <optgroup label="{{ parameter }}">
+                  {% for a in items %}
+                    <option value="{{ a.id }}" data-unit="{{ a.unit or '' }}" {% if selected and selected.additive_id==a.id %}selected{% endif %}>
+                      {{ a.name }}
+                    </option>
+                  {% endfor %}
+                </optgroup>
               {% endfor %}
             </select>
           </div>
@@ -97,13 +105,25 @@
 <script>
   (function () {
     const select = document.getElementById("additive-select");
+    const filter = document.getElementById("additive-filter");
     const unitEl = document.getElementById("desired-unit");
     if (!select || !unitEl) return;
     const updateUnit = () => {
       const opt = select.options[select.selectedIndex];
       unitEl.textContent = opt?.dataset?.unit || "";
     };
+    const filterOptions = () => {
+      const q = (filter?.value || "").toLowerCase();
+      Array.from(select.options).forEach((opt) => {
+        const label = (opt.textContent || "").toLowerCase();
+        const group = opt.parentElement?.label?.toLowerCase() || "";
+        opt.hidden = !!q && !(label.includes(q) || group.includes(q));
+      });
+    };
     select.addEventListener("change", updateUnit);
+    if (filter) {
+      filter.addEventListener("input", filterOptions);
+    }
     updateUnit();
   })();
 </script>
