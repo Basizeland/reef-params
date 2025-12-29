@@ -12,38 +12,47 @@
   <div class="alert alert-info">No additives yet.</div>
 {% endif %}
 
-<div class="card">
+<div class="card shadow-sm">
+  <div class="card-header bg-white py-3">
+    <h5 class="card-title mb-0 fw-bold">Additives by Parameter</h5>
+  </div>
   <div class="card-body">
-    <div class="table-responsive">
-      <table class="table table-sm align-middle mb-0">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Parameter</th>
-            <th class="text-end">Strength</th>
-            <th>Unit</th>
-            <th class="text-end">Max daily</th>
-            <th>Active</th>
-            <th class="text-end">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for a in rows %}
-          <tr>
-            <td class="fw-semibold">{{ a.name }}</td>
-            <td>{{ a.parameter }}</td>
-            <td class="text-end">{{ a.strength|string if a.strength is not none else "—" }}</td>
-            <td class="text-muted">{{ a.unit }}</td>
-            <td class="text-end">{{ a.max_daily if a.max_daily is not none else "—" }}</td>
-            <td>{% if a.active %}Yes{% else %}No{% endif %}</td>
-            <td class="text-end">
-              <a class="btn btn-sm btn-outline-secondary" href="/additives/{{ a.id }}/edit">Edit</a>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% for group in grouped_additives %}
+      <div class="{% if not loop.first %}mt-4{% endif %}">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <h6 class="mb-0 fw-bold text-navy">{{ group.parameter }}</h6>
+          <span class="badge bg-light text-secondary border">{{ group["items"]|length }}</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Name</th>
+                <th class="text-end">Strength</th>
+                <th>Unit</th>
+                <th class="text-end">Max daily</th>
+                <th>Active</th>
+                <th class="text-end">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for a in group["items"] %}
+              <tr>
+                <td class="fw-semibold">{{ a.name }}</td>
+                <td class="text-end">{{ a.strength|string if a.strength is not none else "—" }}</td>
+                <td class="text-muted">{{ a.unit }}</td>
+                <td class="text-end">{{ a.max_daily if a.max_daily is not none else "—" }}</td>
+                <td>{% if a.active %}Yes{% else %}No{% endif %}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="/additives/{{ a.id }}/edit">Edit</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endfor %}
   </div>
 </div>
 {% endblock %}

@@ -4,7 +4,12 @@
 <ul class="list-group">
   {% for p in parameters %}
   <li class="list-group-item d-flex justify-content-between align-items-center">
-     <div><strong>{{ p.name }}</strong> ({{ p.unit }})</div>
+     <div>
+       <strong>{{ p.name }}</strong> ({{ p.unit }})
+       {% if p.test_interval_days %}
+         <span class="badge bg-light text-secondary border ms-2">{{ p.test_interval_days }} day interval</span>
+       {% endif %}
+     </div>
      <a href="/settings/parameters/{{ p.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
   </li>
   {% endfor %}
