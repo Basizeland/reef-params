@@ -50,7 +50,12 @@
 
 {% set has_dosing = tank.dosing_mode or tank.all_in_one_solution or tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml %}
 {% if has_dosing %}
-  <h4 class="mb-3 h5 fw-bold">Daily Dosing</h4>
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0 h5 fw-bold">Daily Dosing</h4>
+    <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/dosing-settings">
+      <i class="bi bi-gear"></i> Edit Dosing
+    </a>
+  </div>
   <div class="mb-3 text-muted small">
     Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
   </div>
