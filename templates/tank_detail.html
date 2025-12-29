@@ -93,17 +93,22 @@
 </div>
 
 <div class="card shadow-sm mb-4">
-  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0 fw-bold">Trend Analysis</h5>
-    <form method="get" class="d-flex align-items-center gap-2">
-      <select name="parameter" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
-        {% for p in params %}
-          <option value="{{ p.id }}" {% if selected_parameter_id == p.id %}selected{% endif %}>
-            {{ p.name }}
-          </option>
-        {% endfor %}
-      </select>
-    </form>
+    <div class="d-flex align-items-center gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/targets">
+        <i class="bi bi-sliders"></i> Edit Target Range
+      </a>
+      <form method="get" class="d-flex align-items-center gap-2">
+        <select name="parameter" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
+          {% for p in params %}
+            <option value="{{ p.id }}" {% if selected_parameter_id == p.id %}selected{% endif %}>
+              {{ p.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
   </div>
   <div class="card-body">
     <div style="height: 350px;">
@@ -231,6 +236,29 @@
           });
           
           const dataPoints = seriesData.map(d => d.y);
+          const pointColors = seriesData.map(d => {
+            const val = d.y;
+            if (!targets || targets.length === 0 || val === null || typeof val === 'undefined') {
+              return '#042f4b';
+            }
+            const t = targets[0];
+            const alertLow = t.alert_low;
+            const alertHigh = t.alert_high;
+            const targetLow = t.target_low;
+            const targetHigh = t.target_high;
+            if (alertLow !== null && typeof alertLow !== 'undefined' && val < alertLow) {
+              return '#ff7675';
+            }
+            if (alertHigh !== null && typeof alertHigh !== 'undefined' && val > alertHigh) {
+              return '#ff7675';
+            }
+            if (targetLow !== null && typeof targetLow !== 'undefined' && targetHigh !== null && typeof targetHigh !== 'undefined') {
+              if (val >= targetLow && val <= targetHigh) {
+                return '#10ac84';
+              }
+            }
+            return '#feca57';
+          });
 
           const annotations = {};
           if (targets && targets.length > 0) {
@@ -308,7 +336,8 @@
                 tension: 0.3,
                 fill: true,
                 pointRadius: 4,
-                pointBackgroundColor: '#042f4b' // Reef Metrics Navy
+                pointBackgroundColor: pointColors,
+                pointBorderColor: pointColors
               }]
             },
             options: {
