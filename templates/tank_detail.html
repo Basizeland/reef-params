@@ -37,6 +37,17 @@
   </div>
 </div>
 
+{% if low_container_alerts %}
+  <div class="alert alert-warning small mb-4">
+    <div class="fw-semibold">Dosing containers running low (≤ {{ tank.dosing_low_days }} days)</div>
+    <ul class="mb-0">
+      {% for alert in low_container_alerts %}
+        <li>{{ alert.label }}: {{ alert.days|round(1) }} days remaining</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
 {% set has_dosing = tank.dosing_mode or tank.all_in_one_solution or tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml %}
 {% if has_dosing %}
   <div class="card shadow-sm mb-4">
@@ -44,16 +55,6 @@
       <h5 class="card-title mb-0 fw-bold">Daily Dosing</h5>
     </div>
     <div class="card-body">
-      {% if low_container_alerts %}
-        <div class="alert alert-warning small mb-3">
-          <div class="fw-semibold">Dosing containers running low (≤ {{ tank.dosing_low_days }} days)</div>
-          <ul class="mb-0">
-            {% for alert in low_container_alerts %}
-              <li>{{ alert.label }}: {{ alert.days|round(1) }} days remaining</li>
-            {% endfor %}
-          </ul>
-        </div>
-      {% endif %}
       <div class="mb-3 text-muted small">
         Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
       </div>
