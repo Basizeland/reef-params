@@ -384,9 +384,9 @@
       </a>
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% for p in params %}
-          {% set param_key = p.name|lower|replace(' ', '-')|replace('/', '-') %}
+          {% set param_key = p.key %}
           <div class="form-check form-check-inline mb-0">
-            <input class="form-check-input" type="checkbox" data-param-checkbox value="{{ p.name }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
+            <input class="form-check-input" type="checkbox" data-param-checkbox data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
             <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
           </div>
         {% endfor %}
@@ -487,7 +487,6 @@
 <script>
   document.addEventListener('DOMContentLoaded', function() {
       try {
-          const seriesData = {{ series|tojson|safe }};
           const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets|tojson|safe }};
           const ctx = document.getElementById('historyChart');
@@ -508,6 +507,15 @@
               return; 
           }
 
+          function normalizeKey(value) {
+            return String(value || '').toLowerCase().replace(/[\s/_-]+/g, '');
+          }
+
+          const normalizedSeriesMap = {};
+          Object.keys(seriesMap).forEach((key) => {
+            normalizedSeriesMap[normalizeKey(key)] = { key, series: seriesMap[key] || [] };
+          });
+
           function cleanDate(dStr) {
               if (!dStr) return new Date();
               let s = String(dStr).split('.')[0].replace(" ", "T");
@@ -520,7 +528,8 @@
           function buildLabels(selectedParams) {
             const labelMap = new Map();
             selectedParams.forEach((key) => {
-              (seriesMap[key] || []).forEach((d) => {
+              const entry = normalizedSeriesMap[key];
+              (entry ? entry.series : []).forEach((d) => {
                 const date = cleanDate(d.x);
                 labelMap.set(date.getTime(), date);
               });
@@ -535,7 +544,9 @@
           function buildDatasets(selectedParams, labels) {
             const datasets = [];
             selectedParams.forEach((key, index) => {
-              const series = seriesMap[key] || [];
+              const entry = normalizedSeriesMap[key];
+              const series = entry ? entry.series : [];
+              const label = entry?.key || key;
               const labelIndex = new Map();
               labels.forEach((label, idx) => labelIndex.set(label, idx));
               const dataPoints = Array(labels.length).fill(null);
@@ -548,7 +559,7 @@
                 }
               });
               datasets.push({
-                label: key,
+                label: label,
                 data: dataPoints,
                 borderColor: palette[index % palette.length],
                 backgroundColor: 'rgba(0, 210, 211, 0.1)',

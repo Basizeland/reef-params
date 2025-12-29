@@ -1005,7 +1005,18 @@ def tank_detail(request: Request, tank_id: int):
                 "unit": row_get(t, "unit") or unit_by_name.get(selected_parameter_id, "")
             })
             
-    params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
+    def normalize_param_key(value: str) -> str:
+        return re.sub(r"[\s/_-]+", "", str(value or "").lower())
+
+    params = [
+        {
+            "id": name,
+            "name": name,
+            "unit": unit_by_name.get(name, ""),
+            "key": normalize_param_key(name),
+        }
+        for name in available_params
+    ]
     
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
