@@ -9,7 +9,10 @@
 
 <div class="row g-3">
   <div class="col-12 col-lg-6">
-    <div class="card">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3">
+        <h5 class="card-title mb-0 fw-bold">Dose Inputs</h5>
+      </div>
       <div class="card-body">
         <form method="post" action="/tools/calculators">
           <div class="mb-3">
@@ -23,29 +26,36 @@
 
           <div class="mb-3">
             <label class="form-label">Additive</label>
-            <select class="form-select" name="additive_id" required>
+            <select class="form-select" id="additive-select" name="additive_id" required>
               {% for a in additives %}
-                <option value="{{ a.id }}" {% if selected and selected.additive_id==a.id %}selected{% endif %}>{{ a.name }} ({{ a.parameter }})</option>
+                <option value="{{ a.id }}" data-unit="{{ a.unit or '' }}" {% if selected and selected.additive_id==a.id %}selected{% endif %}>
+                  {{ a.name }} ({{ a.parameter }})
+                </option>
               {% endfor %}
             </select>
           </div>
 
           <div class="mb-3">
             <label class="form-label">Desired change</label>
-            <input class="form-control" name="desired_change" type="number" step="any" required value="{{ result.desired_change if result and result.desired_change is not none else '' }}" />
-            <div class="form-text">In the additive unit (e.g. dKH, ppm)</div>
+            <div class="input-group">
+              <input class="form-control" name="desired_change" type="number" step="any" required value="{{ result.desired_change if result and result.desired_change is not none else '' }}" />
+              <span class="input-group-text" id="desired-unit">{{ result.unit if result and result.unit else '' }}</span>
+            </div>
+            <div class="form-text">Shown in the additive unit (e.g. dKH, ppm).</div>
           </div>
 
-          <button class="btn btn-primary" type="submit">Calculate</button>
+          <button class="btn btn-primary w-100" type="submit">Calculate Dose</button>
         </form>
       </div>
     </div>
   </div>
 
   <div class="col-12 col-lg-6">
-    <div class="card">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3">
+        <h5 class="card-title mb-0 fw-bold">Result</h5>
+      </div>
       <div class="card-body">
-        <h2 class="h6">Result</h2>
         {% if result and result.error %}
           <div class="alert alert-warning mb-0">{{ result.error }}</div>
         {% elif result and result.dose_ml is not none %}
@@ -83,4 +93,18 @@
     </div>
   </div>
 </div>
+
+<script>
+  (function () {
+    const select = document.getElementById("additive-select");
+    const unitEl = document.getElementById("desired-unit");
+    if (!select || !unitEl) return;
+    const updateUnit = () => {
+      const opt = select.options[select.selectedIndex];
+      unitEl.textContent = opt?.dataset?.unit || "";
+    };
+    select.addEventListener("change", updateUnit);
+    updateUnit();
+  })();
+</script>
 {% endblock %}
