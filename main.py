@@ -1475,13 +1475,20 @@ def dosing_log(request: Request, tank_id: int):
 @app.post("/tank/{tank_id}/dosing-log", include_in_schema=False)
 async def dosing_log_add(request: Request, tank_id: int):
     form = await request.form()
+    logged_at = (form.get("logged_at") or "").strip()
     additive_id = form.get("additive_id")
     amount_ml = to_float(form.get("amount_ml"))
     reason = (form.get("reason") or "").strip() or None
     if amount_ml is None: return redirect(f"/tanks/{tank_id}/dosing-log")
     db = get_db()
     cur = db.cursor()
-    when_iso = datetime.utcnow().isoformat()
+    when_dt = None
+    if logged_at:
+        try:
+            when_dt = datetime.fromisoformat(logged_at)
+        except ValueError:
+            when_dt = parse_dt_any(logged_at)
+    when_iso = (when_dt or datetime.now()).isoformat()
     aid = int(additive_id) if additive_id and str(additive_id).isdigit() else None
     cur.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, aid, float(amount_ml), reason, when_iso))
     db.commit()
@@ -1766,12 +1773,20 @@ async def dose_plan_check(request: Request):
     now_iso = datetime.utcnow().isoformat()
     db.execute("INSERT INTO dose_plan_checks (tank_id, parameter, additive_id, planned_date, checked, checked_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tank_id, parameter, additive_id, planned_date) DO UPDATE SET checked=excluded.checked, checked_at=excluded.checked_at", (tank_id, parameter, additive_id, planned_date, checked, now_iso))
     try:
-        logged_at = f"{planned_date}T00:00:00"
+        planned_dt = parse_dt_any(planned_date)
+        if planned_dt:
+            now_time = datetime.now().time()
+            logged_at = datetime.combine(planned_dt.date(), now_time).isoformat()
+        else:
+            logged_at = datetime.now().isoformat()
         reason = f"Dose plan: {parameter} ({planned_date})"
+        date_like = f"{planned_date}%"
         if checked and amount_ml > 0:
-            existing = one(db, "SELECT id FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at=? AND reason=? LIMIT 1", (tank_id, additive_id, logged_at, reason))
-            if not existing: db.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, additive_id, amount_ml, reason, logged_at))
-        elif not checked: db.execute("DELETE FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at=? AND reason=?", (tank_id, additive_id, logged_at, reason))
+            existing = one(db, "SELECT id FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at LIKE ? AND reason=? LIMIT 1", (tank_id, additive_id, date_like, reason))
+            if not existing:
+                db.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, additive_id, amount_ml, reason, logged_at))
+        elif not checked:
+            db.execute("DELETE FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at LIKE ? AND reason=?", (tank_id, additive_id, date_like, reason))
     except Exception: pass
     db.commit()
     db.close()

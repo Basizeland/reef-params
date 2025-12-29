@@ -7,6 +7,10 @@
       <h5>Log Dose</h5>
       <form method="post">
         <div class="mb-2">
+           <label>Date/Time</label>
+           <input type="datetime-local" name="logged_at" class="form-control">
+        </div>
+        <div class="mb-2">
            <label>Additive</label>
            <select name="additive_id" class="form-select" required>
              {% for a in additives %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
