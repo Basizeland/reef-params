@@ -131,6 +131,12 @@ def table_exists(db: sqlite3.Connection, name: str) -> bool:
     r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
     return r is not None
 
+def ensure_column(db: sqlite3.Connection, table: str, col: str, ddl: str) -> None:
+    cur = db.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    if col not in cols:
+        db.execute(ddl)
+
 
 def to_float(v: Any) -> Optional[float]:
     if v is None: return None
@@ -534,34 +540,30 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
     ''')
-    def ensure_col(table: str, col: str, ddl: str) -> None:
-        cur.execute(f"PRAGMA table_info({table})")
-        cols = [r[1] for r in cur.fetchall()]
-        if col not in cols: cur.execute(ddl)
-    ensure_col("tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
-    ensure_col("parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
-    ensure_col("additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
-    ensure_col("test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
-    ensure_col("targets", "target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
-    ensure_col("targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
-    ensure_col("targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
-    ensure_col("targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
-    ensure_col("parameter_defs", "test_interval_days", "ALTER TABLE parameter_defs ADD COLUMN test_interval_days INTEGER")
-    ensure_col("parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
-    ensure_col("test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
-    ensure_col("test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
+    ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
+    ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
+    ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
+    ensure_column(db, "test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
+    ensure_column(db, "targets", "target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
+    ensure_column(db, "targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
+    ensure_column(db, "targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
+    ensure_column(db, "targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
+    ensure_column(db, "parameter_defs", "test_interval_days", "ALTER TABLE parameter_defs ADD COLUMN test_interval_days INTEGER")
+    ensure_column(db, "parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
+    ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
+    ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
     
     # NEW: Add default target columns
-    ensure_col("parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
-    ensure_col("parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
-    ensure_col("parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
-    ensure_col("parameter_defs", "default_alert_high", "ALTER TABLE parameter_defs ADD COLUMN default_alert_high REAL")
-    ensure_col("tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
-    ensure_col("tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
-    ensure_col("tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
-    ensure_col("tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
-    ensure_col("tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
-    ensure_col("tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
+    ensure_column(db, "parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
+    ensure_column(db, "parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
+    ensure_column(db, "parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
+    ensure_column(db, "parameter_defs", "default_alert_high", "ALTER TABLE parameter_defs ADD COLUMN default_alert_high REAL")
+    ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
+    ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
+    ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
+    ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
     cur.execute('''
         CREATE TABLE IF NOT EXISTS tank_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1008,6 +1010,12 @@ async def tank_profile_save(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
+    ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
+    ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
+    ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
+    ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
     db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
     db.execute(
         """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml)
