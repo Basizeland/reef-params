@@ -20,7 +20,7 @@
         <form method="post">
           <div class="mb-3">
              <label class="form-label">Date/Time</label>
-             <input type="datetime-local" name="logged_at" class="form-control">
+             <input type="datetime-local" name="logged_at" class="form-control datetime-default">
              <div class="form-text">Leave blank to use the current time.</div>
           </div>
           <div class="mb-3">
@@ -80,4 +80,17 @@
     </div>
   </div>
 </div>
+
+<script>
+  (function () {
+    const now = new Date();
+    const pad = (v) => String(v).padStart(2, "0");
+    const nowLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    document.querySelectorAll(".datetime-default").forEach((input) => {
+      if (!input.value) {
+        input.value = nowLocal;
+      }
+    });
+  })();
+</script>
 {% endblock %}
