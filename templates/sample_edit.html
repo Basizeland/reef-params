@@ -37,12 +37,17 @@
               <input class="form-control" inputmode="decimal" name="value_{{ p.id }}" value="{{ readings.get(p.name) | fmt2 }}">
               {% set kits = kits_by_param.get(p.name, []) %}
               {% if kits and kits|length > 0 %}
-                <select class="form-select form-select-sm mt-2" name="kit_{{ p.id }}">
+                <select class="form-select form-select-sm mt-2 kit-select" name="kit_{{ p.id }}" data-param-id="{{ p.id }}">
                   <option value="">Test kit (optional)</option>
                   {% for kit in kits %}
-                    <option value="{{ kit.id }}" {% if kit_map.get(p.name) == kit.id %}selected{% endif %}>{{ kit.name }}</option>
+                    <option value="{{ kit.id }}" data-conversion="{{ '1' if kit.conversion_type == 'syringe_remaining_ml' else '' }}" {% if kit_map.get(p.name) == kit.id %}selected{% endif %}>{{ kit.name }}</option>
                   {% endfor %}
                 </select>
+                <div class="mt-2 kit-conversion d-none" data-param-id="{{ p.id }}">
+                  <label class="form-label small">Syringe remaining (ml)</label>
+                  <input class="form-control form-control-sm" name="remaining_{{ p.id }}" inputmode="decimal" placeholder="e.g. 0.35">
+                  <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
+                </div>
               {% endif %}
             </div>
           {% endfor %}
@@ -56,4 +61,26 @@
     </div>
   </form>
 </div>
+
+<script>
+  (function () {
+    const selects = document.querySelectorAll(".kit-select");
+    if (!selects.length) return;
+    const update = (select) => {
+      const paramId = select.dataset.paramId;
+      const conv = select.options[select.selectedIndex]?.dataset?.conversion;
+      const block = document.querySelector(`.kit-conversion[data-param-id="${paramId}"]`);
+      if (!block) return;
+      if (conv) {
+        block.classList.remove("d-none");
+      } else {
+        block.classList.add("d-none");
+      }
+    };
+    selects.forEach((select) => {
+      select.addEventListener("change", () => update(select));
+      update(select);
+    });
+  })();
+</script>
 {% endblock %}

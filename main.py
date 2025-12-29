@@ -274,6 +274,50 @@ def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
         """, (sample_id,))
     return {r["name"]: r["test_kit_id"] for r in rows if r["test_kit_id"]}
 
+def parse_conversion_table(text: str) -> List[Dict[str, float]]:
+    rows: List[Dict[str, float]] = []
+    if not text:
+        return rows
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) != 2:
+            continue
+        remaining = to_float(parts[0])
+        value = to_float(parts[1])
+        if remaining is None or value is None:
+            continue
+        rows.append({"remaining": float(remaining), "value": float(value)})
+    return rows
+
+def compute_conversion_value(remaining: float, table: List[Dict[str, float]]) -> Optional[float]:
+    if not table:
+        return None
+    sorted_rows = sorted(table, key=lambda r: r["remaining"])
+    if remaining <= sorted_rows[0]["remaining"]:
+        return sorted_rows[0]["value"]
+    if remaining >= sorted_rows[-1]["remaining"]:
+        return sorted_rows[-1]["value"]
+    for idx in range(1, len(sorted_rows)):
+        low = sorted_rows[idx - 1]
+        high = sorted_rows[idx]
+        if low["remaining"] <= remaining <= high["remaining"]:
+            span = high["remaining"] - low["remaining"]
+            if span == 0:
+                return low["value"]
+            ratio = (remaining - low["remaining"]) / span
+            return low["value"] + ratio * (high["value"] - low["value"])
+    return None
+
+def get_test_kit_conversion(db: sqlite3.Connection, kit_id: int | None) -> Tuple[Optional[str], Optional[str]]:
+    if not kit_id:
+        return None, None
+    kit = one(db, "SELECT conversion_type, conversion_data FROM test_kits WHERE id=?", (kit_id,))
+    if not kit:
+        return None, None
+    return kit["conversion_type"], kit["conversion_data"]
+
 # --- NEW HELPER: Get the Latest Reading per Parameter ---
 def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
     """
@@ -501,6 +545,8 @@ def init_db() -> None:
     ensure_col("targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
     ensure_col("parameter_defs", "test_interval_days", "ALTER TABLE parameter_defs ADD COLUMN test_interval_days INTEGER")
     ensure_col("parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
+    ensure_col("test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
+    ensure_col("test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
     
     # NEW: Add default target columns
     ensure_col("parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
@@ -911,8 +957,18 @@ async def add_sample(request: Request, tank_id: int):
         pname = p["name"]
         punit = (row_get(p, "unit") or "")
         val = to_float(form.get(f"value_{pid}"))
-        if val is None: continue
         kit_id = to_float(form.get(f"kit_{pid}"))
+        if val is None:
+            remaining = to_float(form.get(f"remaining_{pid}"))
+            conv_type, conv_data = get_test_kit_conversion(db, int(kit_id) if kit_id else None)
+            if remaining is not None and conv_type == "syringe_remaining_ml" and conv_data:
+                try:
+                    table = json.loads(conv_data)
+                except Exception:
+                    table = []
+                val = compute_conversion_value(float(remaining), table)
+        if val is None:
+            continue
         insert_sample_reading(db, sample_id, pname, float(val), punit, int(kit_id) if kit_id else None)
     db.commit()
     db.close()
@@ -986,8 +1042,17 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
         pname = p["name"]
         punit = (p.get("unit") or "")
         val = to_float(form.get(f"value_{pid}"))
-        if val is None: continue
         kit_id = to_float(form.get(f"kit_{pid}"))
+        if val is None:
+            remaining = to_float(form.get(f"remaining_{pid}"))
+            conv_type, conv_data = get_test_kit_conversion(db, int(kit_id) if kit_id else None)
+            if remaining is not None and conv_type == "syringe_remaining_ml" and conv_data:
+                try:
+                    table = json.loads(conv_data)
+                except Exception:
+                    table = []
+                val = compute_conversion_value(float(remaining), table)
+        if val is None: continue
         insert_sample_reading(db, sample_id, pname, float(val), punit, int(kit_id) if kit_id else None)
     db.commit()
     db.close()
@@ -1265,16 +1330,49 @@ def test_kit_edit(request: Request, kit_id: int):
     kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
+    if kit:
+        kit = dict(kit)
+        conversion_data = kit.get("conversion_data")
+        if conversion_data:
+            try:
+                rows = json.loads(conversion_data)
+            except Exception:
+                rows = []
+            kit["conversion_table"] = "\n".join(
+                f"{r.get('remaining')},{r.get('value')}" for r in rows if "remaining" in r and "value" in r
+            )
     return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": kit, "parameters": parameters})
 
 @app.post("/settings/test-kits/save")
-def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
-    data = (parameter.strip(), name.strip(), (unit or "").strip() or None, to_float(resolution), to_float(min_value), to_float(max_value), (notes or "").strip() or None, is_active)
-    if kit_id and str(kit_id).strip().isdigit(): cur.execute("UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, min_value=?, max_value=?, notes=?, active=? WHERE id=?", (*data, int(kit_id)))
-    else: cur.execute("INSERT INTO test_kits (parameter, name, unit, resolution, min_value, max_value, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", data)
+    conv_type = (conversion_type or "").strip() or None
+    conversion_rows = parse_conversion_table(conversion_table or "") if conv_type else []
+    conversion_json = json.dumps(conversion_rows) if conversion_rows else None
+    data = (
+        parameter.strip(),
+        name.strip(),
+        (unit or "").strip() or None,
+        to_float(resolution),
+        to_float(min_value),
+        to_float(max_value),
+        (notes or "").strip() or None,
+        conv_type,
+        conversion_json,
+        is_active,
+    )
+    if kit_id and str(kit_id).strip().isdigit():
+        cur.execute(
+            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
+            (*data, int(kit_id)),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO test_kits (parameter, name, unit, resolution, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            data,
+        )
     db.commit()
     db.close()
     return redirect("/settings/test-kits")

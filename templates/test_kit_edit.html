@@ -63,6 +63,27 @@
           <textarea class="form-control" name="notes" rows="3">{{ kit.notes if kit and kit.notes else '' }}</textarea>
         </div>
 
+        <div class="col-12">
+          <hr>
+          <h6 class="text-muted text-uppercase small mb-2">Conversion Chart (Optional)</h6>
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">Conversion Type</label>
+          <select class="form-select" name="conversion_type">
+            <option value="">No conversion</option>
+            <option value="syringe_remaining_ml" {% if kit and kit.conversion_type == 'syringe_remaining_ml' %}selected{% endif %}>
+              Syringe remaining (Salifert-style)
+            </option>
+          </select>
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label">Conversion Table</label>
+          <textarea class="form-control" name="conversion_table" rows="4" placeholder="remaining_ml,value (one per line)">{{ kit.conversion_table if kit and kit.conversion_table else '' }}</textarea>
+          <div class="form-text">Example: 0.1,12.6</div>
+        </div>
+
         <div class="col-12 d-flex gap-2">
           <button class="btn btn-primary" type="submit">Save</button>
           <a class="btn btn-outline-secondary" href="/settings/test-kits">Cancel</a>

@@ -95,6 +95,8 @@ class TestKit(Base, DictMixin):
     min_value = Column(Float)
     max_value = Column(Float)
     notes = Column(String)
+    conversion_type = Column(String)
+    conversion_data = Column(String)
     active = Column(Integer, default=1)
 
 class Additive(Base, DictMixin):
