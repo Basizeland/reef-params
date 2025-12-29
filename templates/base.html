@@ -83,26 +83,6 @@
                             <li><a class="dropdown-item" href="/admin/merge-parameters">Merge Params</a></li>
                         </ul>
                     </li>
-                    {% if request.state.user %}
-                      <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                          <i class="bi bi-person-circle"></i> {{ request.state.user.username }}
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-                          <li><span class="dropdown-item-text text-muted small">Role: {{ request.state.user.role }}</span></li>
-                          <li><hr class="dropdown-divider"></li>
-                          <li>
-                            <form method="post" action="/logout">
-                              <button class="dropdown-item" type="submit">Logout</button>
-                            </form>
-                          </li>
-                        </ul>
-                      </li>
-                    {% else %}
-                      <li class="nav-item">
-                        <a class="nav-link" href="/login"><i class="bi bi-box-arrow-in-right"></i> Login</a>
-                      </li>
-                    {% endif %}
                 </ul>
             </div>
         </div>

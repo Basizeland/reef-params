@@ -4,8 +4,6 @@ import re
 import math
 import json
 import csv
-import hashlib
-import secrets
 import pandas as pd
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
@@ -52,17 +50,6 @@ os.makedirs(templates_dir, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
-
-@app.middleware("http")
-async def add_user_to_request(request: Request, call_next):
-    db = get_db()
-    try:
-        token = request.cookies.get("session_token")
-        request.state.user = get_current_user(db, token)
-    finally:
-        db.close()
-    response = await call_next(request)
-    return response
 
 # --- Jinja Helpers ---
 def fmt2(v: Any) -> str:
@@ -121,19 +108,6 @@ templates.env.finalize = _finalize
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
-def hash_password(password: str, secret: str) -> str:
-    salt = secret.encode("utf-8")
-    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000).hex()
-
-def verify_password(password: str, secret: str, hashed: str) -> bool:
-    try:
-        return hash_password(password, secret) == hashed
-    except Exception:
-        return False
-
-def get_secret() -> str:
-    return os.environ.get("REEF_SECRET", "reef-secret")
-
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -157,21 +131,6 @@ def table_exists(db: sqlite3.Connection, name: str) -> bool:
     r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
     return r is not None
 
-def get_current_user(db: sqlite3.Connection, token: str | None) -> Optional[sqlite3.Row]:
-    if not token:
-        return None
-    return one(db, """
-        SELECT u.* FROM user_sessions s
-        JOIN users u ON u.id = s.user_id
-        WHERE s.token=?
-    """, (token,))
-
-def require_admin(request: Request) -> Optional[RedirectResponse]:
-    user = getattr(request.state, "user", None)
-    if user and (row_get(user, "role") == "admin"):
-        return None
-    next_path = request.url.path
-    return redirect(f"/login?next={next_path}")
 
 def to_float(v: Any) -> Optional[float]:
     if v is None: return None
@@ -527,8 +486,6 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
     ''')
     def ensure_col(table: str, col: str, ddl: str) -> None:
         cur.execute(f"PRAGMA table_info({table})")
@@ -567,57 +524,9 @@ def init_db() -> None:
         
     db.commit()
 
-    cur.execute("SELECT COUNT(1) FROM users")
-    user_count = cur.fetchone()[0]
-    if user_count == 0:
-        admin_user = os.environ.get("REEF_ADMIN_USER", "admin")
-        admin_pass = os.environ.get("REEF_ADMIN_PASSWORD", "admin")
-        cur.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            (admin_user, hash_password(admin_pass, get_secret()), "admin"),
-        )
-
     db.close()
 
 init_db()
-
-@app.get("/login", response_class=HTMLResponse)
-def login_form(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
-
-@app.post("/login")
-async def login(request: Request):
-    form = await request.form()
-    username = (form.get("username") or "").strip()
-    password = (form.get("password") or "").strip()
-    next_path = (form.get("next") or "/").strip() or "/"
-    db = get_db()
-    user = one(db, "SELECT * FROM users WHERE username=?", (username,))
-    if not user or not verify_password(password, get_secret(), user["password_hash"]):
-        db.close()
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials.", "next": next_path})
-    token = secrets.token_urlsafe(32)
-    db.execute(
-        "INSERT INTO user_sessions (user_id, token, created_at) VALUES (?, ?, ?)",
-        (user["id"], token, datetime.utcnow().isoformat()),
-    )
-    db.commit()
-    db.close()
-    resp = redirect(next_path)
-    resp.set_cookie("session_token", token, httponly=True, samesite="lax")
-    return resp
-
-@app.post("/logout")
-def logout(request: Request):
-    token = request.cookies.get("session_token")
-    if token:
-        db = get_db()
-        db.execute("DELETE FROM user_sessions WHERE token=?", (token,))
-        db.commit()
-        db.close()
-    resp = redirect("/")
-    resp.delete_cookie("session_token")
-    return resp
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -1177,9 +1086,6 @@ async def save_targets_alias(request: Request, tank_id: int): return await save_
 @app.get("/settings/parameters", response_class=HTMLResponse)
 @app.get("/settings/parameters/", response_class=HTMLResponse, include_in_schema=False)
 def parameters_settings(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
@@ -1188,16 +1094,10 @@ def parameters_settings(request: Request):
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
 @app.get("/settings/parameters/new/", response_class=HTMLResponse, include_in_schema=False)
 def parameter_new(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     return templates.TemplateResponse("parameter_edit.html", {"request": request, "param": None})
 
 @app.get("/settings/parameters/{param_id}/edit", response_class=HTMLResponse)
 def parameter_edit(request: Request, param_id: int):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     row = one(db, "SELECT * FROM parameter_defs WHERE id=?", (param_id,))
     db.close()
@@ -1218,9 +1118,6 @@ def parameter_save(
     default_alert_low: Optional[str] = Form(None),
     default_alert_high: Optional[str] = Form(None)
 ):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     cur = db.cursor()
     
@@ -1323,9 +1220,6 @@ def parameter_save(
 
 @app.post("/settings/parameters/{param_id}/delete")
 def parameter_delete(request: Request, param_id: int):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
     db.commit()
@@ -1335,9 +1229,6 @@ def parameter_delete(request: Request, param_id: int):
 @app.get("/settings/test-kits", response_class=HTMLResponse)
 @app.get("/settings/test-kits/", response_class=HTMLResponse, include_in_schema=False)
 def test_kits(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     rows = q(db, "SELECT * FROM test_kits ORDER BY parameter, name")
     db.close()
@@ -1346,9 +1237,6 @@ def test_kits(request: Request):
 @app.get("/settings/test-kits/new", response_class=HTMLResponse)
 @app.get("/settings/test-kits/new/", response_class=HTMLResponse, include_in_schema=False)
 def test_kit_new(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
@@ -1356,9 +1244,6 @@ def test_kit_new(request: Request):
 
 @app.get("/settings/test-kits/{kit_id}/edit", response_class=HTMLResponse)
 def test_kit_edit(request: Request, kit_id: int):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
@@ -1367,9 +1252,6 @@ def test_kit_edit(request: Request, kit_id: int):
 
 @app.post("/settings/test-kits/save")
 def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -1382,9 +1264,6 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
 
 @app.post("/settings/test-kits/{kit_id}/delete")
 def test_kit_delete(request: Request, kit_id: int):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     db.execute("DELETE FROM test_kits WHERE id=?", (kit_id,))
     db.commit()
@@ -1394,9 +1273,6 @@ def test_kit_delete(request: Request, kit_id: int):
 @app.get("/additives", response_class=HTMLResponse)
 @app.get("/additives/", response_class=HTMLResponse, include_in_schema=False)
 def additives(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     rows = q(db, "SELECT * FROM additives ORDER BY parameter, name")
     db.close()
@@ -1409,9 +1285,6 @@ def additives_settings_redirect(): return redirect("/additives")
 @app.get("/additives/new", response_class=HTMLResponse)
 @app.get("/additives/new/", response_class=HTMLResponse, include_in_schema=False)
 def additive_new(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
@@ -1419,9 +1292,6 @@ def additive_new(request: Request):
 
 @app.get("/additives/{additive_id}/edit", response_class=HTMLResponse)
 def additive_edit(request: Request, additive_id: int):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
@@ -1430,9 +1300,6 @@ def additive_edit(request: Request, additive_id: int):
 
 @app.post("/additives/save")
 def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -1445,9 +1312,6 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
 
 @app.post("/additives/{additive_id}/delete")
 def additive_delete(request: Request, additive_id: int):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     db.execute("DELETE FROM additives WHERE id=?", (additive_id,))
     db.commit()
@@ -1506,9 +1370,6 @@ async def dosing_log_delete(log_id: int, tank_id: int = Form(...)):
 
 @app.get("/admin/merge-parameters", response_class=HTMLResponse)
 def merge_parameters_page(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     rows = q(db, "SELECT id, name, unit, max_daily_change, sort_order, active FROM parameter_defs ORDER BY name")
     groups = {}
@@ -1525,9 +1386,6 @@ def merge_parameters_page(request: Request):
 
 @app.post("/admin/merge-parameters")
 def merge_parameters_run(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     cur = db.cursor()
     rows = q(db, "SELECT id, name FROM parameter_defs")
@@ -1797,16 +1655,10 @@ async def dose_plan_check(request: Request):
 
 @app.get("/admin/import", response_class=HTMLResponse)
 def import_page(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     return templates.TemplateResponse("import_manager.html", {"request": request})
 
 @app.get("/admin/download-template")
 def download_template(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     # 1. Get your actual parameters for column headers
     params = list_parameters(db)
@@ -1862,9 +1714,6 @@ def download_template(request: Request):
 
 @app.get("/admin/export-all")
 def export_all(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     params = list_parameters(db)
@@ -1942,9 +1791,6 @@ def api_samples(tank_id: int, limit: int = 50):
     
 @app.post("/admin/upload-excel")
 async def upload_excel(request: Request, file: UploadFile = File(...)):
-    guard = require_admin(request)
-    if guard:
-        return guard
     if not file.filename.endswith(('.xlsx', '.xls')):
         return templates.TemplateResponse("import_manager.html", {"request": request, "error": "Invalid format. Please upload an Excel file."})
     
@@ -1996,16 +1842,10 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
 # --- Legacy Import (kept for compatibility) ---
 @app.get("/admin/import-excel", response_class=HTMLResponse)
 def import_excel_page(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     return templates.TemplateResponse("simple_message.html", {"request": request, "title": "Import Tank Parameters Sheet", "message": "This will import tank volumes and historical readings from the bundled Tank Parameters Sheet.xlsx.", "actions": [{"label": "Run import", "method": "post", "href": "/admin/import-excel"}]})
 
 @app.post("/admin/import-excel")
 async def import_excel_run(request: Request):
-    guard = require_admin(request)
-    if guard:
-        return guard
     db = get_db()
     candidates = []
     env_path = os.environ.get("REEF_EXCEL_PATH")

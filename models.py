@@ -148,17 +148,3 @@ class DosePlanCheck(Base, DictMixin):
     checked = Column(Integer, default=0)
     checked_at = Column(String)
     __table_args__ = (UniqueConstraint('tank_id', 'parameter', 'additive_id', 'planned_date', name='_tank_param_add_date_uc'),)
-
-class User(Base, DictMixin):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
-    username = Column(String, unique=True)
-    password_hash = Column(String)
-    role = Column(String)
-
-class UserSession(Base, DictMixin):
-    __tablename__ = "user_sessions"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    token = Column(String, unique=True)
-    created_at = Column(String)
