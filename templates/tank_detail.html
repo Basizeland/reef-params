@@ -525,7 +525,11 @@
 
           const palette = ['#00d2d3', '#54a0ff', '#10ac84', '#feca57', '#ee5253', '#576574', '#5f27cd'];
 
-          function formatLabel(date) {
+          function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            if (Number.isNaN(date.getTime())) {
+              return '';
+            }
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
@@ -533,39 +537,20 @@
             });
           }
 
-          function buildLabels(selectedParams) {
-            const labelMap = new Map();
-            selectedParams.forEach((key) => {
-              const entry = normalizedSeriesMap[key];
-              (entry ? entry.series : []).forEach((d) => {
-                const date = cleanDate(d.x);
-                labelMap.set(date.getTime(), date);
-              });
-            });
-            const sorted = Array.from(labelMap.entries()).sort((a, b) => a[0] - b[0]);
-            return sorted.map((entry) => {
-              const date = entry[1];
-              return formatLabel(date);
-            });
-          }
-
-          function buildDatasets(selectedParams, labels) {
+          function buildDatasets(selectedParams) {
             const datasets = [];
             selectedParams.forEach((key, index) => {
               const entry = normalizedSeriesMap[key];
               const series = entry ? entry.series : [];
               const label = entry?.key || key;
-              const labelIndex = new Map();
-              labels.forEach((label, idx) => labelIndex.set(label, idx));
-              const dataPoints = Array(labels.length).fill(null);
-              series.forEach((d) => {
-                const date = cleanDate(d.x);
-                const label = formatLabel(date);
-                const idx = labelIndex.get(label);
-                if (idx !== undefined) {
-                  dataPoints[idx] = d.y;
-                }
-              });
+              const dataPoints = series
+                .map((d) => {
+                  const date = cleanDate(d.x);
+                  const timestamp = date.getTime();
+                  return Number.isNaN(timestamp) ? null : { x: timestamp, y: d.y };
+                })
+                .filter(Boolean)
+                .sort((a, b) => a.x - b.x);
               datasets.push({
                 label: label,
                 data: dataPoints,
@@ -574,7 +559,8 @@
                 borderWidth: 2,
                 tension: 0.3,
                 fill: false,
-                pointRadius: 3
+                pointRadius: 3,
+                spanGaps: true
               });
             });
             return datasets;
@@ -655,11 +641,11 @@
 
           function renderChart() {
             const selected = selectedParams();
-            const labels = buildLabels(selected);
-            const datasets = buildDatasets(selected, labels);
+            const datasets = buildDatasets(selected);
             const annotations = buildAnnotations(selected);
 
-            if (!labels.length || datasets.length === 0) {
+            const hasData = datasets.some((dataset) => dataset.data && dataset.data.length > 0);
+            if (!hasData) {
               const c = ctx.getContext('2d');
               c.clearRect(0, 0, ctx.width, ctx.height);
               c.font = "14px sans-serif";
@@ -678,18 +664,26 @@
 
             window.historyChart = new Chart(ctx, {
               type: 'line',
-              data: { labels, datasets },
+              data: { datasets },
               options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                   legend: { display: true, position: 'bottom' },
-                  annotation: { annotations }
+                  annotation: { annotations },
+                  tooltip: {
+                    callbacks: {
+                      title: (items) => {
+                        const ts = items?.[0]?.parsed?.x;
+                        return ts ? formatTimestamp(ts) : '';
+                      }
+                    }
+                  }
                 },
                 scales: {
                   y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
-                  x: { display: false }
+                  x: { display: false, type: 'linear' }
                 }
               }
             });
