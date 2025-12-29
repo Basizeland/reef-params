@@ -53,6 +53,9 @@
           {% set all_in_one_pct = (all_in_one_remaining / tank.all_in_one_container_ml * 100) if tank.all_in_one_container_ml else none %}
           {% if all_in_one_pct is not none and all_in_one_pct > 100 %}{% set all_in_one_pct = 100 %}{% endif %}
           {% if all_in_one_pct is not none and all_in_one_pct < 0 %}{% set all_in_one_pct = 0 %}{% endif %}
+          {% set all_in_one_days = (all_in_one_remaining / tank.all_in_one_daily_ml) if (all_in_one_remaining is not none and tank.all_in_one_daily_ml) else none %}
+          {% set all_in_one_color = "var(--bs-primary)" %}
+          {% if all_in_one_pct is not none and all_in_one_pct <= 20 %}{% set all_in_one_color = "var(--bs-danger)" %}{% elif all_in_one_pct is not none and all_in_one_pct <= 50 %}{% set all_in_one_color = "var(--bs-warning)" %}{% endif %}
           <div class="dosing-card flex-shrink-0" style="width: 240px;">
             <div class="text-muted small">All-in-one</div>
             <div class="fw-semibold">{{ tank.all_in_one_solution or "—" }}</div>
@@ -60,10 +63,13 @@
             {% if tank.all_in_one_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
                 <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                  <div style="width: 100%; height: {{ all_in_one_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
+                  <div style="width: 100%; height: {{ all_in_one_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ all_in_one_color }};"></div>
                 </div>
                 <div>
                   <div class="text-muted small">{{ all_in_one_remaining|fmt2 }} / {{ tank.all_in_one_container_ml|fmt2 }} ml</div>
+                  {% if all_in_one_days is not none %}
+                    <div class="text-muted small">{{ all_in_one_days|round(1) }} days remaining</div>
+                  {% endif %}
                   <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                     <input type="hidden" name="action" value="refill">
                     <input type="hidden" name="container_key" value="all_in_one">
@@ -79,6 +85,9 @@
           {% set alk_pct = (alk_remaining / tank.alk_container_ml * 100) if tank.alk_container_ml else none %}
           {% if alk_pct is not none and alk_pct > 100 %}{% set alk_pct = 100 %}{% endif %}
           {% if alk_pct is not none and alk_pct < 0 %}{% set alk_pct = 0 %}{% endif %}
+          {% set alk_days = (alk_remaining / tank.alk_daily_ml) if (alk_remaining is not none and tank.alk_daily_ml) else none %}
+          {% set alk_color = "var(--bs-primary)" %}
+          {% if alk_pct is not none and alk_pct <= 20 %}{% set alk_color = "var(--bs-danger)" %}{% elif alk_pct is not none and alk_pct <= 50 %}{% set alk_color = "var(--bs-warning)" %}{% endif %}
           <div class="dosing-card flex-shrink-0" style="width: 240px;">
             <div class="text-muted small">Alkalinity</div>
             <div class="fw-semibold">{{ tank.alk_solution or "—" }}</div>
@@ -86,10 +95,13 @@
             {% if tank.alk_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
                 <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                  <div style="width: 100%; height: {{ alk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
+                  <div style="width: 100%; height: {{ alk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ alk_color }};"></div>
                 </div>
                 <div>
                   <div class="text-muted small">{{ alk_remaining|fmt2 }} / {{ tank.alk_container_ml|fmt2 }} ml</div>
+                  {% if alk_days is not none %}
+                    <div class="text-muted small">{{ alk_days|round(1) }} days remaining</div>
+                  {% endif %}
                   <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                     <input type="hidden" name="action" value="refill">
                     <input type="hidden" name="container_key" value="alk">
@@ -105,6 +117,9 @@
           {% set ca_pct = (ca_remaining / tank.ca_container_ml * 100) if tank.ca_container_ml else none %}
           {% if ca_pct is not none and ca_pct > 100 %}{% set ca_pct = 100 %}{% endif %}
           {% if ca_pct is not none and ca_pct < 0 %}{% set ca_pct = 0 %}{% endif %}
+          {% set ca_days = (ca_remaining / tank.ca_daily_ml) if (ca_remaining is not none and tank.ca_daily_ml) else none %}
+          {% set ca_color = "var(--bs-primary)" %}
+          {% if ca_pct is not none and ca_pct <= 20 %}{% set ca_color = "var(--bs-danger)" %}{% elif ca_pct is not none and ca_pct <= 50 %}{% set ca_color = "var(--bs-warning)" %}{% endif %}
           <div class="dosing-card flex-shrink-0" style="width: 240px;">
             <div class="text-muted small">Calcium</div>
             <div class="fw-semibold">{{ tank.ca_solution or "—" }}</div>
@@ -112,10 +127,13 @@
             {% if tank.ca_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
                 <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                  <div style="width: 100%; height: {{ ca_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
+                  <div style="width: 100%; height: {{ ca_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ ca_color }};"></div>
                 </div>
                 <div>
                   <div class="text-muted small">{{ ca_remaining|fmt2 }} / {{ tank.ca_container_ml|fmt2 }} ml</div>
+                  {% if ca_days is not none %}
+                    <div class="text-muted small">{{ ca_days|round(1) }} days remaining</div>
+                  {% endif %}
                   <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                     <input type="hidden" name="action" value="refill">
                     <input type="hidden" name="container_key" value="ca">
@@ -131,6 +149,9 @@
           {% set mg_pct = (mg_remaining / tank.mg_container_ml * 100) if tank.mg_container_ml else none %}
           {% if mg_pct is not none and mg_pct > 100 %}{% set mg_pct = 100 %}{% endif %}
           {% if mg_pct is not none and mg_pct < 0 %}{% set mg_pct = 0 %}{% endif %}
+          {% set mg_days = (mg_remaining / tank.mg_daily_ml) if (mg_remaining is not none and tank.mg_daily_ml) else none %}
+          {% set mg_color = "var(--bs-primary)" %}
+          {% if mg_pct is not none and mg_pct <= 20 %}{% set mg_color = "var(--bs-danger)" %}{% elif mg_pct is not none and mg_pct <= 50 %}{% set mg_color = "var(--bs-warning)" %}{% endif %}
           <div class="dosing-card flex-shrink-0" style="width: 240px;">
             <div class="text-muted small">Magnesium</div>
             <div class="fw-semibold">{{ tank.mg_solution or "—" }}</div>
@@ -138,10 +159,13 @@
             {% if tank.mg_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
                 <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                  <div style="width: 100%; height: {{ mg_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
+                  <div style="width: 100%; height: {{ mg_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ mg_color }};"></div>
                 </div>
                 <div>
                   <div class="text-muted small">{{ mg_remaining|fmt2 }} / {{ tank.mg_container_ml|fmt2 }} ml</div>
+                  {% if mg_days is not none %}
+                    <div class="text-muted small">{{ mg_days|round(1) }} days remaining</div>
+                  {% endif %}
                   <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                     <input type="hidden" name="action" value="refill">
                     <input type="hidden" name="container_key" value="mg">
@@ -157,6 +181,9 @@
           {% set nitrate_pct = (nitrate_remaining / tank.nitrate_container_ml * 100) if tank.nitrate_container_ml else none %}
           {% if nitrate_pct is not none and nitrate_pct > 100 %}{% set nitrate_pct = 100 %}{% endif %}
           {% if nitrate_pct is not none and nitrate_pct < 0 %}{% set nitrate_pct = 0 %}{% endif %}
+          {% set nitrate_days = (nitrate_remaining / tank.nitrate_daily_ml) if (nitrate_remaining is not none and tank.nitrate_daily_ml) else none %}
+          {% set nitrate_color = "var(--bs-primary)" %}
+          {% if nitrate_pct is not none and nitrate_pct <= 20 %}{% set nitrate_color = "var(--bs-danger)" %}{% elif nitrate_pct is not none and nitrate_pct <= 50 %}{% set nitrate_color = "var(--bs-warning)" %}{% endif %}
           <div class="dosing-card flex-shrink-0" style="width: 240px;">
             <div class="text-muted small">Nitrate</div>
             <div class="fw-semibold">{{ tank.nitrate_solution or "—" }}</div>
@@ -164,10 +191,13 @@
             {% if tank.nitrate_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
                 <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                  <div style="width: 100%; height: {{ nitrate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
+                  <div style="width: 100%; height: {{ nitrate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nitrate_color }};"></div>
                 </div>
                 <div>
                   <div class="text-muted small">{{ nitrate_remaining|fmt2 }} / {{ tank.nitrate_container_ml|fmt2 }} ml</div>
+                  {% if nitrate_days is not none %}
+                    <div class="text-muted small">{{ nitrate_days|round(1) }} days remaining</div>
+                  {% endif %}
                   <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                     <input type="hidden" name="action" value="refill">
                     <input type="hidden" name="container_key" value="nitrate">
@@ -183,6 +213,9 @@
           {% set phosphate_pct = (phosphate_remaining / tank.phosphate_container_ml * 100) if tank.phosphate_container_ml else none %}
           {% if phosphate_pct is not none and phosphate_pct > 100 %}{% set phosphate_pct = 100 %}{% endif %}
           {% if phosphate_pct is not none and phosphate_pct < 0 %}{% set phosphate_pct = 0 %}{% endif %}
+          {% set phosphate_days = (phosphate_remaining / tank.phosphate_daily_ml) if (phosphate_remaining is not none and tank.phosphate_daily_ml) else none %}
+          {% set phosphate_color = "var(--bs-primary)" %}
+          {% if phosphate_pct is not none and phosphate_pct <= 20 %}{% set phosphate_color = "var(--bs-danger)" %}{% elif phosphate_pct is not none and phosphate_pct <= 50 %}{% set phosphate_color = "var(--bs-warning)" %}{% endif %}
           <div class="dosing-card flex-shrink-0" style="width: 240px;">
             <div class="text-muted small">Phosphate</div>
             <div class="fw-semibold">{{ tank.phosphate_solution or "—" }}</div>
@@ -190,10 +223,13 @@
             {% if tank.phosphate_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
                 <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                  <div style="width: 100%; height: {{ phosphate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
+                  <div style="width: 100%; height: {{ phosphate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ phosphate_color }};"></div>
                 </div>
                 <div>
                   <div class="text-muted small">{{ phosphate_remaining|fmt2 }} / {{ tank.phosphate_container_ml|fmt2 }} ml</div>
+                  {% if phosphate_days is not none %}
+                    <div class="text-muted small">{{ phosphate_days|round(1) }} days remaining</div>
+                  {% endif %}
                   <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                     <input type="hidden" name="action" value="refill">
                     <input type="hidden" name="container_key" value="phosphate">
@@ -209,6 +245,9 @@
           {% set nopox_pct = (nopox_remaining / tank.nopox_container_ml * 100) if tank.nopox_container_ml else none %}
           {% if nopox_pct is not none and nopox_pct > 100 %}{% set nopox_pct = 100 %}{% endif %}
           {% if nopox_pct is not none and nopox_pct < 0 %}{% set nopox_pct = 0 %}{% endif %}
+          {% set nopox_days = (nopox_remaining / tank.nopox_daily_ml) if (nopox_remaining is not none and tank.nopox_daily_ml) else none %}
+          {% set nopox_color = "var(--bs-primary)" %}
+          {% if nopox_pct is not none and nopox_pct <= 20 %}{% set nopox_color = "var(--bs-danger)" %}{% elif nopox_pct is not none and nopox_pct <= 50 %}{% set nopox_color = "var(--bs-warning)" %}{% endif %}
           <div class="dosing-card flex-shrink-0" style="width: 240px;">
             <div class="text-muted small">NoPox</div>
             <div class="fw-semibold">Red Sea NoPox</div>
@@ -216,10 +255,13 @@
             {% if tank.nopox_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
                 <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                  <div style="width: 100%; height: {{ nopox_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
+                  <div style="width: 100%; height: {{ nopox_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nopox_color }};"></div>
                 </div>
                 <div>
                   <div class="text-muted small">{{ nopox_remaining|fmt2 }} / {{ tank.nopox_container_ml|fmt2 }} ml</div>
+                  {% if nopox_days is not none %}
+                    <div class="text-muted small">{{ nopox_days|round(1) }} days remaining</div>
+                  {% endif %}
                   <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                     <input type="hidden" name="action" value="refill">
                     <input type="hidden" name="container_key" value="nopox">
