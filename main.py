@@ -586,12 +586,20 @@ def tank_detail(request: Request, tank_id: int):
         
     series = series_map.get(selected_parameter_id, [])
     
+   # Build chart targets with distinct Alert and Target values
     chart_targets = []
     for t in targets:
         if (t["parameter"] or "") == selected_parameter_id:
-            t_low = row_get(t, "target_low") if row_get(t, "target_low") is not None else row_get(t, "low")
-            t_high = row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high")
-            chart_targets.append({"parameter": t["parameter"], "low": t_low, "high": t_high, "unit": row_get(t, "unit") or unit_by_name.get(selected_parameter_id, "")})
+            chart_targets.append({
+                "parameter": t["parameter"],
+                # These are the dashed red lines
+                "alert_low": row_get(t, "alert_low"),
+                "alert_high": row_get(t, "alert_high"),
+                # These are the green box range
+                "target_low": row_get(t, "target_low") if row_get(t, "target_low") is not None else row_get(t, "low"),
+                "target_high": row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high"),
+                "unit": row_get(t, "unit") or unit_by_name.get(selected_parameter_id, "")
+            })
             
     params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
     
