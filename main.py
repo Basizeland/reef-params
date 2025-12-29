@@ -140,6 +140,11 @@ def ensure_column(db: sqlite3.Connection, table: str, col: str, ddl: str) -> Non
     if col not in cols:
         db.execute(ddl)
 
+def table_has_column(db: sqlite3.Connection, table: str, col: str) -> bool:
+    cur = db.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    return col in cols
+
 def now_iso() -> str:
     return datetime.utcnow().isoformat()
 
@@ -163,10 +168,17 @@ def get_user_by_id(db: sqlite3.Connection, user_id: int) -> Optional[sqlite3.Row
 
 def create_user(db: sqlite3.Connection, email: str, password: str, is_admin: bool = False, google_sub: str | None = None) -> int:
     cur = db.cursor()
-    cur.execute(
-        "INSERT INTO users (email, password_hash, created_at, google_sub, is_admin) VALUES (?, ?, ?, ?, ?)",
-        (email.strip(), hash_password(password), now_iso(), google_sub, 1 if is_admin else 0),
-    )
+    username = email.strip()
+    if table_has_column(db, "users", "username"):
+        cur.execute(
+            "INSERT INTO users (email, username, password_hash, created_at, google_sub, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
+            (email.strip(), username, hash_password(password), now_iso(), google_sub, 1 if is_admin else 0),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO users (email, password_hash, created_at, google_sub, is_admin) VALUES (?, ?, ?, ?, ?)",
+            (email.strip(), hash_password(password), now_iso(), google_sub, 1 if is_admin else 0),
+        )
     db.commit()
     return cur.lastrowid
 
