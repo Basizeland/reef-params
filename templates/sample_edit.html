@@ -35,6 +35,15 @@
             <div class="col-6 col-md-4 col-lg-3">
               <label class="form-label">{{ p.name }}{% if p.unit %} ({{ p.unit }}){% endif %}</label>
               <input class="form-control" inputmode="decimal" name="value_{{ p.id }}" value="{{ readings.get(p.name) | fmt2 }}">
+              {% set kits = kits_by_param.get(p.name, []) %}
+              {% if kits and kits|length > 0 %}
+                <select class="form-select form-select-sm mt-2" name="kit_{{ p.id }}">
+                  <option value="">Test kit (optional)</option>
+                  {% for kit in kits %}
+                    <option value="{{ kit.id }}" {% if kit_map.get(p.name) == kit.id %}selected{% endif %}>{{ kit.name }}</option>
+                  {% endfor %}
+                </select>
+              {% endif %}
             </div>
           {% endfor %}
         </div>
