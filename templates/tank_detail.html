@@ -525,11 +525,7 @@
 
           const palette = ['#00d2d3', '#54a0ff', '#10ac84', '#feca57', '#ee5253', '#576574', '#5f27cd'];
 
-          function formatTimestamp(timestamp) {
-            const date = new Date(timestamp);
-            if (Number.isNaN(date.getTime())) {
-              return '';
-            }
+          function formatLabel(date) {
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
@@ -537,20 +533,36 @@
             });
           }
 
-          function buildDatasets(selectedParams) {
+          function buildLabels(selectedParams) {
+            const labelMap = new Map();
+            selectedParams.forEach((key) => {
+              const entry = normalizedSeriesMap[key];
+              (entry ? entry.series : []).forEach((d) => {
+                const date = cleanDate(d.x);
+                labelMap.set(date.getTime(), date);
+              });
+            });
+            const sorted = Array.from(labelMap.entries()).sort((a, b) => a[0] - b[0]);
+            return sorted.map((entry) => formatLabel(entry[1]));
+          }
+
+          function buildDatasets(selectedParams, labels) {
             const datasets = [];
             selectedParams.forEach((key, index) => {
               const entry = normalizedSeriesMap[key];
               const series = entry ? entry.series : [];
               const label = entry?.key || key;
-              const dataPoints = series
-                .map((d) => {
-                  const date = cleanDate(d.x);
-                  const timestamp = date.getTime();
-                  return Number.isNaN(timestamp) ? null : { x: timestamp, y: d.y };
-                })
-                .filter(Boolean)
-                .sort((a, b) => a.x - b.x);
+              const labelIndex = new Map();
+              labels.forEach((label, idx) => labelIndex.set(label, idx));
+              const dataPoints = Array(labels.length).fill(null);
+              series.forEach((d) => {
+                const date = cleanDate(d.x);
+                const label = formatLabel(date);
+                const idx = labelIndex.get(label);
+                if (idx !== undefined) {
+                  dataPoints[idx] = d.y;
+                }
+              });
               datasets.push({
                 label: label,
                 data: dataPoints,
@@ -559,8 +571,7 @@
                 borderWidth: 2,
                 tension: 0.3,
                 fill: false,
-                pointRadius: 3,
-                spanGaps: true
+                pointRadius: 3
               });
             });
             return datasets;
@@ -641,11 +652,11 @@
 
           function renderChart() {
             const selected = selectedParams();
-            const datasets = buildDatasets(selected);
+            const labels = buildLabels(selected);
+            const datasets = buildDatasets(selected, labels);
             const annotations = buildAnnotations(selected);
 
-            const hasData = datasets.some((dataset) => dataset.data && dataset.data.length > 0);
-            if (!hasData) {
+            if (!labels.length || datasets.length === 0) {
               const c = ctx.getContext('2d');
               c.clearRect(0, 0, ctx.width, ctx.height);
               c.font = "14px sans-serif";
@@ -664,26 +675,18 @@
 
             window.historyChart = new Chart(ctx, {
               type: 'line',
-              data: { datasets },
+              data: { labels, datasets },
               options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                   legend: { display: true, position: 'bottom' },
-                  annotation: { annotations },
-                  tooltip: {
-                    callbacks: {
-                      title: (items) => {
-                        const ts = items?.[0]?.parsed?.x;
-                        return ts ? formatTimestamp(ts) : '';
-                      }
-                    }
-                  }
+                  annotation: { annotations }
                 },
                 scales: {
                   y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
-                  x: { display: false, type: 'linear' }
+                  x: { display: false }
                 }
               }
             });
