@@ -81,7 +81,7 @@
         <div class="col-12 col-md-6">
           <label class="form-label">Conversion Table</label>
           <textarea class="form-control" name="conversion_table" rows="4" placeholder="remaining_ml,value (one per line)">{{ kit.conversion_table if kit and kit.conversion_table else '' }}</textarea>
-          <div class="form-text">Example: 0.1,12.6</div>
+          <div class="form-text">Example: 0.1,12.6 (one per line). Space-separated entries are accepted too.</div>
         </div>
 
         <div class="col-12 d-flex gap-2">

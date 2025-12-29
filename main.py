@@ -278,7 +278,10 @@ def parse_conversion_table(text: str) -> List[Dict[str, float]]:
     rows: List[Dict[str, float]] = []
     if not text:
         return rows
-    for line in text.splitlines():
+    cleaned = text.replace("\t", " ")
+    if "\n" not in cleaned and "," in cleaned:
+        cleaned = cleaned.replace(" ", "\n")
+    for line in cleaned.splitlines():
         if not line.strip():
             continue
         parts = [p.strip() for p in line.split(",")]
