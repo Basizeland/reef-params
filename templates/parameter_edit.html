@@ -31,6 +31,11 @@
           <input class="form-control" name="max_daily_change" type="number" step="any" value="{{ param.max_daily_change if param and param.max_daily_change is not none else '' }}" />
           <div class="form-text">Used in calculators to warn if a dose is too large.</div>
         </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label fw-bold">Test Interval (Days)</label>
+          <input class="form-control" name="test_interval_days" type="number" value="{{ param.test_interval_days if param and param.test_interval_days is not none else '' }}" />
+          <div class="form-text">Mark readings as overdue when the last log exceeds this interval.</div>
+        </div>
 
         <div class="col-12">
           <hr class="my-2">

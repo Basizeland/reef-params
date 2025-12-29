@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Tank Journal</h1>
+    <div class="text-muted small">{{ tank.name }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}">
+    <i class="bi bi-arrow-left"></i> Back to Tank
+  </a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3">
+        <h5 class="card-title mb-0 fw-bold">Log Maintenance</h5>
+      </div>
+      <div class="card-body">
+        <form method="post" action="/tanks/{{ tank.id }}/journal">
+          <div class="mb-3">
+            <label class="form-label">Date/Time</label>
+            <input type="datetime-local" name="entry_date" class="form-control datetime-default">
+            <div class="form-text">Defaults to now if left blank.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Type</label>
+            <select class="form-select" name="entry_type">
+              <option value="">General</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="equipment">Equipment</option>
+              <option value="livestock">Livestock</option>
+              <option value="water_change">Water Change</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Title</label>
+            <input class="form-control" name="title" placeholder="e.g. Cleaned skimmer">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Notes</label>
+            <textarea class="form-control" name="notes" rows="3" placeholder="Details or observations"></textarea>
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Add Entry</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0 fw-bold">Recent Entries</h5>
+        <span class="text-muted small">{{ entries|length }} entries</span>
+      </div>
+      <div class="list-group list-group-flush">
+        {% if entries and entries|length %}
+          {% for entry in entries %}
+            <div class="list-group-item">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <div class="fw-semibold">{{ entry.title or 'Untitled entry' }}</div>
+                  <div class="text-muted small">{{ entry.entry_date|dtfmt }}{% if entry.entry_type %} • {{ entry.entry_type|replace('_', ' ')|title }}{% endif %}</div>
+                </div>
+                <form method="post" action="/tanks/{{ tank.id }}/journal/{{ entry.id }}/delete" onsubmit="return confirm('Delete this entry?');">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              </div>
+              {% if entry.notes %}
+                <div class="mt-2 text-secondary">{{ entry.notes }}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="list-group-item text-muted">No journal entries yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const now = new Date();
+    const pad = (v) => String(v).padStart(2, "0");
+    const nowLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    document.querySelectorAll(".datetime-default").forEach((input) => {
+      if (!input.value) {
+        input.value = nowLocal;
+      }
+    });
+  })();
+</script>
+{% endblock %}

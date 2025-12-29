@@ -35,6 +35,11 @@ class ParameterDef(Base, DictMixin):
     active = Column(Integer, default=1)
     sort_order = Column(Integer, default=0)
     max_daily_change = Column(Float, nullable=True)
+    test_interval_days = Column(Integer, nullable=True)
+    default_target_low = Column(Float, nullable=True)
+    default_target_high = Column(Float, nullable=True)
+    default_alert_low = Column(Float, nullable=True)
+    default_alert_high = Column(Float, nullable=True)
 
 class Sample(Base, DictMixin):
     __tablename__ = "samples"
@@ -61,6 +66,12 @@ class SampleValue(Base, DictMixin):
     sample = relationship("Sample", back_populates="values")
     parameter_def = relationship("ParameterDef")
 
+class SampleValueKit(Base, DictMixin):
+    __tablename__ = "sample_value_kits"
+    sample_id = Column(Integer, ForeignKey("samples.id"), primary_key=True)
+    parameter_id = Column(Integer, ForeignKey("parameter_defs.id"), primary_key=True)
+    test_kit_id = Column(Integer, ForeignKey("test_kits.id"))
+
 class Target(Base, DictMixin):
     __tablename__ = "targets"
     id = Column(Integer, primary_key=True)
@@ -84,6 +95,8 @@ class TestKit(Base, DictMixin):
     min_value = Column(Float)
     max_value = Column(Float)
     notes = Column(String)
+    conversion_type = Column(String)
+    conversion_data = Column(String)
     active = Column(Integer, default=1)
 
 class Additive(Base, DictMixin):

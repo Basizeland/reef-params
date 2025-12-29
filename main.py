@@ -3,6 +3,7 @@ import sqlite3
 import re
 import math
 import json
+import csv
 import pandas as pd
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
@@ -130,6 +131,13 @@ def table_exists(db: sqlite3.Connection, name: str) -> bool:
     r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
     return r is not None
 
+def ensure_column(db: sqlite3.Connection, table: str, col: str, ddl: str) -> None:
+    cur = db.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    if col not in cols:
+        db.execute(ddl)
+
+
 def to_float(v: Any) -> Optional[float]:
     if v is None: return None
     if isinstance(v, (int, float)):
@@ -211,10 +219,33 @@ def format_value(p: Any, v: Any) -> str:
 def get_sample_readings(db: sqlite3.Connection, sample_id: int) -> List[sqlite3.Row]:
     mode = values_mode(db)
     if mode == "sample_values":
-        return q(db, "SELECT pd.name AS name, sv.value AS value, COALESCE(pd.unit, '') AS unit FROM sample_values sv JOIN parameter_defs pd ON pd.id = sv.parameter_id WHERE sv.sample_id=? ORDER BY COALESCE(pd.sort_order, 0), pd.name", (sample_id,))
-    return q(db, "SELECT p.name AS name, p.value AS value, COALESCE(pd.unit, p.unit, '') AS unit FROM parameters p LEFT JOIN parameter_defs pd ON pd.name = p.name WHERE p.sample_id=? ORDER BY COALESCE(pd.sort_order, 0), p.name", (sample_id,))
+        return q(db, """
+            SELECT pd.name AS name,
+                   sv.value AS value,
+                   COALESCE(pd.unit, '') AS unit,
+                   svk.test_kit_id AS test_kit_id,
+                   tk.name AS test_kit_name
+            FROM sample_values sv
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            LEFT JOIN sample_value_kits svk ON svk.sample_id = sv.sample_id AND svk.parameter_id = sv.parameter_id
+            LEFT JOIN test_kits tk ON tk.id = svk.test_kit_id
+            WHERE sv.sample_id=?
+            ORDER BY COALESCE(pd.sort_order, 0), pd.name
+        """, (sample_id,))
+    return q(db, """
+        SELECT p.name AS name,
+               p.value AS value,
+               COALESCE(pd.unit, p.unit, '') AS unit,
+               p.test_kit_id AS test_kit_id,
+               tk.name AS test_kit_name
+        FROM parameters p
+        LEFT JOIN parameter_defs pd ON pd.name = p.name
+        LEFT JOIN test_kits tk ON tk.id = p.test_kit_id
+        WHERE p.sample_id=?
+        ORDER BY COALESCE(pd.sort_order, 0), p.name
+    """, (sample_id,))
 
-def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, value: float, unit: str = "") -> None:
+def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
     cur = db.cursor()
     mode = values_mode(db)
     if mode == "sample_values":
@@ -224,8 +255,77 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
             pid = cur.lastrowid
         else: pid = pd["id"]
         cur.execute("INSERT INTO sample_values (sample_id, parameter_id, value) VALUES (?, ?, ?)", (sample_id, pid, value))
+        if test_kit_id:
+            cur.execute(
+                "INSERT OR REPLACE INTO sample_value_kits (sample_id, parameter_id, test_kit_id) VALUES (?, ?, ?)",
+                (sample_id, pid, test_kit_id),
+            )
     else:
-        cur.execute("INSERT INTO parameters (sample_id, name, value, unit) VALUES (?, ?, ?, ?)", (sample_id, pname, value, unit or None))
+        cur.execute("INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)", (sample_id, pname, value, unit or None, test_kit_id))
+
+def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
+    mode = values_mode(db)
+    if mode == "sample_values":
+        rows = q(db, """
+            SELECT pd.name AS name, svk.test_kit_id AS test_kit_id
+            FROM sample_value_kits svk
+            JOIN parameter_defs pd ON pd.id = svk.parameter_id
+            WHERE svk.sample_id=?
+        """, (sample_id,))
+    else:
+        rows = q(db, """
+            SELECT p.name AS name, p.test_kit_id AS test_kit_id
+            FROM parameters p
+            WHERE p.sample_id=?
+        """, (sample_id,))
+    return {r["name"]: r["test_kit_id"] for r in rows if r["test_kit_id"]}
+
+def parse_conversion_table(text: str) -> List[Dict[str, float]]:
+    rows: List[Dict[str, float]] = []
+    if not text:
+        return rows
+    cleaned = text.replace("\t", " ")
+    if "\n" not in cleaned and "," in cleaned:
+        cleaned = cleaned.replace(" ", "\n")
+    for line in cleaned.splitlines():
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) != 2:
+            continue
+        remaining = to_float(parts[0])
+        value = to_float(parts[1])
+        if remaining is None or value is None:
+            continue
+        rows.append({"remaining": float(remaining), "value": float(value)})
+    return rows
+
+def compute_conversion_value(remaining: float, table: List[Dict[str, float]]) -> Optional[float]:
+    if not table:
+        return None
+    sorted_rows = sorted(table, key=lambda r: r["remaining"])
+    if remaining <= sorted_rows[0]["remaining"]:
+        return sorted_rows[0]["value"]
+    if remaining >= sorted_rows[-1]["remaining"]:
+        return sorted_rows[-1]["value"]
+    for idx in range(1, len(sorted_rows)):
+        low = sorted_rows[idx - 1]
+        high = sorted_rows[idx]
+        if low["remaining"] <= remaining <= high["remaining"]:
+            span = high["remaining"] - low["remaining"]
+            if span == 0:
+                return low["value"]
+            ratio = (remaining - low["remaining"]) / span
+            return low["value"] + ratio * (high["value"] - low["value"])
+    return None
+
+def get_test_kit_conversion(db: sqlite3.Connection, kit_id: int | None) -> Tuple[Optional[str], Optional[str]]:
+    if not kit_id:
+        return None, None
+    kit = one(db, "SELECT conversion_type, conversion_data FROM test_kits WHERE id=?", (kit_id,))
+    if not kit:
+        return None, None
+    return kit["conversion_type"], kit["conversion_data"]
 
 # --- NEW HELPER: Get the Latest Reading per Parameter ---
 def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
@@ -238,7 +338,7 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
     
     if mode == "sample_values":
         rows = q(db, """
-            SELECT pd.name, sv.value, s.taken_at 
+            SELECT pd.name, sv.value, s.taken_at, s.id AS sample_id
             FROM sample_values sv 
             JOIN samples s ON s.id = sv.sample_id 
             JOIN parameter_defs pd ON pd.id = sv.parameter_id
@@ -247,7 +347,7 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
         """, (tank_id,))
     else:
         rows = q(db, """
-            SELECT p.name, p.value, s.taken_at 
+            SELECT p.name, p.value, s.taken_at, s.id AS sample_id
             FROM parameters p
             JOIN samples s ON s.id = p.sample_id 
             WHERE s.tank_id=? 
@@ -259,9 +359,45 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
         if name not in latest_map:
             latest_map[name] = {
                 "value": r["value"],
-                "taken_at": parse_dt_any(r["taken_at"])
+                "taken_at": parse_dt_any(r["taken_at"]),
+                "sample_id": r["sample_id"],
             }
     
+    return latest_map
+
+def get_latest_and_previous_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
+    latest_map: Dict[str, Dict[str, Any]] = {}
+    mode = values_mode(db)
+    if mode == "sample_values":
+        rows = q(db, """
+            SELECT pd.name, sv.value, s.taken_at
+            FROM sample_values sv
+            JOIN samples s ON s.id = sv.sample_id
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE s.tank_id=?
+            ORDER BY s.taken_at DESC
+        """, (tank_id,))
+    else:
+        rows = q(db, """
+            SELECT p.name, p.value, s.taken_at
+            FROM parameters p
+            JOIN samples s ON s.id = p.sample_id
+            WHERE s.tank_id=?
+            ORDER BY s.taken_at DESC
+        """, (tank_id,))
+
+    for r in rows:
+        name = r["name"]
+        if name not in latest_map:
+            latest_map[name] = {
+                "latest": {"value": r["value"], "taken_at": parse_dt_any(r["taken_at"])},
+                "previous": None,
+            }
+        elif latest_map[name]["previous"] is None:
+            latest_map[name]["previous"] = {
+                "value": r["value"],
+                "taken_at": parse_dt_any(r["taken_at"])
+            }
     return latest_map
 
 # --- DATABASE MODELS ---
@@ -393,7 +529,7 @@ def init_db() -> None:
     cur.executescript('''
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -402,25 +538,51 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
     ''')
-    def ensure_col(table: str, col: str, ddl: str) -> None:
-        cur.execute(f"PRAGMA table_info({table})")
-        cols = [r[1] for r in cur.fetchall()]
-        if col not in cols: cur.execute(ddl)
-    ensure_col("tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
-    ensure_col("parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
-    ensure_col("additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
-    ensure_col("test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
-    ensure_col("targets", "target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
-    ensure_col("targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
-    ensure_col("targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
-    ensure_col("targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
+    ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
+    ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
+    ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
+    ensure_column(db, "test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
+    ensure_column(db, "targets", "target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
+    ensure_column(db, "targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
+    ensure_column(db, "targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
+    ensure_column(db, "targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
+    ensure_column(db, "parameter_defs", "test_interval_days", "ALTER TABLE parameter_defs ADD COLUMN test_interval_days INTEGER")
+    ensure_column(db, "parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
+    ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
+    ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
     
     # NEW: Add default target columns
-    ensure_col("parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
-    ensure_col("parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
-    ensure_col("parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
-    ensure_col("parameter_defs", "default_alert_high", "ALTER TABLE parameter_defs ADD COLUMN default_alert_high REAL")
+    ensure_column(db, "parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
+    ensure_column(db, "parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
+    ensure_column(db, "parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
+    ensure_column(db, "parameter_defs", "default_alert_high", "ALTER TABLE parameter_defs ADD COLUMN default_alert_high REAL")
+    ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
+    ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
+    ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
+    ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "dosing_mode", "ALTER TABLE tank_profiles ADD COLUMN dosing_mode TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_solution", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_solution TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_solution", "ALTER TABLE tank_profiles ADD COLUMN nitrate_solution TEXT")
+    ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
+    ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS tank_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tank_id INTEGER NOT NULL,
+            entry_date TEXT NOT NULL,
+            entry_type TEXT,
+            title TEXT,
+            notes TEXT,
+            FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
+        );
+    ''')
 
     cur.execute("SELECT COUNT(1) FROM parameter_defs")
     cnt = cur.fetchone()[0]
@@ -437,6 +599,7 @@ def init_db() -> None:
         """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
         
     db.commit()
+
     db.close()
 
 init_db()
@@ -447,28 +610,91 @@ def dashboard(request: Request):
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     tank_cards = []
     for t in tanks:
-        latest_map = get_latest_per_parameter(db, t["id"])
+        latest_map = get_latest_and_previous_per_parameter(db, t["id"])
+        pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+        targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         
         readings = []
-        pdefs = get_active_param_defs(db)
-        
-        for p in pdefs:
-            pname = p["name"]
+        out_of_range = 0
+        overdue_count = 0
+        for pname, p in pdefs.items():
             data = latest_map.get(pname)
-            if data:
-                readings.append({
-                    "name": pname, 
-                    "value": data["value"], 
-                    "unit": (row_get(p, "unit") or ""),
-                    "taken_at": data["taken_at"]
-                })
+            if not data or not data.get("latest"):
+                continue
+            latest_data = data["latest"]
+            previous = data.get("previous")
+            latest_val = latest_data["value"]
+            latest_taken = latest_data["taken_at"]
+            status = "ok"
+            target = targets.get(pname)
+            if target and latest_val is not None:
+                al, ah = row_get(target, "alert_low"), row_get(target, "alert_high")
+                tl = row_get(target, "target_low") if row_get(target, "target_low") is not None else row_get(target, "low")
+                th = row_get(target, "target_high") if row_get(target, "target_high") is not None else row_get(target, "high")
+                try:
+                    fv = float(latest_val)
+                    if al is not None and fv < float(al):
+                        status = "danger"
+                    elif ah is not None and fv > float(ah):
+                        status = "danger"
+                    elif tl is not None and fv < float(tl):
+                        status = "warn"
+                    elif th is not None and fv > float(th):
+                        status = "warn"
+                except Exception:
+                    pass
+            trend_warning = False
+            delta_per_day = None
+            if previous and latest_taken and previous.get("taken_at"):
+                try:
+                    delta = float(latest_val) - float(previous.get("value"))
+                    days = max((latest_taken - previous["taken_at"]).total_seconds() / 86400.0, 1e-6)
+                    delta_per_day = delta / days
+                    max_change = row_get(p, "max_daily_change")
+                    if max_change is not None and abs(delta_per_day) > float(max_change):
+                        trend_warning = True
+                except Exception:
+                    pass
+            overdue = False
+            if latest_taken:
+                interval_days = row_get(p, "test_interval_days")
+                if interval_days:
+                    try:
+                        overdue = (datetime.now() - latest_taken).days >= int(interval_days)
+                    except Exception:
+                        overdue = False
+            if status in ("danger", "warn"):
+                out_of_range += 1
+            if overdue:
+                overdue_count += 1
+            readings.append({
+                "name": pname,
+                "value": latest_val,
+                "unit": (row_get(p, "unit") or ""),
+                "taken_at": latest_taken,
+                "status": status,
+                "trend_warning": trend_warning,
+                "delta_per_day": delta_per_day,
+                "overdue": overdue,
+            })
         
         tank_data = dict(t)
         if "volume_l" not in tank_data:
             tank_data["volume_l"] = None 
-            
-        tank_cards.append({"tank": tank_data, "latest": latest, "readings": readings})
+
+        last_dose = one(db, "SELECT logged_at FROM dose_logs WHERE tank_id=? ORDER BY logged_at DESC LIMIT 1", (t["id"],))
+        last_dose_at = parse_dt_any(last_dose["logged_at"]) if last_dose else None
+        tank_cards.append({
+            "tank": tank_data,
+            "latest": latest,
+            "readings": readings,
+            "summary": {
+                "out_of_range": out_of_range,
+                "overdue": overdue_count,
+                "last_dose_at": last_dose_at,
+            },
+        })
     db.close()
     return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
 
@@ -520,6 +746,7 @@ async def sample_delete(sample_id: int):
         # 2. Perform the deletion
         db.execute("DELETE FROM samples WHERE id = ?", (sample_id,))
         db.execute("DELETE FROM sample_values WHERE sample_id = ?", (sample_id,))
+        db.execute("DELETE FROM sample_value_kits WHERE sample_id = ?", (sample_id,))
         db.commit()
 
         # 3. Redirect back to the tank detail page we just came from
@@ -534,6 +761,19 @@ def tank_detail(request: Request, tank_id: int):
     if not tank:
         db.close()
         return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": None, "params": [], "recent_samples": [], "sample_values": {}, "latest_vals": {}, "status_by_param_id": {}, "targets": [], "series": [], "chart_targets": [], "selected_parameter_id": "", "format_value": format_value, "target_map": {}})
+    profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    tank_view = dict(tank)
+    if profile:
+        tank_view.update({
+            "volume_l": row_get(profile, "volume_l", tank_view.get("volume_l")),
+            "net_percent": row_get(profile, "net_percent"),
+            "alk_solution": row_get(profile, "alk_solution"),
+            "alk_daily_ml": row_get(profile, "alk_daily_ml"),
+            "ca_solution": row_get(profile, "ca_solution"),
+            "ca_daily_ml": row_get(profile, "ca_daily_ml"),
+            "mg_solution": row_get(profile, "mg_solution"),
+            "mg_daily_ml": row_get(profile, "mg_daily_ml"),
+        })
     
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
@@ -604,9 +844,13 @@ def tank_detail(request: Request, tank_id: int):
     params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
     
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
+    latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
+    pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
     
     status_by_param_id = {}
+    trend_warning_by_param = {}
+    overdue_by_param = {}
     for pname in available_params:
         data = latest_by_param_id.get(pname)
         v = data.get("value") if data else None
@@ -625,10 +869,106 @@ def tank_detail(request: Request, tank_id: int):
             if th is not None and fv > float(th): status_by_param_id[pname] = "warn"; continue
             status_by_param_id[pname] = "ok"
         except Exception: continue
+
+        prev_data = latest_and_previous.get(pname, {}).get("previous")
+        latest_data = latest_and_previous.get(pname, {}).get("latest")
+        trend_warning_by_param[pname] = False
+        if latest_data and prev_data:
+            try:
+                delta = float(latest_data["value"]) - float(prev_data["value"])
+                days = max((latest_data["taken_at"] - prev_data["taken_at"]).total_seconds() / 86400.0, 1e-6)
+                delta_per_day = delta / days
+                max_change = row_get(pdef_map.get(pname), "max_daily_change")
+                if max_change is not None and abs(delta_per_day) > float(max_change):
+                    trend_warning_by_param[pname] = True
+            except Exception:
+                trend_warning_by_param[pname] = False
+        overdue_by_param[pname] = False
+        latest_taken = latest_data["taken_at"] if latest_data else None
+        interval_days = row_get(pdef_map.get(pname), "test_interval_days")
+        if latest_taken and interval_days:
+            try:
+                overdue_by_param[pname] = (datetime.now() - latest_taken).days >= int(interval_days)
+            except Exception:
+                overdue_by_param[pname] = False
         
     recent_samples = samples[:10] if samples else []
     db.close()
-    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank_view, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+
+@app.get("/tanks/{tank_id}/journal", response_class=HTMLResponse)
+def tank_journal(request: Request, tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    entries = q(db, "SELECT * FROM tank_journal WHERE tank_id=? ORDER BY entry_date DESC, id DESC", (tank_id,))
+    db.close()
+    return templates.TemplateResponse("tank_journal.html", {"request": request, "tank": tank, "entries": entries})
+
+@app.post("/tanks/{tank_id}/journal")
+async def tank_journal_add(request: Request, tank_id: int):
+    form = await request.form()
+    entry_date = (form.get("entry_date") or "").strip()
+    if entry_date:
+        try:
+            entry_iso = datetime.fromisoformat(entry_date).isoformat()
+        except ValueError:
+            entry_iso = datetime.now().isoformat()
+    else:
+        entry_iso = datetime.now().isoformat()
+    entry_type = (form.get("entry_type") or "").strip() or None
+    title = (form.get("title") or "").strip() or None
+    notes = (form.get("notes") or "").strip() or None
+    db = get_db()
+    db.execute(
+        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+        (tank_id, entry_iso, entry_type, title, notes),
+    )
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/journal/{entry_id}/delete")
+def tank_journal_delete(tank_id: int, entry_id: int):
+    db = get_db()
+    db.execute("DELETE FROM tank_journal WHERE id=? AND tank_id=?", (entry_id, tank_id))
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.get("/tanks/{tank_id}/export")
+def tank_export(request: Request, tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    samples = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at ASC", (tank_id,))
+    params = list_parameters(db)
+    rows = []
+    for s in samples:
+        row = {
+            "Tank": tank["name"],
+            "Taken At": s["taken_at"],
+            "Notes": s["notes"],
+        }
+        readings = {r["name"]: r["value"] for r in get_sample_readings(db, s["id"])}
+        for p in params:
+            row[p["name"]] = readings.get(p["name"])
+        rows.append(row)
+    db.close()
+    df = pd.DataFrame(rows)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Samples")
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        headers={"Content-Disposition": f'attachment; filename="{tank["name"]}_samples.xlsx"'},
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 @app.get("/tanks/{tank_id}/profile", response_class=HTMLResponse)
 @app.get("/tanks/{tank_id}/edit", response_class=HTMLResponse, include_in_schema=False)
@@ -650,6 +990,20 @@ def tank_profile(request: Request, tank_id: int):
         try:
             tank_view["volume_l"] = profile["volume_l"]
             tank_view["net_percent"] = profile["net_percent"]
+            tank_view["alk_solution"] = profile["alk_solution"]
+            tank_view["alk_daily_ml"] = profile["alk_daily_ml"]
+            tank_view["ca_solution"] = profile["ca_solution"]
+            tank_view["ca_daily_ml"] = profile["ca_daily_ml"]
+            tank_view["mg_solution"] = profile["mg_solution"]
+            tank_view["mg_daily_ml"] = profile["mg_daily_ml"]
+            tank_view["dosing_mode"] = profile["dosing_mode"]
+            tank_view["all_in_one_solution"] = profile["all_in_one_solution"]
+            tank_view["all_in_one_daily_ml"] = profile["all_in_one_daily_ml"]
+            tank_view["nitrate_solution"] = profile["nitrate_solution"]
+            tank_view["nitrate_daily_ml"] = profile["nitrate_daily_ml"]
+            tank_view["phosphate_solution"] = profile["phosphate_solution"]
+            tank_view["phosphate_daily_ml"] = profile["phosphate_daily_ml"]
+            tank_view["nopox_daily_ml"] = profile["nopox_daily_ml"]
         except Exception: pass
     db.close()
     return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": tank_view})
@@ -661,13 +1015,62 @@ async def tank_profile_save(request: Request, tank_id: int):
     volume_l = to_float(form.get("volume_l"))
     net_percent = to_float(form.get("net_percent"))
     if net_percent is None: net_percent = 100
+    alk_solution = (form.get("alk_solution") or "").strip() or None
+    ca_solution = (form.get("ca_solution") or "").strip() or None
+    mg_solution = (form.get("mg_solution") or "").strip() or None
+    alk_daily_ml = to_float(form.get("alk_daily_ml"))
+    ca_daily_ml = to_float(form.get("ca_daily_ml"))
+    mg_daily_ml = to_float(form.get("mg_daily_ml"))
+    dosing_mode = (form.get("dosing_mode") or "").strip() or None
+    all_in_one_solution = (form.get("all_in_one_solution") or "").strip() or None
+    all_in_one_daily_ml = to_float(form.get("all_in_one_daily_ml"))
+    nitrate_solution = (form.get("nitrate_solution") or "").strip() or None
+    nitrate_daily_ml = to_float(form.get("nitrate_daily_ml"))
+    phosphate_solution = (form.get("phosphate_solution") or "").strip() or None
+    phosphate_daily_ml = to_float(form.get("phosphate_daily_ml"))
+    nopox_daily_ml = to_float(form.get("nopox_daily_ml"))
     db = get_db()
     tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
+    ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
+    ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
+    ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
+    ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "dosing_mode", "ALTER TABLE tank_profiles ADD COLUMN dosing_mode TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_solution", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_solution TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_solution", "ALTER TABLE tank_profiles ADD COLUMN nitrate_solution TEXT")
+    ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
+    ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
     db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
-    db.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, ?) ON CONFLICT(tank_id) DO UPDATE SET volume_l=excluded.volume_l, net_percent=excluded.net_percent", (tank_id, volume_l, float(net_percent)))
+    db.execute(
+        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(tank_id) DO UPDATE SET
+             volume_l=excluded.volume_l,
+             net_percent=excluded.net_percent,
+             alk_solution=excluded.alk_solution,
+             alk_daily_ml=excluded.alk_daily_ml,
+             ca_solution=excluded.ca_solution,
+             ca_daily_ml=excluded.ca_daily_ml,
+             mg_solution=excluded.mg_solution,
+             mg_daily_ml=excluded.mg_daily_ml,
+             dosing_mode=excluded.dosing_mode,
+             all_in_one_solution=excluded.all_in_one_solution,
+             all_in_one_daily_ml=excluded.all_in_one_daily_ml,
+             nitrate_solution=excluded.nitrate_solution,
+             nitrate_daily_ml=excluded.nitrate_daily_ml,
+             phosphate_solution=excluded.phosphate_solution,
+             phosphate_daily_ml=excluded.phosphate_daily_ml,
+             nopox_daily_ml=excluded.nopox_daily_ml""",
+        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml),
+    )
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
@@ -702,8 +1105,19 @@ async def add_sample(request: Request, tank_id: int):
         pname = p["name"]
         punit = (row_get(p, "unit") or "")
         val = to_float(form.get(f"value_{pid}"))
-        if val is None: continue
-        insert_sample_reading(db, sample_id, pname, float(val), punit)
+        kit_id = to_float(form.get(f"kit_{pid}"))
+        if val is None:
+            remaining = to_float(form.get(f"remaining_{pid}"))
+            conv_type, conv_data = get_test_kit_conversion(db, int(kit_id) if kit_id else None)
+            if remaining is not None and conv_type == "syringe_remaining_ml" and conv_data:
+                try:
+                    table = json.loads(conv_data)
+                except Exception:
+                    table = []
+                val = compute_conversion_value(float(remaining), table)
+        if val is None:
+            continue
+        insert_sample_reading(db, sample_id, pname, float(val), punit, int(kit_id) if kit_id else None)
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
@@ -735,10 +1149,15 @@ def sample_edit(request: Request, tank_id: int, sample_id: int):
         raise HTTPException(status_code=404, detail="Sample not found")
     pdefs = get_active_param_defs(db)
     readings = {r["name"]: r["value"] for r in get_sample_readings(db, sample_id)}
+    kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
+    kits_by_param = {}
+    for k in kits:
+        kits_by_param.setdefault(k["parameter"], []).append(k)
+    kit_map = get_sample_kits(db, sample_id)
     taken_dt = parse_dt_any(sample["taken_at"])
     taken_local = taken_dt.strftime("%Y-%m-%dT%H:%M") if taken_dt else ""
     db.close()
-    return templates.TemplateResponse("sample_edit.html", {"request": request, "tank": tank, "tank_id": tank_id, "sample_id": sample_id, "sample": sample, "taken_local": taken_local, "pdefs": pdefs, "readings": readings})
+    return templates.TemplateResponse("sample_edit.html", {"request": request, "tank": tank, "tank_id": tank_id, "sample_id": sample_id, "sample": sample, "taken_local": taken_local, "pdefs": pdefs, "readings": readings, "kits_by_param": kits_by_param, "kit_map": kit_map})
 
 @app.post("/tanks/{tank_id}/samples/{sample_id}/edit")
 async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
@@ -759,7 +1178,10 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     if not when_iso: when_iso = (parse_dt_any(sample["taken_at"]) or datetime.utcnow()).isoformat()
     cur.execute("UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
     mode = values_mode(db)
-    if mode == "sample_values" and table_exists(db, "sample_values"): cur.execute("DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+    if mode == "sample_values" and table_exists(db, "sample_values"):
+        cur.execute("DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+        if table_exists(db, "sample_value_kits"):
+            cur.execute("DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
     else:
         if table_exists(db, "parameters"): cur.execute("DELETE FROM parameters WHERE sample_id=?", (sample_id,))
     pdefs = get_active_param_defs(db)
@@ -768,8 +1190,18 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
         pname = p["name"]
         punit = (p.get("unit") or "")
         val = to_float(form.get(f"value_{pid}"))
+        kit_id = to_float(form.get(f"kit_{pid}"))
+        if val is None:
+            remaining = to_float(form.get(f"remaining_{pid}"))
+            conv_type, conv_data = get_test_kit_conversion(db, int(kit_id) if kit_id else None)
+            if remaining is not None and conv_type == "syringe_remaining_ml" and conv_data:
+                try:
+                    table = json.loads(conv_data)
+                except Exception:
+                    table = []
+                val = compute_conversion_value(float(remaining), table)
         if val is None: continue
-        insert_sample_reading(db, sample_id, pname, float(val), punit)
+        insert_sample_reading(db, sample_id, pname, float(val), punit, int(kit_id) if kit_id else None)
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/samples/{sample_id}")
@@ -903,11 +1335,13 @@ def parameter_edit(request: Request, param_id: int):
 
 @app.post("/settings/parameters/save")
 def parameter_save(
+    request: Request,
     param_id: Optional[str] = Form(None), 
     name: str = Form(...), 
     unit: Optional[str] = Form(None), 
     sort_order: Optional[str] = Form(None), 
     max_daily_change: Optional[str] = Form(None), 
+    test_interval_days: Optional[str] = Form(None),
     active: Optional[str] = Form(None),
     default_target_low: Optional[str] = Form(None),
     default_target_high: Optional[str] = Form(None),
@@ -921,6 +1355,7 @@ def parameter_save(
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     order = int(to_float(sort_order) or 0)
     mdc = to_float(max_daily_change)
+    interval = int(to_float(test_interval_days) or 0) if test_interval_days else None
     dt_low = to_float(default_target_low)
     dt_high = to_float(default_target_high)
     da_low = to_float(default_alert_low)
@@ -932,7 +1367,7 @@ def parameter_save(
         db.close()
         return redirect("/settings/parameters")
 
-    data = (clean_name, (unit or "").strip() or None, mdc, order, is_active, dt_low, dt_high, da_low, da_high)
+    data = (clean_name, (unit or "").strip() or None, mdc, interval, order, is_active, dt_low, dt_high, da_low, da_high)
 
     try:
         # 2. Logic for Update/Merge
@@ -960,7 +1395,7 @@ def parameter_save(
                     cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, existing_id))
                     
@@ -972,14 +1407,14 @@ def parameter_save(
                             
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, pid))
             else:
                 # SIMPLE UPDATE
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                    SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                     WHERE id=?""", (*data, pid))
         
@@ -989,14 +1424,14 @@ def parameter_save(
             if existing:
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET unit=?, max_daily_change=?, sort_order=?, active=?, 
+                    SET unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], existing["id"]))
+                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], existing["id"]))
             else:
                 cur.execute("""
                     INSERT INTO parameter_defs 
-                    (name, unit, max_daily_change, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
+                    (name, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
 
         db.commit()
         
@@ -1014,7 +1449,7 @@ def parameter_save(
     return redirect("/settings/parameters")
 
 @app.post("/settings/parameters/{param_id}/delete")
-def parameter_delete(param_id: int):
+def parameter_delete(request: Request, param_id: int):
     db = get_db()
     db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
     db.commit()
@@ -1043,22 +1478,55 @@ def test_kit_edit(request: Request, kit_id: int):
     kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
+    if kit:
+        kit = dict(kit)
+        conversion_data = kit.get("conversion_data")
+        if conversion_data:
+            try:
+                rows = json.loads(conversion_data)
+            except Exception:
+                rows = []
+            kit["conversion_table"] = "\n".join(
+                f"{r.get('remaining')},{r.get('value')}" for r in rows if "remaining" in r and "value" in r
+            )
     return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": kit, "parameters": parameters})
 
 @app.post("/settings/test-kits/save")
-def test_kit_save(kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
-    data = (parameter.strip(), name.strip(), (unit or "").strip() or None, to_float(resolution), to_float(min_value), to_float(max_value), (notes or "").strip() or None, is_active)
-    if kit_id and str(kit_id).strip().isdigit(): cur.execute("UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, min_value=?, max_value=?, notes=?, active=? WHERE id=?", (*data, int(kit_id)))
-    else: cur.execute("INSERT INTO test_kits (parameter, name, unit, resolution, min_value, max_value, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", data)
+    conv_type = (conversion_type or "").strip() or None
+    conversion_rows = parse_conversion_table(conversion_table or "") if conv_type else []
+    conversion_json = json.dumps(conversion_rows) if conversion_rows else None
+    data = (
+        parameter.strip(),
+        name.strip(),
+        (unit or "").strip() or None,
+        to_float(resolution),
+        to_float(min_value),
+        to_float(max_value),
+        (notes or "").strip() or None,
+        conv_type,
+        conversion_json,
+        is_active,
+    )
+    if kit_id and str(kit_id).strip().isdigit():
+        cur.execute(
+            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
+            (*data, int(kit_id)),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO test_kits (parameter, name, unit, resolution, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            data,
+        )
     db.commit()
     db.close()
     return redirect("/settings/test-kits")
 
 @app.post("/settings/test-kits/{kit_id}/delete")
-def test_kit_delete(kit_id: int):
+def test_kit_delete(request: Request, kit_id: int):
     db = get_db()
     db.execute("DELETE FROM test_kits WHERE id=?", (kit_id,))
     db.commit()
@@ -1071,7 +1539,14 @@ def additives(request: Request):
     db = get_db()
     rows = q(db, "SELECT * FROM additives ORDER BY parameter, name")
     db.close()
-    return templates.TemplateResponse("additives.html", {"request": request, "additives": rows, "rows": rows})
+    grouped = []
+    groups: Dict[str, List[sqlite3.Row]] = {}
+    for r in rows:
+        key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        groups.setdefault(key, []).append(r)
+    for key in sorted(groups.keys(), key=lambda s: s.lower()):
+        grouped.append({"parameter": key, "items": groups[key]})
+    return templates.TemplateResponse("additives.html", {"request": request, "additives": rows, "rows": rows, "grouped_additives": grouped})
 
 @app.get("/settings/additives", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/settings/additives/", response_class=HTMLResponse, include_in_schema=False)
@@ -1094,7 +1569,7 @@ def additive_edit(request: Request, additive_id: int):
     return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": additive, "parameters": parameters})
 
 @app.post("/additives/save")
-def additive_save(additive_id: Optional[str] = Form(None), name: str = Form(...), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -1106,7 +1581,7 @@ def additive_save(additive_id: Optional[str] = Form(None), name: str = Form(...)
     return redirect("/additives")
 
 @app.post("/additives/{additive_id}/delete")
-def additive_delete(additive_id: int):
+def additive_delete(request: Request, additive_id: int):
     db = get_db()
     db.execute("DELETE FROM additives WHERE id=?", (additive_id,))
     db.commit()
@@ -1135,13 +1610,20 @@ def dosing_log(request: Request, tank_id: int):
 @app.post("/tank/{tank_id}/dosing-log", include_in_schema=False)
 async def dosing_log_add(request: Request, tank_id: int):
     form = await request.form()
+    logged_at = (form.get("logged_at") or "").strip()
     additive_id = form.get("additive_id")
     amount_ml = to_float(form.get("amount_ml"))
     reason = (form.get("reason") or "").strip() or None
     if amount_ml is None: return redirect(f"/tanks/{tank_id}/dosing-log")
     db = get_db()
     cur = db.cursor()
-    when_iso = datetime.utcnow().isoformat()
+    when_dt = None
+    if logged_at:
+        try:
+            when_dt = datetime.fromisoformat(logged_at)
+        except ValueError:
+            when_dt = parse_dt_any(logged_at)
+    when_iso = (when_dt or datetime.now()).isoformat()
     aid = int(additive_id) if additive_id and str(additive_id).isdigit() else None
     cur.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, aid, float(amount_ml), reason, when_iso))
     db.commit()
@@ -1173,7 +1655,7 @@ def merge_parameters_page(request: Request):
     return templates.TemplateResponse("merge_parameters.html", {"request": request, "dups": dups})
 
 @app.post("/admin/merge-parameters")
-def merge_parameters_run():
+def merge_parameters_run(request: Request):
     db = get_db()
     cur = db.cursor()
     rows = q(db, "SELECT id, name FROM parameter_defs")
@@ -1205,10 +1687,14 @@ def calculators(request: Request):
     db = get_db()
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    for a in additives_rows:
+        key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        grouped_additives.setdefault(key, []).append(a)
     profiles = q(db, "SELECT * FROM tank_profiles")
     profile_by_tank = {p["tank_id"]: p for p in profiles}
     db.close()
-    return templates.TemplateResponse("calculators.html", {"request": request, "tanks": tanks, "additives": additives_rows, "profiles": profile_by_tank})
+    return templates.TemplateResponse("calculators.html", {"request": request, "tanks": tanks, "additives": additives_rows, "grouped_additives": grouped_additives, "profiles": profile_by_tank})
 
 @app.post("/tools/calculators", response_class=HTMLResponse)
 def calculators_post(request: Request, tank_id: int = Form(...), additive_id: int = Form(...), desired_change: float = Form(...)):
@@ -1246,10 +1732,14 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
         except Exception: pass
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    for a in additives_rows:
+        key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        grouped_additives.setdefault(key, []).append(a)
     profiles = q(db, "SELECT * FROM tank_profiles")
     profile_by_tank = {p["tank_id"]: p for p in profiles}
     db.close()
-    return templates.TemplateResponse("calculators.html", {"request": request, "result": {"dose_ml": None if dose_ml is None else round(dose_ml, 2), "days": days, "daily_ml": None if daily_ml is None else round(daily_ml, 2), "daily_change": None if daily_change is None else round(daily_change, 4), "unit": unit, "error": error, "tank": tank, "additive": additive, "desired_change": desired_change}, "tanks": tanks, "additives": additives_rows, "profiles": profile_by_tank, "selected": {"tank_id": tank_id, "additive_id": additive_id}})
+    return templates.TemplateResponse("calculators.html", {"request": request, "result": {"dose_ml": None if dose_ml is None else round(dose_ml, 2), "days": days, "daily_ml": None if daily_ml is None else round(daily_ml, 2), "daily_change": None if daily_change is None else round(daily_change, 4), "unit": unit, "error": error, "tank": tank, "additive": additive, "desired_change": desired_change}, "tanks": tanks, "additives": additives_rows, "grouped_additives": grouped_additives, "profiles": profile_by_tank, "selected": {"tank_id": tank_id, "additive_id": additive_id}})
 
 @app.get("/tools/dose-plan", response_class=HTMLResponse)
 @app.get("/tools/dose-plan/", response_class=HTMLResponse, include_in_schema=False)
@@ -1420,12 +1910,20 @@ async def dose_plan_check(request: Request):
     now_iso = datetime.utcnow().isoformat()
     db.execute("INSERT INTO dose_plan_checks (tank_id, parameter, additive_id, planned_date, checked, checked_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tank_id, parameter, additive_id, planned_date) DO UPDATE SET checked=excluded.checked, checked_at=excluded.checked_at", (tank_id, parameter, additive_id, planned_date, checked, now_iso))
     try:
-        logged_at = f"{planned_date}T00:00:00"
+        planned_dt = parse_dt_any(planned_date)
+        if planned_dt:
+            now_time = datetime.now().time()
+            logged_at = datetime.combine(planned_dt.date(), now_time).isoformat()
+        else:
+            logged_at = datetime.now().isoformat()
         reason = f"Dose plan: {parameter} ({planned_date})"
+        date_like = f"{planned_date}%"
         if checked and amount_ml > 0:
-            existing = one(db, "SELECT id FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at=? AND reason=? LIMIT 1", (tank_id, additive_id, logged_at, reason))
-            if not existing: db.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, additive_id, amount_ml, reason, logged_at))
-        elif not checked: db.execute("DELETE FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at=? AND reason=?", (tank_id, additive_id, logged_at, reason))
+            existing = one(db, "SELECT id FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at LIKE ? AND reason=? LIMIT 1", (tank_id, additive_id, date_like, reason))
+            if not existing:
+                db.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, additive_id, amount_ml, reason, logged_at))
+        elif not checked:
+            db.execute("DELETE FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at LIKE ? AND reason=?", (tank_id, additive_id, date_like, reason))
     except Exception: pass
     db.commit()
     db.close()
@@ -1438,7 +1936,7 @@ def import_page(request: Request):
     return templates.TemplateResponse("import_manager.html", {"request": request})
 
 @app.get("/admin/download-template")
-def download_template():
+def download_template(request: Request):
     db = get_db()
     # 1. Get your actual parameters for column headers
     params = list_parameters(db)
@@ -1491,6 +1989,83 @@ def download_template():
         headers=headers,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+
+@app.get("/admin/export-all")
+def export_all(request: Request):
+    db = get_db()
+    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    params = list_parameters(db)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for t in tanks:
+            samples = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at ASC", (t["id"],))
+            rows = []
+            for s in samples:
+                row = {
+                    "Tank": t["name"],
+                    "Taken At": s["taken_at"],
+                    "Notes": s["notes"],
+                }
+                readings = {r["name"]: r["value"] for r in get_sample_readings(db, s["id"])}
+                for p in params:
+                    row[p["name"]] = readings.get(p["name"])
+                rows.append(row)
+            df = pd.DataFrame(rows)
+            sheet_name = (t["name"] or f"Tank {t['id']}")[:31]
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+    db.close()
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        headers={"Content-Disposition": 'attachment; filename="reef_export_all.xlsx"'},
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+@app.get("/api/tanks")
+def api_tanks():
+    db = get_db()
+    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    data = []
+    for t in tanks:
+        latest_map = get_latest_per_parameter(db, t["id"])
+        readings = []
+        for name, info in latest_map.items():
+            taken_at = info.get("taken_at")
+            if isinstance(taken_at, datetime):
+                taken_at = taken_at.isoformat()
+            readings.append({
+                "parameter": name,
+                "value": info.get("value"),
+                "taken_at": taken_at,
+            })
+        data.append({
+            "id": t["id"],
+            "name": t["name"],
+            "volume_l": t["volume_l"],
+            "latest_readings": readings,
+        })
+    db.close()
+    return {"tanks": data}
+
+@app.get("/api/tanks/{tank_id}/samples")
+def api_samples(tank_id: int, limit: int = 50):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    samples = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT ?", (tank_id, limit))
+    data = []
+    for s in samples:
+        readings = {r["name"]: r["value"] for r in get_sample_readings(db, s["id"])}
+        data.append({
+            "id": s["id"],
+            "taken_at": s["taken_at"],
+            "notes": s["notes"],
+            "readings": readings,
+        })
+    db.close()
+    return {"tank": {"id": tank["id"], "name": tank["name"]}, "samples": data}
     
 @app.post("/admin/upload-excel")
 async def upload_excel(request: Request, file: UploadFile = File(...)):

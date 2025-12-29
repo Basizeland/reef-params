@@ -30,6 +30,75 @@
             </div>
           </div>
 
+          <div class="border-top pt-4 mt-4">
+            <h6 class="text-muted text-uppercase small mb-3">Daily Dosing</h6>
+            <div class="row g-3 mb-3">
+              <div class="col-12">
+                <label class="form-label fw-bold">Dosing Mode</label>
+                <select class="form-select" name="dosing_mode">
+                  <option value="">Not specified</option>
+                  <option value="all_in_one" {% if tank.dosing_mode == 'all_in_one' %}selected{% endif %}>All-in-one (e.g. All For Reef)</option>
+                  <option value="two_part" {% if tank.dosing_mode == 'two_part' %}selected{% endif %}>Two-part (Alk + Ca)</option>
+                  <option value="three_part" {% if tank.dosing_mode == 'three_part' %}selected{% endif %}>Three-part (Alk + Ca + Mg)</option>
+                </select>
+              </div>
+            </div>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">All-in-one Solution</label>
+                <input type="text" name="all_in_one_solution" class="form-control" value="{{ tank.all_in_one_solution or '' }}" placeholder="e.g. All For Reef">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">All-in-one Daily (ml)</label>
+                <input type="number" step="any" name="all_in_one_daily_ml" class="form-control" value="{{ tank.all_in_one_daily_ml if tank.all_in_one_daily_ml is not none else '' }}" placeholder="e.g. 12">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Alkalinity Solution</label>
+                <input type="text" name="alk_solution" class="form-control" value="{{ tank.alk_solution or '' }}" placeholder="e.g. Soda Ash">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Alkalinity Daily (ml)</label>
+                <input type="number" step="any" name="alk_daily_ml" class="form-control" value="{{ tank.alk_daily_ml if tank.alk_daily_ml is not none else '' }}" placeholder="e.g. 25">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Calcium Solution</label>
+                <input type="text" name="ca_solution" class="form-control" value="{{ tank.ca_solution or '' }}" placeholder="e.g. Calcium Chloride">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Calcium Daily (ml)</label>
+                <input type="number" step="any" name="ca_daily_ml" class="form-control" value="{{ tank.ca_daily_ml if tank.ca_daily_ml is not none else '' }}" placeholder="e.g. 20">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Magnesium Solution</label>
+                <input type="text" name="mg_solution" class="form-control" value="{{ tank.mg_solution or '' }}" placeholder="e.g. Magnesium Mix">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Magnesium Daily (ml)</label>
+                <input type="number" step="any" name="mg_daily_ml" class="form-control" value="{{ tank.mg_daily_ml if tank.mg_daily_ml is not none else '' }}" placeholder="e.g. 15">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Nitrate Solution</label>
+                <input type="text" name="nitrate_solution" class="form-control" value="{{ tank.nitrate_solution or '' }}" placeholder="e.g. NeoNitro">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Nitrate Daily (ml)</label>
+                <input type="number" step="any" name="nitrate_daily_ml" class="form-control" value="{{ tank.nitrate_daily_ml if tank.nitrate_daily_ml is not none else '' }}" placeholder="e.g. 2">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Phosphate Solution</label>
+                <input type="text" name="phosphate_solution" class="form-control" value="{{ tank.phosphate_solution or '' }}" placeholder="e.g. NeoPhos">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Phosphate Daily (ml)</label>
+                <input type="number" step="any" name="phosphate_daily_ml" class="form-control" value="{{ tank.phosphate_daily_ml if tank.phosphate_daily_ml is not none else '' }}" placeholder="e.g. 1">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">NoPox Daily (ml)</label>
+                <input type="number" step="any" name="nopox_daily_ml" class="form-control" value="{{ tank.nopox_daily_ml if tank.nopox_daily_ml is not none else '' }}" placeholder="e.g. 5">
+              </div>
+            </div>
+          </div>
+
           <div class="d-flex justify-content-between align-items-center mt-4">
             <a href="/tanks/{{ tank.id }}" class="text-decoration-none">Cancel</a>
             <button type="submit" class="btn btn-primary px-4">Save Profile</button>
