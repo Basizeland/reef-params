@@ -98,7 +98,7 @@
                                            data-planned-date="{{ s.date }}"
                                            data-amount-ml="{{ s.ml }}"
                                            {% if s.checked %}checked{% endif %}>
-                                    <span class="form-check-label small user-select-none">Day {{ s.day }}</span>
+                                    <span class="form-check-label small user-select-none {% if s.checked %}text-decoration-line-through text-muted{% endif %}">Day {{ s.day }}</span>
                                   </label>
                                 {% endfor %}
                             {% else %}
@@ -168,7 +168,7 @@
                                            data-planned-date="{{ s.date }}"
                                            data-amount-ml="{{ s.ml }}"
                                            {% if s.checked %}checked{% endif %}>
-                                    <span class="fw-medium">Day {{ s.day }}</span>
+                                    <span class="fw-medium {% if s.checked %}text-decoration-line-through text-muted{% endif %}">Day {{ s.day }}</span>
                                  </div>
                                  <span class="badge bg-light text-dark border">{{ s.ml|fmt2 }} ml</span>
                               </label>
@@ -226,6 +226,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // C. Calculate Totals
     recalculateTotals();
+
+    // D. Apply completed styling
+    updateDoseCheckStyles();
 });
 
 // 2. Main Handler for Dropdown Changes
@@ -302,6 +305,20 @@ function recalculateTotals() {
     }
 }
 
+// 5. Apply strike-through styling for completed checks
+function updateDoseCheckStyles() {
+    document.querySelectorAll(".dose-check").forEach((checkbox) => {
+        const label = checkbox.closest("label");
+        const labelText = label?.querySelector(".form-check-label") || label?.querySelector(".fw-medium");
+        if (!labelText) return;
+        if (checkbox.checked) {
+            labelText.classList.add("text-decoration-line-through", "text-muted");
+        } else {
+            labelText.classList.remove("text-decoration-line-through", "text-muted");
+        }
+    });
+}
+
 // 5. Checkbox Logic
 (function(){
   async function toggleDoseCheck(input){
@@ -335,6 +352,7 @@ function recalculateTotals() {
       alert("Failed to update dose check. " + (e && e.message ? e.message : ""));
     } finally {
       input.disabled = false;
+      updateDoseCheckStyles();
     }
   }
 
