@@ -43,7 +43,15 @@
             {% if readings and readings|length > 0 %}
               <div class="d-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem;">
                 {% for r in readings %}
-                  <div class="border rounded-2 p-2 bg-light bg-opacity-50">
+                  {% set status_class = "border-secondary-subtle" %}
+                  {% if r.status == "danger" %}
+                    {% set status_class = "border-danger bg-danger-subtle" %}
+                  {% elif r.status == "warn" %}
+                    {% set status_class = "border-warning bg-warning-subtle" %}
+                  {% elif r.status == "ok" %}
+                    {% set status_class = "border-success bg-success-subtle" %}
+                  {% endif %}
+                  <div class="border rounded-2 p-2 {{ status_class }}">
                     <div class="d-flex justify-content-between align-items-start mb-1">
                         <div class="small text-muted text-truncate" style="max-width: 65%;">
                             {{ r.name if r.name is defined else r['name'] }}
@@ -63,6 +71,14 @@
                         {{ r['value']|fmt2 }}
                       {% endif %}
                       <span class="text-muted fw-normal fs-6">{{ (r.unit if r.unit is defined else r.get('unit')) or "" }}</span>
+                    </div>
+                    <div class="mt-1 d-flex flex-wrap gap-1">
+                      {% if r.trend_warning %}
+                        <span class="badge text-bg-warning">Rapid change</span>
+                      {% endif %}
+                      {% if r.overdue %}
+                        <span class="badge text-bg-info">Overdue</span>
+                      {% endif %}
                     </div>
                   </div>
                 {% endfor %}

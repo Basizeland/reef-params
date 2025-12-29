@@ -3,6 +3,9 @@ import sqlite3
 import re
 import math
 import json
+import csv
+import hashlib
+import secrets
 import pandas as pd
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
@@ -49,6 +52,17 @@ os.makedirs(templates_dir, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
+
+@app.middleware("http")
+async def add_user_to_request(request: Request, call_next):
+    db = get_db()
+    try:
+        token = request.cookies.get("session_token")
+        request.state.user = get_current_user(db, token)
+    finally:
+        db.close()
+    response = await call_next(request)
+    return response
 
 # --- Jinja Helpers ---
 def fmt2(v: Any) -> str:
@@ -107,6 +121,19 @@ templates.env.finalize = _finalize
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
+def hash_password(password: str, secret: str) -> str:
+    salt = secret.encode("utf-8")
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000).hex()
+
+def verify_password(password: str, secret: str, hashed: str) -> bool:
+    try:
+        return hash_password(password, secret) == hashed
+    except Exception:
+        return False
+
+def get_secret() -> str:
+    return os.environ.get("REEF_SECRET", "reef-secret")
+
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -129,6 +156,22 @@ def row_get(row: Any, key: str, default: Any = None) -> Any:
 def table_exists(db: sqlite3.Connection, name: str) -> bool:
     r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
     return r is not None
+
+def get_current_user(db: sqlite3.Connection, token: str | None) -> Optional[sqlite3.Row]:
+    if not token:
+        return None
+    return one(db, """
+        SELECT u.* FROM user_sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.token=?
+    """, (token,))
+
+def require_admin(request: Request) -> Optional[RedirectResponse]:
+    user = getattr(request.state, "user", None)
+    if user and (row_get(user, "role") == "admin"):
+        return None
+    next_path = request.url.path
+    return redirect(f"/login?next={next_path}")
 
 def to_float(v: Any) -> Optional[float]:
     if v is None: return None
@@ -211,10 +254,33 @@ def format_value(p: Any, v: Any) -> str:
 def get_sample_readings(db: sqlite3.Connection, sample_id: int) -> List[sqlite3.Row]:
     mode = values_mode(db)
     if mode == "sample_values":
-        return q(db, "SELECT pd.name AS name, sv.value AS value, COALESCE(pd.unit, '') AS unit FROM sample_values sv JOIN parameter_defs pd ON pd.id = sv.parameter_id WHERE sv.sample_id=? ORDER BY COALESCE(pd.sort_order, 0), pd.name", (sample_id,))
-    return q(db, "SELECT p.name AS name, p.value AS value, COALESCE(pd.unit, p.unit, '') AS unit FROM parameters p LEFT JOIN parameter_defs pd ON pd.name = p.name WHERE p.sample_id=? ORDER BY COALESCE(pd.sort_order, 0), p.name", (sample_id,))
+        return q(db, """
+            SELECT pd.name AS name,
+                   sv.value AS value,
+                   COALESCE(pd.unit, '') AS unit,
+                   svk.test_kit_id AS test_kit_id,
+                   tk.name AS test_kit_name
+            FROM sample_values sv
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            LEFT JOIN sample_value_kits svk ON svk.sample_id = sv.sample_id AND svk.parameter_id = sv.parameter_id
+            LEFT JOIN test_kits tk ON tk.id = svk.test_kit_id
+            WHERE sv.sample_id=?
+            ORDER BY COALESCE(pd.sort_order, 0), pd.name
+        """, (sample_id,))
+    return q(db, """
+        SELECT p.name AS name,
+               p.value AS value,
+               COALESCE(pd.unit, p.unit, '') AS unit,
+               p.test_kit_id AS test_kit_id,
+               tk.name AS test_kit_name
+        FROM parameters p
+        LEFT JOIN parameter_defs pd ON pd.name = p.name
+        LEFT JOIN test_kits tk ON tk.id = p.test_kit_id
+        WHERE p.sample_id=?
+        ORDER BY COALESCE(pd.sort_order, 0), p.name
+    """, (sample_id,))
 
-def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, value: float, unit: str = "") -> None:
+def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
     cur = db.cursor()
     mode = values_mode(db)
     if mode == "sample_values":
@@ -224,8 +290,30 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
             pid = cur.lastrowid
         else: pid = pd["id"]
         cur.execute("INSERT INTO sample_values (sample_id, parameter_id, value) VALUES (?, ?, ?)", (sample_id, pid, value))
+        if test_kit_id:
+            cur.execute(
+                "INSERT OR REPLACE INTO sample_value_kits (sample_id, parameter_id, test_kit_id) VALUES (?, ?, ?)",
+                (sample_id, pid, test_kit_id),
+            )
     else:
-        cur.execute("INSERT INTO parameters (sample_id, name, value, unit) VALUES (?, ?, ?, ?)", (sample_id, pname, value, unit or None))
+        cur.execute("INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)", (sample_id, pname, value, unit or None, test_kit_id))
+
+def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
+    mode = values_mode(db)
+    if mode == "sample_values":
+        rows = q(db, """
+            SELECT pd.name AS name, svk.test_kit_id AS test_kit_id
+            FROM sample_value_kits svk
+            JOIN parameter_defs pd ON pd.id = svk.parameter_id
+            WHERE svk.sample_id=?
+        """, (sample_id,))
+    else:
+        rows = q(db, """
+            SELECT p.name AS name, p.test_kit_id AS test_kit_id
+            FROM parameters p
+            WHERE p.sample_id=?
+        """, (sample_id,))
+    return {r["name"]: r["test_kit_id"] for r in rows if r["test_kit_id"]}
 
 # --- NEW HELPER: Get the Latest Reading per Parameter ---
 def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
@@ -262,6 +350,41 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
                 "taken_at": parse_dt_any(r["taken_at"])
             }
     
+    return latest_map
+
+def get_latest_and_previous_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
+    latest_map: Dict[str, Dict[str, Any]] = {}
+    mode = values_mode(db)
+    if mode == "sample_values":
+        rows = q(db, """
+            SELECT pd.name, sv.value, s.taken_at
+            FROM sample_values sv
+            JOIN samples s ON s.id = sv.sample_id
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE s.tank_id=?
+            ORDER BY s.taken_at DESC
+        """, (tank_id,))
+    else:
+        rows = q(db, """
+            SELECT p.name, p.value, s.taken_at
+            FROM parameters p
+            JOIN samples s ON s.id = p.sample_id
+            WHERE s.tank_id=?
+            ORDER BY s.taken_at DESC
+        """, (tank_id,))
+
+    for r in rows:
+        name = r["name"]
+        if name not in latest_map:
+            latest_map[name] = {
+                "latest": {"value": r["value"], "taken_at": parse_dt_any(r["taken_at"])},
+                "previous": None,
+            }
+        elif latest_map[name]["previous"] is None:
+            latest_map[name]["previous"] = {
+                "value": r["value"],
+                "taken_at": parse_dt_any(r["taken_at"])
+            }
     return latest_map
 
 # --- DATABASE MODELS ---
@@ -402,6 +525,9 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
     ''')
     def ensure_col(table: str, col: str, ddl: str) -> None:
         cur.execute(f"PRAGMA table_info({table})")
@@ -415,6 +541,8 @@ def init_db() -> None:
     ensure_col("targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
     ensure_col("targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
     ensure_col("targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
+    ensure_col("parameter_defs", "test_interval_days", "ALTER TABLE parameter_defs ADD COLUMN test_interval_days INTEGER")
+    ensure_col("parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
     
     # NEW: Add default target columns
     ensure_col("parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
@@ -437,9 +565,58 @@ def init_db() -> None:
         """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
         
     db.commit()
+
+    cur.execute("SELECT COUNT(1) FROM users")
+    user_count = cur.fetchone()[0]
+    if user_count == 0:
+        admin_user = os.environ.get("REEF_ADMIN_USER", "admin")
+        admin_pass = os.environ.get("REEF_ADMIN_PASSWORD", "admin")
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            (admin_user, hash_password(admin_pass, get_secret()), "admin"),
+        )
+
     db.close()
 
 init_db()
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@app.post("/login")
+async def login(request: Request):
+    form = await request.form()
+    username = (form.get("username") or "").strip()
+    password = (form.get("password") or "").strip()
+    next_path = (form.get("next") or "/").strip() or "/"
+    db = get_db()
+    user = one(db, "SELECT * FROM users WHERE username=?", (username,))
+    if not user or not verify_password(password, get_secret(), user["password_hash"]):
+        db.close()
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials.", "next": next_path})
+    token = secrets.token_urlsafe(32)
+    db.execute(
+        "INSERT INTO user_sessions (user_id, token, created_at) VALUES (?, ?, ?)",
+        (user["id"], token, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+    db.close()
+    resp = redirect(next_path)
+    resp.set_cookie("session_token", token, httponly=True, samesite="lax")
+    return resp
+
+@app.post("/logout")
+def logout(request: Request):
+    token = request.cookies.get("session_token")
+    if token:
+        db = get_db()
+        db.execute("DELETE FROM user_sessions WHERE token=?", (token,))
+        db.commit()
+        db.close()
+    resp = redirect("/")
+    resp.delete_cookie("session_token")
+    return resp
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -447,22 +624,68 @@ def dashboard(request: Request):
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     tank_cards = []
     for t in tanks:
-        latest_map = get_latest_per_parameter(db, t["id"])
+        latest_map = get_latest_and_previous_per_parameter(db, t["id"])
+        pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+        targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         
         readings = []
-        pdefs = get_active_param_defs(db)
-        
-        for p in pdefs:
-            pname = p["name"]
+        for pname, p in pdefs.items():
             data = latest_map.get(pname)
-            if data:
-                readings.append({
-                    "name": pname, 
-                    "value": data["value"], 
-                    "unit": (row_get(p, "unit") or ""),
-                    "taken_at": data["taken_at"]
-                })
+            if not data or not data.get("latest"):
+                continue
+            latest_data = data["latest"]
+            previous = data.get("previous")
+            latest_val = latest_data["value"]
+            latest_taken = latest_data["taken_at"]
+            status = "ok"
+            target = targets.get(pname)
+            if target and latest_val is not None:
+                al, ah = row_get(target, "alert_low"), row_get(target, "alert_high")
+                tl = row_get(target, "target_low") if row_get(target, "target_low") is not None else row_get(target, "low")
+                th = row_get(target, "target_high") if row_get(target, "target_high") is not None else row_get(target, "high")
+                try:
+                    fv = float(latest_val)
+                    if al is not None and fv < float(al):
+                        status = "danger"
+                    elif ah is not None and fv > float(ah):
+                        status = "danger"
+                    elif tl is not None and fv < float(tl):
+                        status = "warn"
+                    elif th is not None and fv > float(th):
+                        status = "warn"
+                except Exception:
+                    pass
+            trend_warning = False
+            delta_per_day = None
+            if previous and latest_taken and previous.get("taken_at"):
+                try:
+                    delta = float(latest_val) - float(previous.get("value"))
+                    days = max((latest_taken - previous["taken_at"]).total_seconds() / 86400.0, 1e-6)
+                    delta_per_day = delta / days
+                    max_change = row_get(p, "max_daily_change")
+                    if max_change is not None and abs(delta_per_day) > float(max_change):
+                        trend_warning = True
+                except Exception:
+                    pass
+            overdue = False
+            if latest_taken:
+                interval_days = row_get(p, "test_interval_days")
+                if interval_days:
+                    try:
+                        overdue = (datetime.now() - latest_taken).days >= int(interval_days)
+                    except Exception:
+                        overdue = False
+            readings.append({
+                "name": pname,
+                "value": latest_val,
+                "unit": (row_get(p, "unit") or ""),
+                "taken_at": latest_taken,
+                "status": status,
+                "trend_warning": trend_warning,
+                "delta_per_day": delta_per_day,
+                "overdue": overdue,
+            })
         
         tank_data = dict(t)
         if "volume_l" not in tank_data:
@@ -520,6 +743,7 @@ async def sample_delete(sample_id: int):
         # 2. Perform the deletion
         db.execute("DELETE FROM samples WHERE id = ?", (sample_id,))
         db.execute("DELETE FROM sample_values WHERE sample_id = ?", (sample_id,))
+        db.execute("DELETE FROM sample_value_kits WHERE sample_id = ?", (sample_id,))
         db.commit()
 
         # 3. Redirect back to the tank detail page we just came from
@@ -604,9 +828,13 @@ def tank_detail(request: Request, tank_id: int):
     params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
     
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
+    latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
+    pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
     
     status_by_param_id = {}
+    trend_warning_by_param = {}
+    overdue_by_param = {}
     for pname in available_params:
         data = latest_by_param_id.get(pname)
         v = data.get("value") if data else None
@@ -625,10 +853,64 @@ def tank_detail(request: Request, tank_id: int):
             if th is not None and fv > float(th): status_by_param_id[pname] = "warn"; continue
             status_by_param_id[pname] = "ok"
         except Exception: continue
+
+        prev_data = latest_and_previous.get(pname, {}).get("previous")
+        latest_data = latest_and_previous.get(pname, {}).get("latest")
+        trend_warning_by_param[pname] = False
+        if latest_data and prev_data:
+            try:
+                delta = float(latest_data["value"]) - float(prev_data["value"])
+                days = max((latest_data["taken_at"] - prev_data["taken_at"]).total_seconds() / 86400.0, 1e-6)
+                delta_per_day = delta / days
+                max_change = row_get(pdef_map.get(pname), "max_daily_change")
+                if max_change is not None and abs(delta_per_day) > float(max_change):
+                    trend_warning_by_param[pname] = True
+            except Exception:
+                trend_warning_by_param[pname] = False
+        overdue_by_param[pname] = False
+        latest_taken = latest_data["taken_at"] if latest_data else None
+        interval_days = row_get(pdef_map.get(pname), "test_interval_days")
+        if latest_taken and interval_days:
+            try:
+                overdue_by_param[pname] = (datetime.now() - latest_taken).days >= int(interval_days)
+            except Exception:
+                overdue_by_param[pname] = False
         
     recent_samples = samples[:10] if samples else []
     db.close()
-    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+
+@app.get("/tanks/{tank_id}/export")
+def tank_export(request: Request, tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    samples = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at ASC", (tank_id,))
+    params = list_parameters(db)
+    rows = []
+    for s in samples:
+        row = {
+            "Tank": tank["name"],
+            "Taken At": s["taken_at"],
+            "Notes": s["notes"],
+        }
+        readings = {r["name"]: r["value"] for r in get_sample_readings(db, s["id"])}
+        for p in params:
+            row[p["name"]] = readings.get(p["name"])
+        rows.append(row)
+    db.close()
+    df = pd.DataFrame(rows)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Samples")
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        headers={"Content-Disposition": f'attachment; filename="{tank["name"]}_samples.xlsx"'},
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 @app.get("/tanks/{tank_id}/profile", response_class=HTMLResponse)
 @app.get("/tanks/{tank_id}/edit", response_class=HTMLResponse, include_in_schema=False)
@@ -703,7 +985,8 @@ async def add_sample(request: Request, tank_id: int):
         punit = (row_get(p, "unit") or "")
         val = to_float(form.get(f"value_{pid}"))
         if val is None: continue
-        insert_sample_reading(db, sample_id, pname, float(val), punit)
+        kit_id = to_float(form.get(f"kit_{pid}"))
+        insert_sample_reading(db, sample_id, pname, float(val), punit, int(kit_id) if kit_id else None)
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
@@ -735,10 +1018,15 @@ def sample_edit(request: Request, tank_id: int, sample_id: int):
         raise HTTPException(status_code=404, detail="Sample not found")
     pdefs = get_active_param_defs(db)
     readings = {r["name"]: r["value"] for r in get_sample_readings(db, sample_id)}
+    kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
+    kits_by_param = {}
+    for k in kits:
+        kits_by_param.setdefault(k["parameter"], []).append(k)
+    kit_map = get_sample_kits(db, sample_id)
     taken_dt = parse_dt_any(sample["taken_at"])
     taken_local = taken_dt.strftime("%Y-%m-%dT%H:%M") if taken_dt else ""
     db.close()
-    return templates.TemplateResponse("sample_edit.html", {"request": request, "tank": tank, "tank_id": tank_id, "sample_id": sample_id, "sample": sample, "taken_local": taken_local, "pdefs": pdefs, "readings": readings})
+    return templates.TemplateResponse("sample_edit.html", {"request": request, "tank": tank, "tank_id": tank_id, "sample_id": sample_id, "sample": sample, "taken_local": taken_local, "pdefs": pdefs, "readings": readings, "kits_by_param": kits_by_param, "kit_map": kit_map})
 
 @app.post("/tanks/{tank_id}/samples/{sample_id}/edit")
 async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
@@ -759,7 +1047,10 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     if not when_iso: when_iso = (parse_dt_any(sample["taken_at"]) or datetime.utcnow()).isoformat()
     cur.execute("UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
     mode = values_mode(db)
-    if mode == "sample_values" and table_exists(db, "sample_values"): cur.execute("DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+    if mode == "sample_values" and table_exists(db, "sample_values"):
+        cur.execute("DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+        if table_exists(db, "sample_value_kits"):
+            cur.execute("DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
     else:
         if table_exists(db, "parameters"): cur.execute("DELETE FROM parameters WHERE sample_id=?", (sample_id,))
     pdefs = get_active_param_defs(db)
@@ -769,7 +1060,8 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
         punit = (p.get("unit") or "")
         val = to_float(form.get(f"value_{pid}"))
         if val is None: continue
-        insert_sample_reading(db, sample_id, pname, float(val), punit)
+        kit_id = to_float(form.get(f"kit_{pid}"))
+        insert_sample_reading(db, sample_id, pname, float(val), punit, int(kit_id) if kit_id else None)
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/samples/{sample_id}")
@@ -884,6 +1176,9 @@ async def save_targets_alias(request: Request, tank_id: int): return await save_
 @app.get("/settings/parameters", response_class=HTMLResponse)
 @app.get("/settings/parameters/", response_class=HTMLResponse, include_in_schema=False)
 def parameters_settings(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
@@ -892,10 +1187,16 @@ def parameters_settings(request: Request):
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
 @app.get("/settings/parameters/new/", response_class=HTMLResponse, include_in_schema=False)
 def parameter_new(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     return templates.TemplateResponse("parameter_edit.html", {"request": request, "param": None})
 
 @app.get("/settings/parameters/{param_id}/edit", response_class=HTMLResponse)
 def parameter_edit(request: Request, param_id: int):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     row = one(db, "SELECT * FROM parameter_defs WHERE id=?", (param_id,))
     db.close()
@@ -903,17 +1204,22 @@ def parameter_edit(request: Request, param_id: int):
 
 @app.post("/settings/parameters/save")
 def parameter_save(
+    request: Request,
     param_id: Optional[str] = Form(None), 
     name: str = Form(...), 
     unit: Optional[str] = Form(None), 
     sort_order: Optional[str] = Form(None), 
     max_daily_change: Optional[str] = Form(None), 
+    test_interval_days: Optional[str] = Form(None),
     active: Optional[str] = Form(None),
     default_target_low: Optional[str] = Form(None),
     default_target_high: Optional[str] = Form(None),
     default_alert_low: Optional[str] = Form(None),
     default_alert_high: Optional[str] = Form(None)
 ):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     cur = db.cursor()
     
@@ -921,6 +1227,7 @@ def parameter_save(
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     order = int(to_float(sort_order) or 0)
     mdc = to_float(max_daily_change)
+    interval = int(to_float(test_interval_days) or 0) if test_interval_days else None
     dt_low = to_float(default_target_low)
     dt_high = to_float(default_target_high)
     da_low = to_float(default_alert_low)
@@ -932,7 +1239,7 @@ def parameter_save(
         db.close()
         return redirect("/settings/parameters")
 
-    data = (clean_name, (unit or "").strip() or None, mdc, order, is_active, dt_low, dt_high, da_low, da_high)
+    data = (clean_name, (unit or "").strip() or None, mdc, interval, order, is_active, dt_low, dt_high, da_low, da_high)
 
     try:
         # 2. Logic for Update/Merge
@@ -960,7 +1267,7 @@ def parameter_save(
                     cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, existing_id))
                     
@@ -972,14 +1279,14 @@ def parameter_save(
                             
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, pid))
             else:
                 # SIMPLE UPDATE
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET name=?, unit=?, max_daily_change=?, sort_order=?, active=?, 
+                    SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                     WHERE id=?""", (*data, pid))
         
@@ -989,14 +1296,14 @@ def parameter_save(
             if existing:
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET unit=?, max_daily_change=?, sort_order=?, active=?, 
+                    SET unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], existing["id"]))
+                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], existing["id"]))
             else:
                 cur.execute("""
                     INSERT INTO parameter_defs 
-                    (name, unit, max_daily_change, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
+                    (name, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
 
         db.commit()
         
@@ -1014,7 +1321,10 @@ def parameter_save(
     return redirect("/settings/parameters")
 
 @app.post("/settings/parameters/{param_id}/delete")
-def parameter_delete(param_id: int):
+def parameter_delete(request: Request, param_id: int):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
     db.commit()
@@ -1024,6 +1334,9 @@ def parameter_delete(param_id: int):
 @app.get("/settings/test-kits", response_class=HTMLResponse)
 @app.get("/settings/test-kits/", response_class=HTMLResponse, include_in_schema=False)
 def test_kits(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     rows = q(db, "SELECT * FROM test_kits ORDER BY parameter, name")
     db.close()
@@ -1032,6 +1345,9 @@ def test_kits(request: Request):
 @app.get("/settings/test-kits/new", response_class=HTMLResponse)
 @app.get("/settings/test-kits/new/", response_class=HTMLResponse, include_in_schema=False)
 def test_kit_new(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
@@ -1039,6 +1355,9 @@ def test_kit_new(request: Request):
 
 @app.get("/settings/test-kits/{kit_id}/edit", response_class=HTMLResponse)
 def test_kit_edit(request: Request, kit_id: int):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
@@ -1046,7 +1365,10 @@ def test_kit_edit(request: Request, kit_id: int):
     return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": kit, "parameters": parameters})
 
 @app.post("/settings/test-kits/save")
-def test_kit_save(kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -1058,7 +1380,10 @@ def test_kit_save(kit_id: Optional[str] = Form(None), parameter: Optional[str] =
     return redirect("/settings/test-kits")
 
 @app.post("/settings/test-kits/{kit_id}/delete")
-def test_kit_delete(kit_id: int):
+def test_kit_delete(request: Request, kit_id: int):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     db.execute("DELETE FROM test_kits WHERE id=?", (kit_id,))
     db.commit()
@@ -1068,6 +1393,9 @@ def test_kit_delete(kit_id: int):
 @app.get("/additives", response_class=HTMLResponse)
 @app.get("/additives/", response_class=HTMLResponse, include_in_schema=False)
 def additives(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     rows = q(db, "SELECT * FROM additives ORDER BY parameter, name")
     db.close()
@@ -1080,6 +1408,9 @@ def additives_settings_redirect(): return redirect("/additives")
 @app.get("/additives/new", response_class=HTMLResponse)
 @app.get("/additives/new/", response_class=HTMLResponse, include_in_schema=False)
 def additive_new(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
@@ -1087,6 +1418,9 @@ def additive_new(request: Request):
 
 @app.get("/additives/{additive_id}/edit", response_class=HTMLResponse)
 def additive_edit(request: Request, additive_id: int):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
@@ -1094,7 +1428,10 @@ def additive_edit(request: Request, additive_id: int):
     return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": additive, "parameters": parameters})
 
 @app.post("/additives/save")
-def additive_save(additive_id: Optional[str] = Form(None), name: str = Form(...), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -1106,7 +1443,10 @@ def additive_save(additive_id: Optional[str] = Form(None), name: str = Form(...)
     return redirect("/additives")
 
 @app.post("/additives/{additive_id}/delete")
-def additive_delete(additive_id: int):
+def additive_delete(request: Request, additive_id: int):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     db.execute("DELETE FROM additives WHERE id=?", (additive_id,))
     db.commit()
@@ -1158,6 +1498,9 @@ async def dosing_log_delete(log_id: int, tank_id: int = Form(...)):
 
 @app.get("/admin/merge-parameters", response_class=HTMLResponse)
 def merge_parameters_page(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     rows = q(db, "SELECT id, name, unit, max_daily_change, sort_order, active FROM parameter_defs ORDER BY name")
     groups = {}
@@ -1173,7 +1516,10 @@ def merge_parameters_page(request: Request):
     return templates.TemplateResponse("merge_parameters.html", {"request": request, "dups": dups})
 
 @app.post("/admin/merge-parameters")
-def merge_parameters_run():
+def merge_parameters_run(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     cur = db.cursor()
     rows = q(db, "SELECT id, name FROM parameter_defs")
@@ -1435,10 +1781,16 @@ async def dose_plan_check(request: Request):
 
 @app.get("/admin/import", response_class=HTMLResponse)
 def import_page(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     return templates.TemplateResponse("import_manager.html", {"request": request})
 
 @app.get("/admin/download-template")
-def download_template():
+def download_template(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     # 1. Get your actual parameters for column headers
     params = list_parameters(db)
@@ -1491,9 +1843,92 @@ def download_template():
         headers=headers,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+
+@app.get("/admin/export-all")
+def export_all(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
+    db = get_db()
+    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    params = list_parameters(db)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for t in tanks:
+            samples = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at ASC", (t["id"],))
+            rows = []
+            for s in samples:
+                row = {
+                    "Tank": t["name"],
+                    "Taken At": s["taken_at"],
+                    "Notes": s["notes"],
+                }
+                readings = {r["name"]: r["value"] for r in get_sample_readings(db, s["id"])}
+                for p in params:
+                    row[p["name"]] = readings.get(p["name"])
+                rows.append(row)
+            df = pd.DataFrame(rows)
+            sheet_name = (t["name"] or f"Tank {t['id']}")[:31]
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+    db.close()
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        headers={"Content-Disposition": 'attachment; filename="reef_export_all.xlsx"'},
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+@app.get("/api/tanks")
+def api_tanks():
+    db = get_db()
+    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    data = []
+    for t in tanks:
+        latest_map = get_latest_per_parameter(db, t["id"])
+        readings = []
+        for name, info in latest_map.items():
+            taken_at = info.get("taken_at")
+            if isinstance(taken_at, datetime):
+                taken_at = taken_at.isoformat()
+            readings.append({
+                "parameter": name,
+                "value": info.get("value"),
+                "taken_at": taken_at,
+            })
+        data.append({
+            "id": t["id"],
+            "name": t["name"],
+            "volume_l": t["volume_l"],
+            "latest_readings": readings,
+        })
+    db.close()
+    return {"tanks": data}
+
+@app.get("/api/tanks/{tank_id}/samples")
+def api_samples(tank_id: int, limit: int = 50):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    samples = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT ?", (tank_id, limit))
+    data = []
+    for s in samples:
+        readings = {r["name"]: r["value"] for r in get_sample_readings(db, s["id"])}
+        data.append({
+            "id": s["id"],
+            "taken_at": s["taken_at"],
+            "notes": s["notes"],
+            "readings": readings,
+        })
+    db.close()
+    return {"tank": {"id": tank["id"], "name": tank["name"]}, "samples": data}
     
 @app.post("/admin/upload-excel")
 async def upload_excel(request: Request, file: UploadFile = File(...)):
+    guard = require_admin(request)
+    if guard:
+        return guard
     if not file.filename.endswith(('.xlsx', '.xls')):
         return templates.TemplateResponse("import_manager.html", {"request": request, "error": "Invalid format. Please upload an Excel file."})
     
@@ -1545,10 +1980,16 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
 # --- Legacy Import (kept for compatibility) ---
 @app.get("/admin/import-excel", response_class=HTMLResponse)
 def import_excel_page(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     return templates.TemplateResponse("simple_message.html", {"request": request, "title": "Import Tank Parameters Sheet", "message": "This will import tank volumes and historical readings from the bundled Tank Parameters Sheet.xlsx.", "actions": [{"label": "Run import", "method": "post", "href": "/admin/import-excel"}]})
 
 @app.post("/admin/import-excel")
 async def import_excel_run(request: Request):
+    guard = require_admin(request)
+    if guard:
+        return guard
     db = get_db()
     candidates = []
     env_path = os.environ.get("REEF_EXCEL_PATH")

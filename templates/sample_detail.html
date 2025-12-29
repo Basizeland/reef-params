@@ -9,9 +9,13 @@
 <div class="card p-3">
   <div class="mb-3"><strong>Date:</strong> {{ sample.taken_at|dtfmt }}</div>
   <div class="mb-3"><strong>Notes:</strong> {{ sample.notes }}</div>
-  <table class="table table-sm" style="max-width:400px">
+  <table class="table table-sm" style="max-width:520px">
     {% for r in readings %}
-      <tr><th>{{ r.name }}</th><td>{{ r.value|fmt2 }} {{ r.unit }}</td></tr>
+      <tr>
+        <th>{{ r.name }}</th>
+        <td>{{ r.value|fmt2 }} {{ r.unit }}</td>
+        <td class="text-muted small">{{ r.test_kit_name if r.test_kit_name else "" }}</td>
+      </tr>
     {% endfor %}
   </table>
 </div>

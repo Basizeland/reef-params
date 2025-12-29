@@ -12,6 +12,16 @@
       <div class="card p-3">
         <label class="form-label fw-bold">{{ p.name }} <span class="text-muted fw-normal">({{ p.unit }})</span></label>
         <input type="number" step="any" name="value_{{ p.id }}" class="form-control">
+        {% set kits = kits_by_param.get(p.name, []) %}
+        {% if kits and kits|length > 0 %}
+          <label class="form-label small mt-2">Test Kit</label>
+          <select class="form-select form-select-sm" name="kit_{{ p.id }}">
+            <option value="">Select kit (optional)</option>
+            {% for kit in kits %}
+              <option value="{{ kit.id }}">{{ kit.name }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
       </div>
     </div>
     {% endfor %}

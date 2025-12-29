@@ -35,6 +35,11 @@ class ParameterDef(Base, DictMixin):
     active = Column(Integer, default=1)
     sort_order = Column(Integer, default=0)
     max_daily_change = Column(Float, nullable=True)
+    test_interval_days = Column(Integer, nullable=True)
+    default_target_low = Column(Float, nullable=True)
+    default_target_high = Column(Float, nullable=True)
+    default_alert_low = Column(Float, nullable=True)
+    default_alert_high = Column(Float, nullable=True)
 
 class Sample(Base, DictMixin):
     __tablename__ = "samples"
@@ -60,6 +65,12 @@ class SampleValue(Base, DictMixin):
 
     sample = relationship("Sample", back_populates="values")
     parameter_def = relationship("ParameterDef")
+
+class SampleValueKit(Base, DictMixin):
+    __tablename__ = "sample_value_kits"
+    sample_id = Column(Integer, ForeignKey("samples.id"), primary_key=True)
+    parameter_id = Column(Integer, ForeignKey("parameter_defs.id"), primary_key=True)
+    test_kit_id = Column(Integer, ForeignKey("test_kits.id"))
 
 class Target(Base, DictMixin):
     __tablename__ = "targets"
@@ -137,3 +148,17 @@ class DosePlanCheck(Base, DictMixin):
     checked = Column(Integer, default=0)
     checked_at = Column(String)
     __table_args__ = (UniqueConstraint('tank_id', 'parameter', 'additive_id', 'planned_date', name='_tank_param_add_date_uc'),)
+
+class User(Base, DictMixin):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True)
+    password_hash = Column(String)
+    role = Column(String)
+
+class UserSession(Base, DictMixin):
+    __tablename__ = "user_sessions"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    token = Column(String, unique=True)
+    created_at = Column(String)
