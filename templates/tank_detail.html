@@ -179,18 +179,62 @@
           const annotations = {};
           if (targets && targets.length > 0) {
               const t = targets[0]; 
-              if (t.low !== null) {
-                  annotations.lineLow = {
-                      type: 'line', yMin: t.low, yMax: t.low, 
-                      borderColor: 'rgba(231, 76, 60, 0.4)', borderWidth: 2, borderDash: [5, 5], 
-                      label: { content: 'Low: ' + t.low, enabled: true, position: 'start', backgroundColor: 'rgba(231, 76, 60, 0.8)' }
+              
+              // 1. Target Range (The "Sweet Spot" - Green Box)
+              if (t.target_low !== null && t.target_high !== null) {
+                  annotations.targetRange = {
+                      type: 'box',
+                      yMin: t.target_low,
+                      yMax: t.target_high,
+                      backgroundColor: 'rgba(29, 209, 161, 0.15)', // Reef Teal with transparency
+                      borderWidth: 0,
+                      label: {
+                          display: true,
+                          content: 'Target Range',
+                          position: 'end',
+                          color: '#10ac84',
+                          font: { size: 10, weight: 'bold' }
+                      }
                   };
               }
+
+              // 2. Low Alert Line (Red)
+              if (t.low !== null) {
+                  annotations.alertLow = {
+                      type: 'line',
+                      yMin: t.low,
+                      yMax: t.low,
+                      borderColor: '#ff7675',
+                      borderWidth: 2,
+                      borderDash: [6, 6],
+                      label: {
+                          display: true,
+                          content: 'Low Alert: ' + t.low,
+                          position: 'start',
+                          backgroundColor: '#ff7675',
+                          color: 'white',
+                          font: { size: 10 }
+                      }
+                  };
+              }
+
+              // 3. High Alert Line (Red)
               if (t.high !== null) {
-                  annotations.lineHigh = {
-                      type: 'line', yMin: t.high, yMax: t.high, 
-                      borderColor: 'rgba(231, 76, 60, 0.4)', borderWidth: 2, borderDash: [5, 5], 
-                      label: { content: 'High: ' + t.high, enabled: true, position: 'start', backgroundColor: 'rgba(231, 76, 60, 0.8)' }
+                  annotations.alertHigh = {
+                      type: 'line',
+                      yMin: t.high,
+                      yMax: t.high,
+                      borderColor: '#ff7675',
+                      borderWidth: 2,
+                      borderDash: [6, 6],
+                      label: {
+                          display: true,
+                          content: 'High Alert: ' + t.high,
+                          position: 'start',
+                          backgroundColor: '#ff7675',
+                          color: 'white',
+                          font: { size: 10 }
+                      }
                   };
               }
           }
