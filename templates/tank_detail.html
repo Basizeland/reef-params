@@ -11,21 +11,23 @@
     </div>
   </div>
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-success" href="/tanks/{{ tank.id }}/export">
-        <i class="bi bi-file-earmark-spreadsheet"></i> Export Excel
-    </a>
     <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/journal">
       <i class="bi bi-journal-text"></i> Journal
     </a>
-    <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/dosing-log">Dosing Log</a>
-    <a class="btn btn-primary" href="/tanks/{{ tank.id }}/add">Log Test</a>
+    <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/dosing-log">
+      <i class="bi bi-droplet-half"></i> Dosing Log
+    </a>
+    <a class="btn btn-primary" href="/tanks/{{ tank.id }}/add">
+      <i class="bi bi-clipboard-plus"></i> Log Test
+    </a>
     <div class="dropdown">
       <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
         Settings
       </button>
       <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-        <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/targets">Targets</a></li>
-        <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/profile">Edit Profile</a></li>
+        <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/targets"><i class="bi bi-bullseye"></i> Targets</a></li>
+        <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/profile"><i class="bi bi-pencil-square"></i> Edit Tank</a></li>
+        <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/export"><i class="bi bi-file-earmark-spreadsheet"></i> Export Excel</a></li>
         <li><hr class="dropdown-divider"></li>
         <li>
              <form method="post" action="/tanks/{{ tank.id }}/delete" onsubmit="return confirm('Really delete?');" class="d-inline">
@@ -37,62 +39,281 @@
   </div>
 </div>
 
+{% if low_container_alerts %}
+  <div class="alert alert-warning small mb-4">
+    <div class="fw-semibold">Dosing containers running low (≤ {{ tank.dosing_low_days }} days)</div>
+    <ul class="mb-0">
+      {% for alert in low_container_alerts %}
+        <li>{{ alert.label }}: {{ alert.days|round(1) }} days remaining</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
 {% set has_dosing = tank.dosing_mode or tank.all_in_one_solution or tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml %}
 {% if has_dosing %}
-  <div class="card shadow-sm mb-4">
-    <div class="card-header bg-white py-3">
-      <h5 class="card-title mb-0 fw-bold">Daily Dosing</h5>
-    </div>
-    <div class="card-body">
-      <div class="mb-3 text-muted small">
-        Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
-      </div>
-      <div class="row g-3">
-        {% if tank.all_in_one_solution or tank.all_in_one_daily_ml %}
-          <div class="col-12 col-md-4">
-            <div class="text-muted small">All-in-one</div>
-            <div class="fw-semibold">{{ tank.all_in_one_solution or "—" }}</div>
-            <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0 h5 fw-bold">Daily Dosing</h4>
+    <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/dosing-settings">
+      <i class="bi bi-gear"></i> Edit Dosing
+    </a>
+  </div>
+  <div class="mb-3 text-muted small">
+    Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
+  </div>
+  <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
+        {% if (tank.dosing_mode == 'all_in_one' or not tank.dosing_mode) and (tank.all_in_one_solution or tank.all_in_one_daily_ml) %}
+          {% set all_in_one_remaining = tank.all_in_one_remaining_ml if tank.all_in_one_remaining_ml is not none else tank.all_in_one_container_ml %}
+          {% set all_in_one_pct = (all_in_one_remaining / tank.all_in_one_container_ml * 100) if tank.all_in_one_container_ml else none %}
+          {% if all_in_one_pct is not none and all_in_one_pct > 100 %}{% set all_in_one_pct = 100 %}{% endif %}
+          {% if all_in_one_pct is not none and all_in_one_pct < 0 %}{% set all_in_one_pct = 0 %}{% endif %}
+          {% set all_in_one_days = (all_in_one_remaining / tank.all_in_one_daily_ml) if (all_in_one_remaining is not none and tank.all_in_one_daily_ml) else none %}
+          {% set all_in_one_color = "var(--bs-primary)" %}
+          {% if all_in_one_pct is not none and all_in_one_pct <= 20 %}{% set all_in_one_color = "var(--bs-danger)" %}{% elif all_in_one_pct is not none and all_in_one_pct <= 50 %}{% set all_in_one_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">All-in-one</div>
+                <div class="fw-semibold">{{ tank.all_in_one_solution or "—" }}</div>
+                <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
+                {% if tank.all_in_one_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                      <div style="width: 100%; height: {{ all_in_one_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ all_in_one_color }};"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ all_in_one_remaining|fmt2 }} / {{ tank.all_in_one_container_ml|fmt2 }} ml</div>
+                      {% if all_in_one_days is not none %}
+                        <div class="text-muted small">{{ all_in_one_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="all_in_one">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
           </div>
         {% endif %}
-        <div class="col-12 col-md-4">
-          <div class="text-muted small">Alkalinity</div>
-          <div class="fw-semibold">{{ tank.alk_solution or "—" }}</div>
-          <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
-        </div>
-        <div class="col-12 col-md-4">
-          <div class="text-muted small">Calcium</div>
-          <div class="fw-semibold">{{ tank.ca_solution or "—" }}</div>
-          <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
-        </div>
-        <div class="col-12 col-md-4">
-          <div class="text-muted small">Magnesium</div>
-          <div class="fw-semibold">{{ tank.mg_solution or "—" }}</div>
-          <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
-        </div>
-        {% if tank.nitrate_solution or tank.nitrate_daily_ml %}
-          <div class="col-12 col-md-4">
-            <div class="text-muted small">Nitrate</div>
-            <div class="fw-semibold">{{ tank.nitrate_solution or "—" }}</div>
-            <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
+        {% if (tank.dosing_mode in ['two_part', 'three_part'] or not tank.dosing_mode) and (tank.alk_solution or tank.alk_daily_ml is not none) %}
+          {% set alk_remaining = tank.alk_remaining_ml if tank.alk_remaining_ml is not none else tank.alk_container_ml %}
+          {% set alk_pct = (alk_remaining / tank.alk_container_ml * 100) if tank.alk_container_ml else none %}
+          {% if alk_pct is not none and alk_pct > 100 %}{% set alk_pct = 100 %}{% endif %}
+          {% if alk_pct is not none and alk_pct < 0 %}{% set alk_pct = 0 %}{% endif %}
+          {% set alk_days = (alk_remaining / tank.alk_daily_ml) if (alk_remaining is not none and tank.alk_daily_ml) else none %}
+          {% set alk_color = "var(--bs-primary)" %}
+          {% if alk_pct is not none and alk_pct <= 20 %}{% set alk_color = "var(--bs-danger)" %}{% elif alk_pct is not none and alk_pct <= 50 %}{% set alk_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Alkalinity</div>
+                <div class="fw-semibold">{{ tank.alk_solution or "—" }}</div>
+                <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
+                {% if tank.alk_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                      <div style="width: 100%; height: {{ alk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ alk_color }};"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ alk_remaining|fmt2 }} / {{ tank.alk_container_ml|fmt2 }} ml</div>
+                      {% if alk_days is not none %}
+                        <div class="text-muted small">{{ alk_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="alk">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
           </div>
         {% endif %}
-        {% if tank.phosphate_solution or tank.phosphate_daily_ml %}
-          <div class="col-12 col-md-4">
-            <div class="text-muted small">Phosphate</div>
-            <div class="fw-semibold">{{ tank.phosphate_solution or "—" }}</div>
-            <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
+        {% if (tank.dosing_mode in ['two_part', 'three_part'] or not tank.dosing_mode) and (tank.ca_solution or tank.ca_daily_ml is not none) %}
+          {% set ca_remaining = tank.ca_remaining_ml if tank.ca_remaining_ml is not none else tank.ca_container_ml %}
+          {% set ca_pct = (ca_remaining / tank.ca_container_ml * 100) if tank.ca_container_ml else none %}
+          {% if ca_pct is not none and ca_pct > 100 %}{% set ca_pct = 100 %}{% endif %}
+          {% if ca_pct is not none and ca_pct < 0 %}{% set ca_pct = 0 %}{% endif %}
+          {% set ca_days = (ca_remaining / tank.ca_daily_ml) if (ca_remaining is not none and tank.ca_daily_ml) else none %}
+          {% set ca_color = "var(--bs-primary)" %}
+          {% if ca_pct is not none and ca_pct <= 20 %}{% set ca_color = "var(--bs-danger)" %}{% elif ca_pct is not none and ca_pct <= 50 %}{% set ca_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Calcium</div>
+                <div class="fw-semibold">{{ tank.ca_solution or "—" }}</div>
+                <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
+                {% if tank.ca_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                      <div style="width: 100%; height: {{ ca_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ ca_color }};"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ ca_remaining|fmt2 }} / {{ tank.ca_container_ml|fmt2 }} ml</div>
+                      {% if ca_days is not none %}
+                        <div class="text-muted small">{{ ca_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="ca">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endif %}
+        {% if (tank.dosing_mode == 'three_part' or not tank.dosing_mode) and (tank.mg_solution or tank.mg_daily_ml is not none) %}
+          {% set mg_remaining = tank.mg_remaining_ml if tank.mg_remaining_ml is not none else tank.mg_container_ml %}
+          {% set mg_pct = (mg_remaining / tank.mg_container_ml * 100) if tank.mg_container_ml else none %}
+          {% if mg_pct is not none and mg_pct > 100 %}{% set mg_pct = 100 %}{% endif %}
+          {% if mg_pct is not none and mg_pct < 0 %}{% set mg_pct = 0 %}{% endif %}
+          {% set mg_days = (mg_remaining / tank.mg_daily_ml) if (mg_remaining is not none and tank.mg_daily_ml) else none %}
+          {% set mg_color = "var(--bs-primary)" %}
+          {% if mg_pct is not none and mg_pct <= 20 %}{% set mg_color = "var(--bs-danger)" %}{% elif mg_pct is not none and mg_pct <= 50 %}{% set mg_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Magnesium</div>
+                <div class="fw-semibold">{{ tank.mg_solution or "—" }}</div>
+                <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
+                {% if tank.mg_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                      <div style="width: 100%; height: {{ mg_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ mg_color }};"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ mg_remaining|fmt2 }} / {{ tank.mg_container_ml|fmt2 }} ml</div>
+                      {% if mg_days is not none %}
+                        <div class="text-muted small">{{ mg_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="mg">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endif %}
+        {% if tank.nitrate_solution or tank.nitrate_daily_ml is not none %}
+          {% set nitrate_remaining = tank.nitrate_remaining_ml if tank.nitrate_remaining_ml is not none else tank.nitrate_container_ml %}
+          {% set nitrate_pct = (nitrate_remaining / tank.nitrate_container_ml * 100) if tank.nitrate_container_ml else none %}
+          {% if nitrate_pct is not none and nitrate_pct > 100 %}{% set nitrate_pct = 100 %}{% endif %}
+          {% if nitrate_pct is not none and nitrate_pct < 0 %}{% set nitrate_pct = 0 %}{% endif %}
+          {% set nitrate_days = (nitrate_remaining / tank.nitrate_daily_ml) if (nitrate_remaining is not none and tank.nitrate_daily_ml) else none %}
+          {% set nitrate_color = "var(--bs-primary)" %}
+          {% if nitrate_pct is not none and nitrate_pct <= 20 %}{% set nitrate_color = "var(--bs-danger)" %}{% elif nitrate_pct is not none and nitrate_pct <= 50 %}{% set nitrate_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Nitrate</div>
+                <div class="fw-semibold">{{ tank.nitrate_solution or "—" }}</div>
+                <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
+                {% if tank.nitrate_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                      <div style="width: 100%; height: {{ nitrate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nitrate_color }};"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ nitrate_remaining|fmt2 }} / {{ tank.nitrate_container_ml|fmt2 }} ml</div>
+                      {% if nitrate_days is not none %}
+                        <div class="text-muted small">{{ nitrate_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="nitrate">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endif %}
+        {% if tank.phosphate_solution or tank.phosphate_daily_ml is not none %}
+          {% set phosphate_remaining = tank.phosphate_remaining_ml if tank.phosphate_remaining_ml is not none else tank.phosphate_container_ml %}
+          {% set phosphate_pct = (phosphate_remaining / tank.phosphate_container_ml * 100) if tank.phosphate_container_ml else none %}
+          {% if phosphate_pct is not none and phosphate_pct > 100 %}{% set phosphate_pct = 100 %}{% endif %}
+          {% if phosphate_pct is not none and phosphate_pct < 0 %}{% set phosphate_pct = 0 %}{% endif %}
+          {% set phosphate_days = (phosphate_remaining / tank.phosphate_daily_ml) if (phosphate_remaining is not none and tank.phosphate_daily_ml) else none %}
+          {% set phosphate_color = "var(--bs-primary)" %}
+          {% if phosphate_pct is not none and phosphate_pct <= 20 %}{% set phosphate_color = "var(--bs-danger)" %}{% elif phosphate_pct is not none and phosphate_pct <= 50 %}{% set phosphate_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Phosphate</div>
+                <div class="fw-semibold">{{ tank.phosphate_solution or "—" }}</div>
+                <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
+                {% if tank.phosphate_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                      <div style="width: 100%; height: {{ phosphate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ phosphate_color }};"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ phosphate_remaining|fmt2 }} / {{ tank.phosphate_container_ml|fmt2 }} ml</div>
+                      {% if phosphate_days is not none %}
+                        <div class="text-muted small">{{ phosphate_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="phosphate">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
           </div>
         {% endif %}
         {% if tank.nopox_daily_ml is not none %}
-          <div class="col-12 col-md-4">
-            <div class="text-muted small">NoPox</div>
-            <div class="fw-semibold">Red Sea NoPox</div>
-            <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
+          {% set nopox_remaining = tank.nopox_remaining_ml if tank.nopox_remaining_ml is not none else tank.nopox_container_ml %}
+          {% set nopox_pct = (nopox_remaining / tank.nopox_container_ml * 100) if tank.nopox_container_ml else none %}
+          {% if nopox_pct is not none and nopox_pct > 100 %}{% set nopox_pct = 100 %}{% endif %}
+          {% if nopox_pct is not none and nopox_pct < 0 %}{% set nopox_pct = 0 %}{% endif %}
+          {% set nopox_days = (nopox_remaining / tank.nopox_daily_ml) if (nopox_remaining is not none and tank.nopox_daily_ml) else none %}
+          {% set nopox_color = "var(--bs-primary)" %}
+          {% if nopox_pct is not none and nopox_pct <= 20 %}{% set nopox_color = "var(--bs-danger)" %}{% elif nopox_pct is not none and nopox_pct <= 50 %}{% set nopox_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">NoPox</div>
+                <div class="fw-semibold">Red Sea NoPox</div>
+                <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
+                {% if tank.nopox_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                      <div style="width: 100%; height: {{ nopox_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nopox_color }};"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ nopox_remaining|fmt2 }} / {{ tank.nopox_container_ml|fmt2 }} ml</div>
+                      {% if nopox_days is not none %}
+                        <div class="text-muted small">{{ nopox_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="nopox">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
           </div>
         {% endif %}
-      </div>
-    </div>
   </div>
 {% endif %}
 
@@ -157,19 +378,19 @@
 <div class="card shadow-sm mb-4">
   <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0 fw-bold">Trend Analysis</h5>
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
       <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/targets">
         <i class="bi bi-sliders"></i> Edit Target Range
       </a>
-      <form method="get" class="d-flex align-items-center gap-2">
-        <select name="parameter" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
-          {% for p in params %}
-            <option value="{{ p.id }}" {% if selected_parameter_id == p.id %}selected{% endif %}>
-              {{ p.name }}
-            </option>
-          {% endfor %}
-        </select>
-      </form>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        {% for p in params %}
+          {% set param_key = p.key %}
+          <div class="form-check form-check-inline mb-0">
+            <input class="form-check-input" type="radio" name="trend-param" data-param-radio data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
+            <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   </div>
   <div class="card-body">
@@ -180,8 +401,11 @@
 </div>
 
 <div class="card shadow-sm">
-  <div class="card-header bg-white py-3">
+  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0 fw-bold">Recent Logs</h5>
+    <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/samples">
+      <i class="bi bi-list"></i> View All
+    </a>
   </div>
 
   <div class="d-md-none">
@@ -266,9 +490,10 @@
 <script>
   document.addEventListener('DOMContentLoaded', function() {
       try {
-          const seriesData = {{ series|tojson|safe }};
-          const targets = {{ chart_targets|tojson|safe }};
+          const seriesMap = {{ series_map|tojson|safe }};
+          const targets = {{ chart_targets_map|tojson|safe }};
           const ctx = document.getElementById('historyChart');
+          const paramRadios = Array.from(document.querySelectorAll('[data-param-radio]'));
           
           if (!ctx) return;
 
@@ -276,14 +501,23 @@
               throw new Error("Chart.js not found");
           }
 
-          if (!seriesData || seriesData.length === 0) {
+          if (!seriesMap || Object.keys(seriesMap).length === 0) {
               const c = ctx.getContext('2d');
               c.font = "14px sans-serif";
               c.fillStyle = "#6c757d";
               c.textAlign = "center";
-              c.fillText("No data available for this parameter.", ctx.width / 2, ctx.height / 2);
+              c.fillText("No data available for these parameters.", ctx.width / 2, ctx.height / 2);
               return; 
           }
+
+          function normalizeKey(value) {
+            return String(value || '').toLowerCase().replace(/[\s/_-]+/g, '');
+          }
+
+          const normalizedSeriesMap = {};
+          Object.keys(seriesMap).forEach((key) => {
+            normalizedSeriesMap[normalizeKey(key)] = { key, series: seriesMap[key] || [] };
+          });
 
           function cleanDate(dStr) {
               if (!dStr) return new Date();
@@ -292,130 +526,180 @@
               return isNaN(d.getTime()) ? new Date() : d;
           }
 
-          const labels = seriesData.map(d => {
-            const date = cleanDate(d.x);
-            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-          });
-          
-          const dataPoints = seriesData.map(d => d.y);
-          const pointColors = seriesData.map(d => {
-            const val = d.y;
-            if (!targets || targets.length === 0 || val === null || typeof val === 'undefined') {
-              return '#042f4b';
-            }
-            const t = targets[0];
-            const alertLow = t.alert_low;
-            const alertHigh = t.alert_high;
-            const targetLow = t.target_low;
-            const targetHigh = t.target_high;
-            if (alertLow !== null && typeof alertLow !== 'undefined' && val < alertLow) {
-              return '#ff7675';
-            }
-            if (alertHigh !== null && typeof alertHigh !== 'undefined' && val > alertHigh) {
-              return '#ff7675';
-            }
-            if (targetLow !== null && typeof targetLow !== 'undefined' && targetHigh !== null && typeof targetHigh !== 'undefined') {
-              if (val >= targetLow && val <= targetHigh) {
-                return '#10ac84';
-              }
-            }
-            return '#feca57';
-          });
+          const palette = ['#00d2d3', '#54a0ff', '#10ac84', '#feca57', '#ee5253', '#576574', '#5f27cd'];
 
-          const annotations = {};
-          if (targets && targets.length > 0) {
-              const t = targets[0]; 
-              
-              // 1. Target Range (The "Sweet Spot" - Green Box)
-              if (t.target_low !== null && t.target_high !== null) {
-                  annotations.targetRange = {
-                      type: 'box',
-                      yMin: t.target_low,
-                      yMax: t.target_high,
-                      backgroundColor: 'rgba(29, 209, 161, 0.15)', // Reef Teal
-                      borderWidth: 0,
-                      label: {
-                          display: true,
-                          content: 'Target Range',
-                          position: 'end',
-                          color: '#10ac84',
-                          font: { size: 10, weight: 'bold' }
-                      }
-                  };
-              }
-
-              // 2. Low Alert Line (Red)
-              if (t.alert_low !== null && typeof t.alert_low !== 'undefined') {
-                  annotations.alertLow = {
-                      type: 'line',
-                      yMin: t.alert_low,
-                      yMax: t.alert_low,
-                      borderColor: '#ff7675',
-                      borderWidth: 2,
-                      borderDash: [6, 6],
-                      label: {
-                          display: true,
-                          content: 'Low Alert: ' + t.alert_low,
-                          position: 'start',
-                          backgroundColor: '#ff7675',
-                          color: 'white',
-                          font: { size: 10 }
-                      }
-                  };
-              }
-
-              // 3. High Alert Line (Red)
-              if (t.alert_high !== null && typeof t.alert_high !== 'undefined') {
-                  annotations.alertHigh = {
-                      type: 'line',
-                      yMin: t.alert_high,
-                      yMax: t.alert_high,
-                      borderColor: '#ff7675',
-                      borderWidth: 2,
-                      borderDash: [6, 6],
-                      label: {
-                          display: true,
-                          content: 'High Alert: ' + t.alert_high,
-                          position: 'start',
-                          backgroundColor: '#ff7675',
-                          color: 'white',
-                          font: { size: 10 }
-                      }
-                  };
-              }
+          function formatLabel(date) {
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            });
           }
 
-          new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: labels,
-              datasets: [{
-                label: 'Reading',
+          function buildLabels(selectedParams) {
+            const labelMap = new Map();
+            selectedParams.forEach((key) => {
+              const entry = normalizedSeriesMap[key];
+              (entry ? entry.series : []).forEach((d) => {
+                const date = cleanDate(d.x);
+                labelMap.set(date.getTime(), date);
+              });
+            });
+            const sorted = Array.from(labelMap.entries()).sort((a, b) => a[0] - b[0]);
+            return sorted.map((entry) => formatLabel(entry[1]));
+          }
+
+          function buildDatasets(selectedParams, labels) {
+            const datasets = [];
+            selectedParams.forEach((key, index) => {
+              const entry = normalizedSeriesMap[key];
+              const series = entry ? entry.series : [];
+              const label = entry?.key || key;
+              const labelIndex = new Map();
+              labels.forEach((label, idx) => labelIndex.set(label, idx));
+              const dataPoints = Array(labels.length).fill(null);
+              series.forEach((d) => {
+                const date = cleanDate(d.x);
+                const label = formatLabel(date);
+                const idx = labelIndex.get(label);
+                if (idx !== undefined) {
+                  dataPoints[idx] = d.y;
+                }
+              });
+              datasets.push({
+                label: label,
                 data: dataPoints,
-                borderColor: '#00d2d3', // Reef Metrics Cyan
+                borderColor: palette[index % palette.length],
                 backgroundColor: 'rgba(0, 210, 211, 0.1)',
-                borderWidth: 3,
+                borderWidth: 2,
                 tension: 0.3,
-                fill: true,
-                pointRadius: 4,
-                pointBackgroundColor: pointColors,
-                pointBorderColor: pointColors
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              interaction: { mode: 'index', intersect: false },
-              plugins: {
-                legend: { display: false },
-                annotation: { annotations: annotations }
-              },
-              scales: {
-                y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
-                x: { display: false }
-              }
+                fill: false,
+                pointRadius: 3
+              });
+            });
+            return datasets;
+          }
+
+          function buildAnnotations(selectedParams) {
+            if (selectedParams.length !== 1 || !targets || Object.keys(targets).length === 0) {
+              return {};
             }
+            const t = targets[selectedParams[0]];
+            if (!t) {
+              return {};
+            }
+            const annotations = {};
+            if (t.target_low !== null && t.target_high !== null) {
+              annotations.targetRange = {
+                type: 'box',
+                yMin: t.target_low,
+                yMax: t.target_high,
+                backgroundColor: 'rgba(29, 209, 161, 0.15)',
+                borderWidth: 0,
+                label: {
+                  display: true,
+                  content: 'Target Range',
+                  position: 'end',
+                  color: '#10ac84',
+                  font: { size: 10, weight: 'bold' }
+                }
+              };
+            }
+            if (t.alert_low !== null && typeof t.alert_low !== 'undefined') {
+              annotations.alertLow = {
+                type: 'line',
+                yMin: t.alert_low,
+                yMax: t.alert_low,
+                borderColor: '#ff7675',
+                borderWidth: 2,
+                borderDash: [6, 6],
+                label: {
+                  display: true,
+                  content: 'Low Alert: ' + t.alert_low,
+                  position: 'start',
+                  backgroundColor: '#ff7675',
+                  color: 'white',
+                  font: { size: 10 }
+                }
+              };
+            }
+            if (t.alert_high !== null && typeof t.alert_high !== 'undefined') {
+              annotations.alertHigh = {
+                type: 'line',
+                yMin: t.alert_high,
+                yMax: t.alert_high,
+                borderColor: '#ff7675',
+                borderWidth: 2,
+                borderDash: [6, 6],
+                label: {
+                  display: true,
+                  content: 'High Alert: ' + t.alert_high,
+                  position: 'start',
+                  backgroundColor: '#ff7675',
+                  color: 'white',
+                  font: { size: 10 }
+                }
+              };
+            }
+            return annotations;
+          }
+
+          function selectedParams() {
+            let checked = paramRadios.filter((box) => box.checked).map((box) => box.value);
+            if (checked.length === 0 && paramRadios.length > 0) {
+              paramRadios[0].checked = true;
+              checked = [paramRadios[0].value];
+            }
+            return checked.slice(0, 1);
+          }
+
+          function renderChart() {
+            const selected = selectedParams();
+            const labels = buildLabels(selected);
+            const datasets = buildDatasets(selected, labels);
+            const annotations = buildAnnotations(selected);
+
+            if (!labels.length || datasets.length === 0) {
+              const c = ctx.getContext('2d');
+              c.clearRect(0, 0, ctx.width, ctx.height);
+              c.font = "14px sans-serif";
+              c.fillStyle = "#6c757d";
+              c.textAlign = "center";
+              c.fillText("No data available for these parameters.", ctx.width / 2, ctx.height / 2);
+              return;
+            }
+
+            const existingChart = window.historyChart && typeof window.historyChart.destroy === 'function'
+              ? window.historyChart
+              : Chart.getChart(ctx);
+            if (existingChart) {
+              existingChart.destroy();
+            }
+
+            window.historyChart = new Chart(ctx, {
+              type: 'line',
+              data: { labels, datasets },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                  legend: { display: true, position: 'bottom' },
+                  annotation: { annotations }
+                },
+                scales: {
+                  y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
+                  x: { display: false }
+                }
+              }
+            });
+          }
+
+          paramRadios.forEach((box) => {
+            box.addEventListener('change', renderChart);
           });
+
+          renderChart();
       } catch (err) {
           console.error("Chart Error:", err);
       }

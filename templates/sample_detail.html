@@ -9,6 +9,9 @@
     <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}">
       <i class="bi bi-arrow-left"></i> Back to Tank
     </a>
+    <a class="btn btn-outline-primary" href="/tanks/{{ tank.id }}/samples/{{ sample.id }}/edit">
+      <i class="bi bi-pencil"></i> Edit Reading
+    </a>
     <form method="post" action="/samples/{{ sample.id }}/delete" onsubmit="return confirm('Delete?');">
       <button class="btn btn-danger" type="submit">
         <i class="bi bi-trash"></i> Delete Reading

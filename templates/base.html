@@ -60,15 +60,14 @@
             <a class="navbar-brand" href="/">
                 <img src="/static/logo.png" alt="Reef Metrics" class="brand-logo-img">
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
+            <div class="collapse navbar-collapse me-auto" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
                     
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Tools</a>
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-tools"></i> Tools
+                        </a>
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
                             <li><a class="dropdown-item" href="/tools/calculators"><i class="bi bi-calculator"></i> Dosing Calculator</a></li>
                             <li><a class="dropdown-item" href="/tools/dose-plan"><i class="bi bi-calendar-check"></i> Dose Planner</a></li>
@@ -76,21 +75,53 @@
                     </li>
 
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Manage</a>
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-gear"></i> Manage
+                        </a>
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-                            <li><a class="dropdown-item" href="/settings/parameters">Parameters</a></li>
-                            <li><a class="dropdown-item" href="/additives">Additives</a></li>
-                            <li><a class="dropdown-item" href="/settings/test-kits">Test Kits</a></li>
+                            <li><a class="dropdown-item" href="/settings/parameters"><i class="bi bi-sliders"></i> Parameters</a></li>
+                            <li><a class="dropdown-item" href="/additives"><i class="bi bi-droplet"></i> Additives</a></li>
+                            <li><a class="dropdown-item" href="/settings/test-kits"><i class="bi bi-eyedropper"></i> Test Kits</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <a class="dropdown-item fw-bold text-primary" href="/admin/import">
-                                    <i class="bi bi-arrow-down-up"></i> Data Center
+                                    <i class="bi bi-database"></i> Data Center
                                 </a>
                             </li>
-                            <li><a class="dropdown-item" href="/admin/merge-parameters">Merge Params</a></li>
                         </ul>
                     </li>
                 </ul>
+            </div>
+            <div class="d-flex align-items-center gap-2 ms-auto">
+                {% set global_notifications = global_dosing_notifications() %}
+                <div class="dropdown">
+                    <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
+                        <i class="bi bi-bell"></i>
+                        {% if global_notifications %}
+                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+                                {{ global_notifications|length }}
+                            </span>
+                        {% endif %}
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 320px;">
+                        <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
+                        {% if global_notifications %}
+                            {% for alert in global_notifications %}
+                                <li>
+                                    <a class="dropdown-item text-wrap" href="/tanks/{{ alert.tank_id }}">
+                                        <div class="fw-semibold">{{ alert.tank_name }}</div>
+                                        <div class="small text-muted">{{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})</div>
+                                    </a>
+                                </li>
+                            {% endfor %}
+                        {% else %}
+                            <li class="dropdown-item text-muted small">No dosing alerts right now.</li>
+                        {% endif %}
+                    </ul>
+                </div>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
             </div>
         </div>
     </nav>
