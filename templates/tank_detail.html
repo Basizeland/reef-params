@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  @media (min-width: 576px) {
+    .w-sm-auto { width: auto !important; }
+  }
+</style>
 <div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
   <div>
     <h1 class="h2 mb-0 fw-bold text-navy">{{ tank.name }}</h1>
@@ -10,18 +15,18 @@
       {% endif %}
     </div>
   </div>
-  <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/journal">
+  <div class="d-grid gap-2 w-100 w-sm-auto d-sm-flex justify-content-sm-end align-items-sm-start">
+    <a class="btn btn-outline-secondary w-100 w-sm-auto" href="/tanks/{{ tank.id }}/journal">
       <i class="bi bi-journal-text"></i> Journal
     </a>
-    <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/dosing-log">
+    <a class="btn btn-outline-secondary w-100 w-sm-auto" href="/tanks/{{ tank.id }}/dosing-log">
       <i class="bi bi-droplet-half"></i> Dosing Log
     </a>
-    <a class="btn btn-primary" href="/tanks/{{ tank.id }}/add">
+    <a class="btn btn-primary w-100 w-sm-auto" href="/tanks/{{ tank.id }}/add">
       <i class="bi bi-clipboard-plus"></i> Log Test
     </a>
-    <div class="dropdown">
-      <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+    <div class="dropdown w-100 w-sm-auto">
+      <button class="btn btn-outline-secondary dropdown-toggle w-100 w-sm-auto" type="button" data-bs-toggle="dropdown">
         Settings
       </button>
       <ul class="dropdown-menu dropdown-menu-end shadow-sm">
