@@ -59,7 +59,7 @@
             <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
             {% if tank.all_in_one_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
-                <div class="rounded border bg-light" style="width: 28px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
                   <div style="width: 100%; height: {{ all_in_one_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
                 </div>
                 <div>
@@ -85,7 +85,7 @@
             <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
             {% if tank.alk_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
-                <div class="rounded border bg-light" style="width: 28px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
                   <div style="width: 100%; height: {{ alk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
                 </div>
                 <div>
@@ -111,7 +111,7 @@
             <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
             {% if tank.ca_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
-                <div class="rounded border bg-light" style="width: 28px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
                   <div style="width: 100%; height: {{ ca_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
                 </div>
                 <div>
@@ -137,7 +137,7 @@
             <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
             {% if tank.mg_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
-                <div class="rounded border bg-light" style="width: 28px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
                   <div style="width: 100%; height: {{ mg_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
                 </div>
                 <div>
@@ -163,7 +163,7 @@
             <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
             {% if tank.nitrate_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
-                <div class="rounded border bg-light" style="width: 28px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
                   <div style="width: 100%; height: {{ nitrate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
                 </div>
                 <div>
@@ -189,7 +189,7 @@
             <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
             {% if tank.phosphate_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
-                <div class="rounded border bg-light" style="width: 28px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
                   <div style="width: 100%; height: {{ phosphate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
                 </div>
                 <div>
@@ -215,7 +215,7 @@
             <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
             {% if tank.nopox_container_ml %}
               <div class="d-flex align-items-end gap-3 mt-2">
-                <div class="rounded border bg-light" style="width: 28px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
+                <div class="rounded border bg-light" style="width: 56px; height: 90px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
                   <div style="width: 100%; height: {{ nopox_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), var(--bs-primary);"></div>
                 </div>
                 <div>
