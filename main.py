@@ -105,6 +105,80 @@ def _finalize(v: Any) -> Any:
 
 templates.env.finalize = _finalize
 
+def collect_dosing_notifications(db: sqlite3.Connection, tank_id: int | None = None) -> List[Dict[str, Any]]:
+    today = date.today().isoformat()
+    params: List[Any] = []
+    where_clause = ""
+    if tank_id is not None:
+        where_clause = "WHERE p.tank_id=?"
+        params.append(tank_id)
+    rows = q(
+        db,
+        f"""SELECT t.id AS tank_id, t.name AS tank_name, p.*
+            FROM tank_profiles p
+            JOIN tanks t ON t.id = p.tank_id
+            {where_clause}""",
+        tuple(params),
+    )
+    notifications: List[Dict[str, Any]] = []
+    dosing_containers = [
+        ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "All-in-one"),
+        ("alk", "alk_container_ml", "alk_remaining_ml", "alk_daily_ml", "Alkalinity"),
+        ("ca", "ca_container_ml", "ca_remaining_ml", "ca_daily_ml", "Calcium"),
+        ("mg", "mg_container_ml", "mg_remaining_ml", "mg_daily_ml", "Magnesium"),
+        ("nitrate", "nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml", "Nitrate"),
+        ("phosphate", "phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml", "Phosphate"),
+        ("nopox", "nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml", "NoPox"),
+    ]
+    for row in rows:
+        threshold_days = row_get(row, "dosing_low_days", 5)
+        try:
+            threshold_days = float(threshold_days) if threshold_days is not None else 5
+        except Exception:
+            threshold_days = 5
+        for key, container_col, remaining_col, daily_col, label in dosing_containers:
+            container_ml = row_get(row, container_col)
+            if container_ml is None:
+                continue
+            remaining_ml = row_get(row, remaining_col)
+            daily_ml = row_get(row, daily_col)
+            if remaining_ml is None:
+                remaining_ml = container_ml
+            if not daily_ml:
+                continue
+            days_remaining = remaining_ml / float(daily_ml)
+            if days_remaining <= threshold_days:
+                notifications.append(
+                    {
+                        "tank_id": row_get(row, "tank_id"),
+                        "tank_name": row_get(row, "tank_name"),
+                        "label": label,
+                        "days": days_remaining,
+                        "threshold": threshold_days,
+                    }
+                )
+                exists = one(
+                    db,
+                    "SELECT 1 FROM dosing_notifications WHERE tank_id=? AND container_key=? AND notified_on=?",
+                    (row_get(row, "tank_id"), key, today),
+                )
+                if not exists:
+                    db.execute(
+                        "INSERT INTO dosing_notifications (tank_id, container_key, notified_on) VALUES (?, ?, ?)",
+                        (row_get(row, "tank_id"), key, today),
+                    )
+                    db.commit()
+    return notifications
+
+def global_dosing_notifications() -> List[Dict[str, Any]]:
+    db = get_db()
+    try:
+        return collect_dosing_notifications(db)
+    finally:
+        db.close()
+
+templates.env.globals["global_dosing_notifications"] = global_dosing_notifications
+
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
@@ -856,41 +930,12 @@ def tank_detail(request: Request, tank_id: int):
     
     low_container_alerts = []
     if profile:
-        today = date.today().isoformat()
-        dosing_containers = [
-            ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "All-in-one"),
-            ("alk", "alk_container_ml", "alk_remaining_ml", "alk_daily_ml", "Alkalinity"),
-            ("ca", "ca_container_ml", "ca_remaining_ml", "ca_daily_ml", "Calcium"),
-            ("mg", "mg_container_ml", "mg_remaining_ml", "mg_daily_ml", "Magnesium"),
-            ("nitrate", "nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml", "Nitrate"),
-            ("phosphate", "phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml", "Phosphate"),
-            ("nopox", "nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml", "NoPox"),
+        all_notifications = collect_dosing_notifications(db, tank_id=tank_id)
+        low_container_alerts = [
+            {"label": alert["label"], "days": alert["days"]}
+            for alert in all_notifications
+            if alert.get("tank_id") == tank_id
         ]
-        threshold_days = float(tank_view.get("dosing_low_days") or 5)
-        for key, container_col, remaining_col, daily_col, label in dosing_containers:
-            container_ml = tank_view.get(container_col)
-            if container_ml is None:
-                continue
-            remaining_ml = tank_view.get(remaining_col)
-            daily_ml = tank_view.get(daily_col)
-            if remaining_ml is None:
-                remaining_ml = container_ml
-            if not daily_ml:
-                continue
-            days_remaining = remaining_ml / float(daily_ml)
-            if days_remaining <= threshold_days:
-                low_container_alerts.append({"label": label, "days": days_remaining})
-                exists = one(
-                    db,
-                    "SELECT 1 FROM dosing_notifications WHERE tank_id=? AND container_key=? AND notified_on=?",
-                    (tank_id, key, today),
-                )
-                if not exists:
-                    db.execute(
-                        "INSERT INTO dosing_notifications (tank_id, container_key, notified_on) VALUES (?, ?, ?)",
-                        (tank_id, key, today),
-                    )
-                    db.commit()
 
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
