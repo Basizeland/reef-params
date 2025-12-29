@@ -991,6 +991,9 @@ def tank_detail(request: Request, tank_id: int):
     series = series_map.get(selected_parameter_id, [])
     
    # Build chart targets with distinct Alert and Target values
+    def normalize_param_key(value: str) -> str:
+        return re.sub(r"[\s/_-]+", "", str(value or "").lower())
+
     chart_targets_map = {}
     for t in targets:
         param_name = t["parameter"] or ""
@@ -1007,9 +1010,6 @@ def tank_detail(request: Request, tank_id: int):
             "unit": row_get(t, "unit") or unit_by_name.get(param_name, "")
         }
             
-    def normalize_param_key(value: str) -> str:
-        return re.sub(r"[\s/_-]+", "", str(value or "").lower())
-
     params = [
         {
             "id": name,
