@@ -50,15 +50,11 @@
 
 {% set has_dosing = tank.dosing_mode or tank.all_in_one_solution or tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml %}
 {% if has_dosing %}
-  <div class="card shadow-sm mb-4">
-    <div class="card-header bg-white py-3">
-      <h5 class="card-title mb-0 fw-bold">Daily Dosing</h5>
-    </div>
-    <div class="card-body">
-      <div class="mb-3 text-muted small">
-        Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
-      </div>
-      <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+  <h4 class="mb-3 h5 fw-bold">Daily Dosing</h4>
+  <div class="mb-3 text-muted small">
+    Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
+  </div>
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-5">
         {% if (tank.dosing_mode == 'all_in_one' or not tank.dosing_mode) and (tank.all_in_one_solution or tank.all_in_one_daily_ml) %}
           {% set all_in_one_remaining = tank.all_in_one_remaining_ml if tank.all_in_one_remaining_ml is not none else tank.all_in_one_container_ml %}
           {% set all_in_one_pct = (all_in_one_remaining / tank.all_in_one_container_ml * 100) if tank.all_in_one_container_ml else none %}
@@ -311,8 +307,6 @@
             </div>
           </div>
         {% endif %}
-      </div>
-    </div>
   </div>
 {% endif %}
 
