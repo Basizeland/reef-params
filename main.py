@@ -245,7 +245,8 @@ def list_parameters(db: sqlite3.Connection) -> List[sqlite3.Row]:
     if table_exists(db, "parameter_defs"):
         return q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     if table_exists(db, "parameters"):
-        return q(db, "SELECT DISTINCT name, COALESCE(unit,'') AS unit FROM parameters ORDER BY name")
+        rows = q(db, "SELECT DISTINCT name, COALESCE(unit,'') AS unit FROM parameters ORDER BY name")
+        return [{"id": slug_key(r["name"]), "name": r["name"], "unit": r["unit"]} for r in rows]
     return []
 
 def get_active_param_defs(db: sqlite3.Connection) -> List[sqlite3.Row]:
