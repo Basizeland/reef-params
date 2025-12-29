@@ -773,6 +773,14 @@ def tank_detail(request: Request, tank_id: int):
             "ca_daily_ml": row_get(profile, "ca_daily_ml"),
             "mg_solution": row_get(profile, "mg_solution"),
             "mg_daily_ml": row_get(profile, "mg_daily_ml"),
+            "dosing_mode": row_get(profile, "dosing_mode"),
+            "all_in_one_solution": row_get(profile, "all_in_one_solution"),
+            "all_in_one_daily_ml": row_get(profile, "all_in_one_daily_ml"),
+            "nitrate_solution": row_get(profile, "nitrate_solution"),
+            "nitrate_daily_ml": row_get(profile, "nitrate_daily_ml"),
+            "phosphate_solution": row_get(profile, "phosphate_solution"),
+            "phosphate_daily_ml": row_get(profile, "phosphate_daily_ml"),
+            "nopox_daily_ml": row_get(profile, "nopox_daily_ml"),
         })
     
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
