@@ -326,7 +326,7 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
     
     if mode == "sample_values":
         rows = q(db, """
-            SELECT pd.name, sv.value, s.taken_at 
+            SELECT pd.name, sv.value, s.taken_at, s.id AS sample_id
             FROM sample_values sv 
             JOIN samples s ON s.id = sv.sample_id 
             JOIN parameter_defs pd ON pd.id = sv.parameter_id
@@ -335,7 +335,7 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
         """, (tank_id,))
     else:
         rows = q(db, """
-            SELECT p.name, p.value, s.taken_at 
+            SELECT p.name, p.value, s.taken_at, s.id AS sample_id
             FROM parameters p
             JOIN samples s ON s.id = p.sample_id 
             WHERE s.tank_id=? 
@@ -347,7 +347,8 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
         if name not in latest_map:
             latest_map[name] = {
                 "value": r["value"],
-                "taken_at": parse_dt_any(r["taken_at"])
+                "taken_at": parse_dt_any(r["taken_at"]),
+                "sample_id": r["sample_id"],
             }
     
     return latest_map
