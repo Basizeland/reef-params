@@ -44,8 +44,18 @@
     
     {% set status_class = "border-secondary-subtle" %}
     {% if val is not none and target %}
-        {% if target.alert_low and val < target.alert_low %}{% set status_class = "border-danger bg-danger-subtle" %}{% endif %}
-        {% if target.alert_high and val > target.alert_high %}{% set status_class = "border-danger bg-danger-subtle" %}{% endif %}
+        {# 1. Danger State (Red) - Outside Alert Range #}
+        {% if (target.alert_low and val < target.alert_low) or (target.alert_high and val > target.alert_high) %}
+            {% set status_class = "border-danger bg-danger-subtle text-danger" %}
+        
+        {# 2. Optimal State (Green) - Inside Target Range #}
+        {% elif (target.target_low and target.target_high and val >= target.target_low and val <= target.target_high) %}
+            {% set status_class = "border-success bg-success-subtle text-success" %}
+            
+        {# 3. Warning State (Yellow) - Between Target and Alert #}
+        {% else %}
+            {% set status_class = "border-warning bg-warning-subtle" %}
+        {% endif %}
     {% endif %}
 
     <div class="col">
@@ -186,7 +196,7 @@
                       type: 'box',
                       yMin: t.target_low,
                       yMax: t.target_high,
-                      backgroundColor: 'rgba(29, 209, 161, 0.15)', // Reef Teal with transparency
+                      backgroundColor: 'rgba(29, 209, 161, 0.15)', // Reef Teal
                       borderWidth: 0,
                       label: {
                           display: true,
@@ -199,17 +209,17 @@
               }
 
               // 2. Low Alert Line (Red)
-              if (t.low !== null) {
+              if (t.alert_low !== null && typeof t.alert_low !== 'undefined') {
                   annotations.alertLow = {
                       type: 'line',
-                      yMin: t.low,
-                      yMax: t.low,
+                      yMin: t.alert_low,
+                      yMax: t.alert_low,
                       borderColor: '#ff7675',
                       borderWidth: 2,
                       borderDash: [6, 6],
                       label: {
                           display: true,
-                          content: 'Low Alert: ' + t.low,
+                          content: 'Low Alert: ' + t.alert_low,
                           position: 'start',
                           backgroundColor: '#ff7675',
                           color: 'white',
@@ -219,17 +229,17 @@
               }
 
               // 3. High Alert Line (Red)
-              if (t.high !== null) {
+              if (t.alert_high !== null && typeof t.alert_high !== 'undefined') {
                   annotations.alertHigh = {
                       type: 'line',
-                      yMin: t.high,
-                      yMax: t.high,
+                      yMin: t.alert_high,
+                      yMax: t.alert_high,
                       borderColor: '#ff7675',
                       borderWidth: 2,
                       borderDash: [6, 6],
                       label: {
                           display: true,
-                          content: 'High Alert: ' + t.high,
+                          content: 'High Alert: ' + t.alert_high,
                           position: 'start',
                           backgroundColor: '#ff7675',
                           color: 'white',
