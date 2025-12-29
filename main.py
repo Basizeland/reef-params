@@ -4,6 +4,7 @@ import re
 import math
 import json
 import time
+import shutil
 import csv
 import pandas as pd
 from io import BytesIO
@@ -2705,6 +2706,37 @@ def export_all(request: Request):
         output,
         headers={"Content-Disposition": 'attachment; filename="reef_export_all.xlsx"'},
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+@app.get("/admin/backup-download")
+def backup_download(request: Request):
+    return FileResponse(DB_PATH, filename="reef_backup.sqlite")
+
+@app.post("/admin/backup-restore")
+async def backup_restore(request: Request, file: UploadFile = File(...)):
+    if not file.filename or not file.filename.endswith((".db", ".sqlite")):
+        return templates.TemplateResponse(
+            "import_manager.html",
+            {"request": request, "error": "Invalid backup file. Please upload a .db or .sqlite file."},
+        )
+    backup_path = f"{DB_PATH}.bak-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    temp_path = f"{DB_PATH}.restore"
+    try:
+        with open(temp_path, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+        if os.path.exists(DB_PATH):
+            shutil.copy2(DB_PATH, backup_path)
+        os.replace(temp_path, DB_PATH)
+    except Exception as exc:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return templates.TemplateResponse(
+            "import_manager.html",
+            {"request": request, "error": f"Restore failed: {exc}"},
+        )
+    return templates.TemplateResponse(
+        "import_manager.html",
+        {"request": request, "success": "Backup restored. Please refresh the app to load the new data."},
     )
 
 @app.get("/api/tanks")
