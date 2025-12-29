@@ -3,6 +3,7 @@ import sqlite3
 import re
 import math
 import json
+import time
 import csv
 import pandas as pd
 from io import BytesIO
@@ -183,6 +184,16 @@ templates.env.globals["global_dosing_notifications"] = global_dosing_notificatio
 
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
+
+def execute_with_retry(cur: sqlite3.Cursor, sql: str, params: Tuple[Any, ...] = (), attempts: int = 5) -> None:
+    for idx in range(attempts):
+        try:
+            cur.execute(sql, params)
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or idx == attempts - 1:
+                raise
+            time.sleep(0.2 * (idx + 1))
 
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -1642,19 +1653,20 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
         try: when_iso = datetime.fromisoformat(taken_at).isoformat()
         except Exception: when_iso = None
     if not when_iso: when_iso = (parse_dt_any(sample["taken_at"]) or datetime.utcnow()).isoformat()
-    cur.execute("UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
+    execute_with_retry(cur, "UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
     mode = values_mode(db)
     if mode == "sample_values" and table_exists(db, "sample_values"):
-        cur.execute("DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+        execute_with_retry(cur, "DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
         if table_exists(db, "sample_value_kits"):
-            cur.execute("DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
+            execute_with_retry(cur, "DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
     else:
-        if table_exists(db, "parameters"): cur.execute("DELETE FROM parameters WHERE sample_id=?", (sample_id,))
+        if table_exists(db, "parameters"):
+            execute_with_retry(cur, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
     pdefs = get_active_param_defs(db)
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
-        punit = (p.get("unit") or "")
+        punit = (row_get(p, "unit") or "")
         val = to_float(form.get(f"value_{pid}"))
         kit_id = to_float(form.get(f"kit_{pid}"))
         if val is None:
