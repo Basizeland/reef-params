@@ -991,19 +991,21 @@ def tank_detail(request: Request, tank_id: int):
     series = series_map.get(selected_parameter_id, [])
     
    # Build chart targets with distinct Alert and Target values
-    chart_targets = []
+    chart_targets_map = {}
     for t in targets:
-        if (t["parameter"] or "") == selected_parameter_id:
-            chart_targets.append({
-                "parameter": t["parameter"],
-                # These are the dashed red lines
-                "alert_low": row_get(t, "alert_low"),
-                "alert_high": row_get(t, "alert_high"),
-                # These are the green box range
-                "target_low": row_get(t, "target_low") if row_get(t, "target_low") is not None else row_get(t, "low"),
-                "target_high": row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high"),
-                "unit": row_get(t, "unit") or unit_by_name.get(selected_parameter_id, "")
-            })
+        param_name = t["parameter"] or ""
+        if not param_name:
+            continue
+        chart_targets_map[normalize_param_key(param_name)] = {
+            "parameter": param_name,
+            # These are the dashed red lines
+            "alert_low": row_get(t, "alert_low"),
+            "alert_high": row_get(t, "alert_high"),
+            # These are the green box range
+            "target_low": row_get(t, "target_low") if row_get(t, "target_low") is not None else row_get(t, "low"),
+            "target_high": row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high"),
+            "unit": row_get(t, "unit") or unit_by_name.get(param_name, "")
+        }
             
     def normalize_param_key(value: str) -> str:
         return re.sub(r"[\s/_-]+", "", str(value or "").lower())
@@ -1085,7 +1087,7 @@ def tank_detail(request: Request, tank_id: int):
             "target_map": targets_by_param,
             "series": series,
             "series_map": series_map,
-            "chart_targets": chart_targets,
+            "chart_targets_map": chart_targets_map,
             "selected_parameter_id": selected_parameter_id,
             "format_value": format_value,
             "low_container_alerts": low_container_alerts,

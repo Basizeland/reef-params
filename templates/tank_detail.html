@@ -488,7 +488,7 @@
   document.addEventListener('DOMContentLoaded', function() {
       try {
           const seriesMap = {{ series_map|tojson|safe }};
-          const targets = {{ chart_targets|tojson|safe }};
+          const targets = {{ chart_targets_map|tojson|safe }};
           const ctx = document.getElementById('historyChart');
           const paramCheckboxes = Array.from(document.querySelectorAll('[data-param-checkbox]'));
           
@@ -525,6 +525,14 @@
 
           const palette = ['#00d2d3', '#54a0ff', '#10ac84', '#feca57', '#ee5253', '#576574', '#5f27cd'];
 
+          function formatLabel(date) {
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            });
+          }
+
           function buildLabels(selectedParams) {
             const labelMap = new Map();
             selectedParams.forEach((key) => {
@@ -537,7 +545,7 @@
             const sorted = Array.from(labelMap.entries()).sort((a, b) => a[0] - b[0]);
             return sorted.map((entry) => {
               const date = entry[1];
-              return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+              return formatLabel(date);
             });
           }
 
@@ -552,7 +560,7 @@
               const dataPoints = Array(labels.length).fill(null);
               series.forEach((d) => {
                 const date = cleanDate(d.x);
-                const label = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const label = formatLabel(date);
                 const idx = labelIndex.get(label);
                 if (idx !== undefined) {
                   dataPoints[idx] = d.y;
@@ -573,10 +581,13 @@
           }
 
           function buildAnnotations(selectedParams) {
-            if (selectedParams.length !== 1 || !targets || targets.length === 0) {
+            if (selectedParams.length !== 1 || !targets || Object.keys(targets).length === 0) {
               return {};
             }
-            const t = targets[0];
+            const t = targets[selectedParams[0]];
+            if (!t) {
+              return {};
+            }
             const annotations = {};
             if (t.target_low !== null && t.target_high !== null) {
               annotations.targetRange = {
