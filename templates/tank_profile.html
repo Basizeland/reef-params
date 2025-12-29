@@ -44,35 +44,35 @@
               </div>
             </div>
             <div class="row g-3">
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
                 <label class="form-label fw-bold">All-in-one Solution</label>
                 <input type="text" name="all_in_one_solution" class="form-control" value="{{ tank.all_in_one_solution or '' }}" placeholder="e.g. All For Reef">
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
                 <label class="form-label fw-bold">All-in-one Daily (ml)</label>
                 <input type="number" step="any" name="all_in_one_daily_ml" class="form-control" value="{{ tank.all_in_one_daily_ml if tank.all_in_one_daily_ml is not none else '' }}" placeholder="e.g. 12">
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
                 <label class="form-label fw-bold">Alkalinity Solution</label>
                 <input type="text" name="alk_solution" class="form-control" value="{{ tank.alk_solution or '' }}" placeholder="e.g. Soda Ash">
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
                 <label class="form-label fw-bold">Alkalinity Daily (ml)</label>
                 <input type="number" step="any" name="alk_daily_ml" class="form-control" value="{{ tank.alk_daily_ml if tank.alk_daily_ml is not none else '' }}" placeholder="e.g. 25">
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
                 <label class="form-label fw-bold">Calcium Solution</label>
                 <input type="text" name="ca_solution" class="form-control" value="{{ tank.ca_solution or '' }}" placeholder="e.g. Calcium Chloride">
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
                 <label class="form-label fw-bold">Calcium Daily (ml)</label>
                 <input type="number" step="any" name="ca_daily_ml" class="form-control" value="{{ tank.ca_daily_ml if tank.ca_daily_ml is not none else '' }}" placeholder="e.g. 20">
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="three_part">
                 <label class="form-label fw-bold">Magnesium Solution</label>
                 <input type="text" name="mg_solution" class="form-control" value="{{ tank.mg_solution or '' }}" placeholder="e.g. Magnesium Mix">
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-6" data-dosing-modes="three_part">
                 <label class="form-label fw-bold">Magnesium Daily (ml)</label>
                 <input type="number" step="any" name="mg_daily_ml" class="form-control" value="{{ tank.mg_daily_ml if tank.mg_daily_ml is not none else '' }}" placeholder="e.g. 15">
               </div>
@@ -113,6 +113,8 @@
   const volInput = document.querySelector('input[name="volume_l"]');
   const pctInput = document.querySelector('input[name="net_percent"]');
   const effDisplay = document.getElementById('effVol');
+  const dosingModeSelect = document.querySelector('select[name="dosing_mode"]');
+  const dosingModeFields = document.querySelectorAll('[data-dosing-modes]');
 
   function updateEff() {
     const v = parseFloat(volInput.value) || 0;
@@ -124,5 +126,17 @@
   volInput.addEventListener('input', updateEff);
   pctInput.addEventListener('input', updateEff);
   updateEff(); // init
+
+  function updateDosingFields() {
+    const mode = dosingModeSelect.value;
+    dosingModeFields.forEach((field) => {
+      const modes = field.dataset.dosingModes.split(' ');
+      const shouldShow = !mode || modes.includes(mode);
+      field.classList.toggle('d-none', !shouldShow);
+    });
+  }
+
+  dosingModeSelect.addEventListener('change', updateDosingFields);
+  updateDosingFields();
 </script>
 {% endblock %}
