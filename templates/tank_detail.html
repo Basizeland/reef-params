@@ -14,6 +14,9 @@
     <a class="btn btn-outline-success" href="/tanks/{{ tank.id }}/export">
         <i class="bi bi-file-earmark-spreadsheet"></i> Export Excel
     </a>
+    <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/journal">
+      <i class="bi bi-journal-text"></i> Journal
+    </a>
     <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}/dosing-log">Dosing Log</a>
     <a class="btn btn-primary" href="/tanks/{{ tank.id }}/add">Log Test</a>
     <div class="dropdown">
@@ -33,6 +36,34 @@
     </div>
   </div>
 </div>
+
+{% set has_dosing = tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml %}
+{% if has_dosing %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white py-3">
+      <h5 class="card-title mb-0 fw-bold">Daily Dosing</h5>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-12 col-md-4">
+          <div class="text-muted small">Alkalinity</div>
+          <div class="fw-semibold">{{ tank.alk_solution or "—" }}</div>
+          <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
+        </div>
+        <div class="col-12 col-md-4">
+          <div class="text-muted small">Calcium</div>
+          <div class="fw-semibold">{{ tank.ca_solution or "—" }}</div>
+          <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
+        </div>
+        <div class="col-12 col-md-4">
+          <div class="text-muted small">Magnesium</div>
+          <div class="fw-semibold">{{ tank.mg_solution or "—" }}</div>
+          <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
 
 <h4 class="mb-3 h5 fw-bold">Latest Readings</h4>
 <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">

@@ -523,7 +523,7 @@ def init_db() -> None:
     cur.executescript('''
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -556,6 +556,23 @@ def init_db() -> None:
     ensure_col("parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
     ensure_col("parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
     ensure_col("parameter_defs", "default_alert_high", "ALTER TABLE parameter_defs ADD COLUMN default_alert_high REAL")
+    ensure_col("tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
+    ensure_col("tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
+    ensure_col("tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
+    ensure_col("tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
+    ensure_col("tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
+    ensure_col("tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS tank_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tank_id INTEGER NOT NULL,
+            entry_date TEXT NOT NULL,
+            entry_type TEXT,
+            title TEXT,
+            notes TEXT,
+            FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
+        );
+    ''')
 
     cur.execute("SELECT COUNT(1) FROM parameter_defs")
     cnt = cur.fetchone()[0]
@@ -734,6 +751,19 @@ def tank_detail(request: Request, tank_id: int):
     if not tank:
         db.close()
         return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": None, "params": [], "recent_samples": [], "sample_values": {}, "latest_vals": {}, "status_by_param_id": {}, "targets": [], "series": [], "chart_targets": [], "selected_parameter_id": "", "format_value": format_value, "target_map": {}})
+    profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    tank_view = dict(tank)
+    if profile:
+        tank_view.update({
+            "volume_l": profile.get("volume_l") if "volume_l" in profile.keys() else tank_view.get("volume_l"),
+            "net_percent": profile.get("net_percent"),
+            "alk_solution": profile.get("alk_solution"),
+            "alk_daily_ml": profile.get("alk_daily_ml"),
+            "ca_solution": profile.get("ca_solution"),
+            "ca_daily_ml": profile.get("ca_daily_ml"),
+            "mg_solution": profile.get("mg_solution"),
+            "mg_daily_ml": profile.get("mg_daily_ml"),
+        })
     
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
@@ -854,7 +884,49 @@ def tank_detail(request: Request, tank_id: int):
         
     recent_samples = samples[:10] if samples else []
     db.close()
-    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank_view, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+
+@app.get("/tanks/{tank_id}/journal", response_class=HTMLResponse)
+def tank_journal(request: Request, tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    entries = q(db, "SELECT * FROM tank_journal WHERE tank_id=? ORDER BY entry_date DESC, id DESC", (tank_id,))
+    db.close()
+    return templates.TemplateResponse("tank_journal.html", {"request": request, "tank": tank, "entries": entries})
+
+@app.post("/tanks/{tank_id}/journal")
+async def tank_journal_add(request: Request, tank_id: int):
+    form = await request.form()
+    entry_date = (form.get("entry_date") or "").strip()
+    if entry_date:
+        try:
+            entry_iso = datetime.fromisoformat(entry_date).isoformat()
+        except ValueError:
+            entry_iso = datetime.now().isoformat()
+    else:
+        entry_iso = datetime.now().isoformat()
+    entry_type = (form.get("entry_type") or "").strip() or None
+    title = (form.get("title") or "").strip() or None
+    notes = (form.get("notes") or "").strip() or None
+    db = get_db()
+    db.execute(
+        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+        (tank_id, entry_iso, entry_type, title, notes),
+    )
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/journal/{entry_id}/delete")
+def tank_journal_delete(tank_id: int, entry_id: int):
+    db = get_db()
+    db.execute("DELETE FROM tank_journal WHERE id=? AND tank_id=?", (entry_id, tank_id))
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
 
 @app.get("/tanks/{tank_id}/export")
 def tank_export(request: Request, tank_id: int):
@@ -908,6 +980,12 @@ def tank_profile(request: Request, tank_id: int):
         try:
             tank_view["volume_l"] = profile["volume_l"]
             tank_view["net_percent"] = profile["net_percent"]
+            tank_view["alk_solution"] = profile["alk_solution"]
+            tank_view["alk_daily_ml"] = profile["alk_daily_ml"]
+            tank_view["ca_solution"] = profile["ca_solution"]
+            tank_view["ca_daily_ml"] = profile["ca_daily_ml"]
+            tank_view["mg_solution"] = profile["mg_solution"]
+            tank_view["mg_daily_ml"] = profile["mg_daily_ml"]
         except Exception: pass
     db.close()
     return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": tank_view})
@@ -919,13 +997,32 @@ async def tank_profile_save(request: Request, tank_id: int):
     volume_l = to_float(form.get("volume_l"))
     net_percent = to_float(form.get("net_percent"))
     if net_percent is None: net_percent = 100
+    alk_solution = (form.get("alk_solution") or "").strip() or None
+    ca_solution = (form.get("ca_solution") or "").strip() or None
+    mg_solution = (form.get("mg_solution") or "").strip() or None
+    alk_daily_ml = to_float(form.get("alk_daily_ml"))
+    ca_daily_ml = to_float(form.get("ca_daily_ml"))
+    mg_daily_ml = to_float(form.get("mg_daily_ml"))
     db = get_db()
     tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
-    db.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, ?) ON CONFLICT(tank_id) DO UPDATE SET volume_l=excluded.volume_l, net_percent=excluded.net_percent", (tank_id, volume_l, float(net_percent)))
+    db.execute(
+        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(tank_id) DO UPDATE SET
+             volume_l=excluded.volume_l,
+             net_percent=excluded.net_percent,
+             alk_solution=excluded.alk_solution,
+             alk_daily_ml=excluded.alk_daily_ml,
+             ca_solution=excluded.ca_solution,
+             ca_daily_ml=excluded.ca_daily_ml,
+             mg_solution=excluded.mg_solution,
+             mg_daily_ml=excluded.mg_daily_ml""",
+        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml),
+    )
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
