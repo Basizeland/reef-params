@@ -757,14 +757,14 @@ def tank_detail(request: Request, tank_id: int):
     tank_view = dict(tank)
     if profile:
         tank_view.update({
-            "volume_l": profile.get("volume_l") if "volume_l" in profile.keys() else tank_view.get("volume_l"),
-            "net_percent": profile.get("net_percent"),
-            "alk_solution": profile.get("alk_solution"),
-            "alk_daily_ml": profile.get("alk_daily_ml"),
-            "ca_solution": profile.get("ca_solution"),
-            "ca_daily_ml": profile.get("ca_daily_ml"),
-            "mg_solution": profile.get("mg_solution"),
-            "mg_daily_ml": profile.get("mg_daily_ml"),
+            "volume_l": row_get(profile, "volume_l", tank_view.get("volume_l")),
+            "net_percent": row_get(profile, "net_percent"),
+            "alk_solution": row_get(profile, "alk_solution"),
+            "alk_daily_ml": row_get(profile, "alk_daily_ml"),
+            "ca_solution": row_get(profile, "ca_solution"),
+            "ca_daily_ml": row_get(profile, "ca_daily_ml"),
+            "mg_solution": row_get(profile, "mg_solution"),
+            "mg_daily_ml": row_get(profile, "mg_daily_ml"),
         })
     
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
