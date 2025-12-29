@@ -1420,145 +1420,21 @@ async def tank_profile_save(request: Request, tank_id: int):
     volume_l = to_float(form.get("volume_l"))
     net_percent = to_float(form.get("net_percent"))
     if net_percent is None: net_percent = 100
-    alk_solution = (form.get("alk_solution") or "").strip() or None
-    ca_solution = (form.get("ca_solution") or "").strip() or None
-    mg_solution = (form.get("mg_solution") or "").strip() or None
-    alk_daily_ml = to_float(form.get("alk_daily_ml"))
-    ca_daily_ml = to_float(form.get("ca_daily_ml"))
-    mg_daily_ml = to_float(form.get("mg_daily_ml"))
-    dosing_mode = (form.get("dosing_mode") or "").strip() or None
-    all_in_one_solution = (form.get("all_in_one_solution") or "").strip() or None
-    all_in_one_daily_ml = to_float(form.get("all_in_one_daily_ml"))
-    nitrate_solution = (form.get("nitrate_solution") or "").strip() or None
-    nitrate_daily_ml = to_float(form.get("nitrate_daily_ml"))
-    phosphate_solution = (form.get("phosphate_solution") or "").strip() or None
-    phosphate_daily_ml = to_float(form.get("phosphate_daily_ml"))
-    nopox_daily_ml = to_float(form.get("nopox_daily_ml"))
-    all_in_one_container_ml = to_float(form.get("all_in_one_container_ml"))
-    all_in_one_remaining_ml = to_float(form.get("all_in_one_remaining_ml"))
-    alk_container_ml = to_float(form.get("alk_container_ml"))
-    alk_remaining_ml = to_float(form.get("alk_remaining_ml"))
-    ca_container_ml = to_float(form.get("ca_container_ml"))
-    ca_remaining_ml = to_float(form.get("ca_remaining_ml"))
-    mg_container_ml = to_float(form.get("mg_container_ml"))
-    mg_remaining_ml = to_float(form.get("mg_remaining_ml"))
-    nitrate_container_ml = to_float(form.get("nitrate_container_ml"))
-    nitrate_remaining_ml = to_float(form.get("nitrate_remaining_ml"))
-    phosphate_container_ml = to_float(form.get("phosphate_container_ml"))
-    phosphate_remaining_ml = to_float(form.get("phosphate_remaining_ml"))
-    nopox_container_ml = to_float(form.get("nopox_container_ml"))
-    nopox_remaining_ml = to_float(form.get("nopox_remaining_ml"))
-    dosing_low_days = to_float(form.get("dosing_low_days"))
-    if dosing_low_days is None:
-        dosing_low_days = 5
-    if all_in_one_container_ml is not None and all_in_one_remaining_ml is None:
-        all_in_one_remaining_ml = all_in_one_container_ml
-    if alk_container_ml is not None and alk_remaining_ml is None:
-        alk_remaining_ml = alk_container_ml
-    if ca_container_ml is not None and ca_remaining_ml is None:
-        ca_remaining_ml = ca_container_ml
-    if mg_container_ml is not None and mg_remaining_ml is None:
-        mg_remaining_ml = mg_container_ml
-    if nitrate_container_ml is not None and nitrate_remaining_ml is None:
-        nitrate_remaining_ml = nitrate_container_ml
-    if phosphate_container_ml is not None and phosphate_remaining_ml is None:
-        phosphate_remaining_ml = phosphate_container_ml
-    if nopox_container_ml is not None and nopox_remaining_ml is None:
-        nopox_remaining_ml = nopox_container_ml
-    container_updated_at = None
-    if any(
-        value is not None
-        for value in (
-            all_in_one_container_ml,
-            all_in_one_remaining_ml,
-            alk_container_ml,
-            alk_remaining_ml,
-            ca_container_ml,
-            ca_remaining_ml,
-            mg_container_ml,
-            mg_remaining_ml,
-            nitrate_container_ml,
-            nitrate_remaining_ml,
-            phosphate_container_ml,
-            phosphate_remaining_ml,
-            nopox_container_ml,
-            nopox_remaining_ml,
-        )
-    ):
-        container_updated_at = datetime.utcnow().isoformat()
     db = get_db()
     tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
-    ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
-    ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
-    ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "dosing_mode", "ALTER TABLE tank_profiles ADD COLUMN dosing_mode TEXT")
-    ensure_column(db, "tank_profiles", "all_in_one_solution", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_solution TEXT")
-    ensure_column(db, "tank_profiles", "all_in_one_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "nitrate_solution", "ALTER TABLE tank_profiles ADD COLUMN nitrate_solution TEXT")
-    ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
-    ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "all_in_one_container_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_container_ml REAL")
-    ensure_column(db, "tank_profiles", "all_in_one_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "alk_container_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_container_ml REAL")
-    ensure_column(db, "tank_profiles", "alk_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "ca_container_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_container_ml REAL")
-    ensure_column(db, "tank_profiles", "ca_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "mg_container_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_container_ml REAL")
-    ensure_column(db, "tank_profiles", "mg_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "nitrate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_container_ml REAL")
-    ensure_column(db, "tank_profiles", "nitrate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "phosphate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_container_ml REAL")
-    ensure_column(db, "tank_profiles", "phosphate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
-    ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "dosing_container_updated_at", "ALTER TABLE tank_profiles ADD COLUMN dosing_container_updated_at TEXT")
-    ensure_column(db, "tank_profiles", "dosing_low_days", "ALTER TABLE tank_profiles ADD COLUMN dosing_low_days REAL")
+    ensure_column(db, "tank_profiles", "volume_l", "ALTER TABLE tank_profiles ADD COLUMN volume_l REAL")
+    ensure_column(db, "tank_profiles", "net_percent", "ALTER TABLE tank_profiles ADD COLUMN net_percent REAL")
     db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
     db.execute(
-        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml, all_in_one_container_ml, all_in_one_remaining_ml, alk_container_ml, alk_remaining_ml, ca_container_ml, ca_remaining_ml, mg_container_ml, mg_remaining_ml, nitrate_container_ml, nitrate_remaining_ml, phosphate_container_ml, phosphate_remaining_ml, nopox_container_ml, nopox_remaining_ml, dosing_container_updated_at, dosing_low_days)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(tank_id) DO UPDATE SET
-             volume_l=excluded.volume_l,
-             net_percent=excluded.net_percent,
-             alk_solution=excluded.alk_solution,
-             alk_daily_ml=excluded.alk_daily_ml,
-             ca_solution=excluded.ca_solution,
-             ca_daily_ml=excluded.ca_daily_ml,
-             mg_solution=excluded.mg_solution,
-             mg_daily_ml=excluded.mg_daily_ml,
-             dosing_mode=excluded.dosing_mode,
-             all_in_one_solution=excluded.all_in_one_solution,
-             all_in_one_daily_ml=excluded.all_in_one_daily_ml,
-             nitrate_solution=excluded.nitrate_solution,
-             nitrate_daily_ml=excluded.nitrate_daily_ml,
-             phosphate_solution=excluded.phosphate_solution,
-             phosphate_daily_ml=excluded.phosphate_daily_ml,
-             nopox_daily_ml=excluded.nopox_daily_ml,
-             all_in_one_container_ml=excluded.all_in_one_container_ml,
-             all_in_one_remaining_ml=excluded.all_in_one_remaining_ml,
-             alk_container_ml=excluded.alk_container_ml,
-             alk_remaining_ml=excluded.alk_remaining_ml,
-             ca_container_ml=excluded.ca_container_ml,
-             ca_remaining_ml=excluded.ca_remaining_ml,
-             mg_container_ml=excluded.mg_container_ml,
-             mg_remaining_ml=excluded.mg_remaining_ml,
-             nitrate_container_ml=excluded.nitrate_container_ml,
-             nitrate_remaining_ml=excluded.nitrate_remaining_ml,
-             phosphate_container_ml=excluded.phosphate_container_ml,
-             phosphate_remaining_ml=excluded.phosphate_remaining_ml,
-             nopox_container_ml=excluded.nopox_container_ml,
-             nopox_remaining_ml=excluded.nopox_remaining_ml,
-             dosing_container_updated_at=excluded.dosing_container_updated_at,
-             dosing_low_days=excluded.dosing_low_days""",
-        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml, all_in_one_container_ml, all_in_one_remaining_ml, alk_container_ml, alk_remaining_ml, ca_container_ml, ca_remaining_ml, mg_container_ml, mg_remaining_ml, nitrate_container_ml, nitrate_remaining_ml, phosphate_container_ml, phosphate_remaining_ml, nopox_container_ml, nopox_remaining_ml, container_updated_at, dosing_low_days),
+        "INSERT OR IGNORE INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, ?)",
+        (tank_id, volume_l, float(net_percent)),
+    )
+    db.execute(
+        "UPDATE tank_profiles SET volume_l=?, net_percent=? WHERE tank_id=?",
+        (volume_l, float(net_percent), tank_id),
     )
     db.commit()
     db.close()
