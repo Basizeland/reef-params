@@ -37,14 +37,24 @@
   </div>
 </div>
 
-{% set has_dosing = tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml %}
+{% set has_dosing = tank.dosing_mode or tank.all_in_one_solution or tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml %}
 {% if has_dosing %}
   <div class="card shadow-sm mb-4">
     <div class="card-header bg-white py-3">
       <h5 class="card-title mb-0 fw-bold">Daily Dosing</h5>
     </div>
     <div class="card-body">
+      <div class="mb-3 text-muted small">
+        Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
+      </div>
       <div class="row g-3">
+        {% if tank.all_in_one_solution or tank.all_in_one_daily_ml %}
+          <div class="col-12 col-md-4">
+            <div class="text-muted small">All-in-one</div>
+            <div class="fw-semibold">{{ tank.all_in_one_solution or "—" }}</div>
+            <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
+          </div>
+        {% endif %}
         <div class="col-12 col-md-4">
           <div class="text-muted small">Alkalinity</div>
           <div class="fw-semibold">{{ tank.alk_solution or "—" }}</div>
@@ -60,6 +70,27 @@
           <div class="fw-semibold">{{ tank.mg_solution or "—" }}</div>
           <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
         </div>
+        {% if tank.nitrate_solution or tank.nitrate_daily_ml %}
+          <div class="col-12 col-md-4">
+            <div class="text-muted small">Nitrate</div>
+            <div class="fw-semibold">{{ tank.nitrate_solution or "—" }}</div>
+            <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
+          </div>
+        {% endif %}
+        {% if tank.phosphate_solution or tank.phosphate_daily_ml %}
+          <div class="col-12 col-md-4">
+            <div class="text-muted small">Phosphate</div>
+            <div class="fw-semibold">{{ tank.phosphate_solution or "—" }}</div>
+            <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
+          </div>
+        {% endif %}
+        {% if tank.nopox_daily_ml is not none %}
+          <div class="col-12 col-md-4">
+            <div class="text-muted small">NoPox</div>
+            <div class="fw-semibold">Red Sea NoPox</div>
+            <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
+          </div>
+        {% endif %}
       </div>
     </div>
   </div>

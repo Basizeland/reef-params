@@ -529,7 +529,7 @@ def init_db() -> None:
     cur.executescript('''
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -564,6 +564,14 @@ def init_db() -> None:
     ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
     ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
     ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "dosing_mode", "ALTER TABLE tank_profiles ADD COLUMN dosing_mode TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_solution", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_solution TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_solution", "ALTER TABLE tank_profiles ADD COLUMN nitrate_solution TEXT")
+    ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
+    ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
     cur.execute('''
         CREATE TABLE IF NOT EXISTS tank_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -988,6 +996,14 @@ def tank_profile(request: Request, tank_id: int):
             tank_view["ca_daily_ml"] = profile["ca_daily_ml"]
             tank_view["mg_solution"] = profile["mg_solution"]
             tank_view["mg_daily_ml"] = profile["mg_daily_ml"]
+            tank_view["dosing_mode"] = profile["dosing_mode"]
+            tank_view["all_in_one_solution"] = profile["all_in_one_solution"]
+            tank_view["all_in_one_daily_ml"] = profile["all_in_one_daily_ml"]
+            tank_view["nitrate_solution"] = profile["nitrate_solution"]
+            tank_view["nitrate_daily_ml"] = profile["nitrate_daily_ml"]
+            tank_view["phosphate_solution"] = profile["phosphate_solution"]
+            tank_view["phosphate_daily_ml"] = profile["phosphate_daily_ml"]
+            tank_view["nopox_daily_ml"] = profile["nopox_daily_ml"]
         except Exception: pass
     db.close()
     return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": tank_view})
@@ -1005,6 +1021,14 @@ async def tank_profile_save(request: Request, tank_id: int):
     alk_daily_ml = to_float(form.get("alk_daily_ml"))
     ca_daily_ml = to_float(form.get("ca_daily_ml"))
     mg_daily_ml = to_float(form.get("mg_daily_ml"))
+    dosing_mode = (form.get("dosing_mode") or "").strip() or None
+    all_in_one_solution = (form.get("all_in_one_solution") or "").strip() or None
+    all_in_one_daily_ml = to_float(form.get("all_in_one_daily_ml"))
+    nitrate_solution = (form.get("nitrate_solution") or "").strip() or None
+    nitrate_daily_ml = to_float(form.get("nitrate_daily_ml"))
+    phosphate_solution = (form.get("phosphate_solution") or "").strip() or None
+    phosphate_daily_ml = to_float(form.get("phosphate_daily_ml"))
+    nopox_daily_ml = to_float(form.get("nopox_daily_ml"))
     db = get_db()
     tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
@@ -1016,10 +1040,18 @@ async def tank_profile_save(request: Request, tank_id: int):
     ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
     ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
     ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "dosing_mode", "ALTER TABLE tank_profiles ADD COLUMN dosing_mode TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_solution", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_solution TEXT")
+    ensure_column(db, "tank_profiles", "all_in_one_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_solution", "ALTER TABLE tank_profiles ADD COLUMN nitrate_solution TEXT")
+    ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
+    ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
     db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
     db.execute(
-        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(tank_id) DO UPDATE SET
              volume_l=excluded.volume_l,
              net_percent=excluded.net_percent,
@@ -1028,8 +1060,16 @@ async def tank_profile_save(request: Request, tank_id: int):
              ca_solution=excluded.ca_solution,
              ca_daily_ml=excluded.ca_daily_ml,
              mg_solution=excluded.mg_solution,
-             mg_daily_ml=excluded.mg_daily_ml""",
-        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml),
+             mg_daily_ml=excluded.mg_daily_ml,
+             dosing_mode=excluded.dosing_mode,
+             all_in_one_solution=excluded.all_in_one_solution,
+             all_in_one_daily_ml=excluded.all_in_one_daily_ml,
+             nitrate_solution=excluded.nitrate_solution,
+             nitrate_daily_ml=excluded.nitrate_daily_ml,
+             phosphate_solution=excluded.phosphate_solution,
+             phosphate_daily_ml=excluded.phosphate_daily_ml,
+             nopox_daily_ml=excluded.nopox_daily_ml""",
+        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml),
     )
     db.commit()
     db.close()
