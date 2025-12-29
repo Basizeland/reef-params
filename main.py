@@ -506,12 +506,26 @@ async def tank_delete(tank_id: int):
     return redirect("/")
 
 @app.post("/samples/{sample_id}/delete")
-async def sample_delete(sample_id: int, tank_id: int = Form(...)):
+async def sample_delete(sample_id: int):
     db = get_db()
-    db.execute("DELETE FROM samples WHERE id=?", (sample_id,))
-    db.commit()
-    db.close()
-    return redirect(f"/tanks/{tank_id}")
+    try:
+        # 1. Find the tank_id associated with this sample before we delete it
+        sample = one(db, "SELECT tank_id FROM samples WHERE id = ?", (sample_id,))
+        
+        if not sample:
+            return redirect("/")
+            
+        tank_id = sample["tank_id"]
+
+        # 2. Perform the deletion
+        db.execute("DELETE FROM samples WHERE id = ?", (sample_id,))
+        db.execute("DELETE FROM sample_values WHERE sample_id = ?", (sample_id,))
+        db.commit()
+
+        # 3. Redirect back to the tank detail page we just came from
+        return redirect(f"/tanks/{tank_id}")
+    finally:
+        db.close()
 
 @app.get("/tanks/{tank_id}", response_class=HTMLResponse)
 def tank_detail(request: Request, tank_id: int):
