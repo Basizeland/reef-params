@@ -658,8 +658,11 @@
               return;
             }
 
-            if (window.historyChart) {
-              window.historyChart.destroy();
+            const existingChart = window.historyChart && typeof window.historyChart.destroy === 'function'
+              ? window.historyChart
+              : Chart.getChart(ctx);
+            if (existingChart) {
+              existingChart.destroy();
             }
 
             window.historyChart = new Chart(ctx, {
