@@ -1058,7 +1058,28 @@ def tank_detail(request: Request, tank_id: int):
         
     recent_samples = samples[:10] if samples else []
     db.close()
-    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank_view, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value, "low_container_alerts": low_container_alerts})
+    return templates.TemplateResponse(
+        "tank_detail.html",
+        {
+            "request": request,
+            "tank": tank_view,
+            "params": params,
+            "recent_samples": recent_samples,
+            "sample_values": sample_values,
+            "latest_vals": latest_by_param_id,
+            "status_by_param_id": status_by_param_id,
+            "trend_warning_by_param": trend_warning_by_param,
+            "overdue_by_param": overdue_by_param,
+            "targets": targets,
+            "target_map": targets_by_param,
+            "series": series,
+            "series_map": series_map,
+            "chart_targets": chart_targets,
+            "selected_parameter_id": selected_parameter_id,
+            "format_value": format_value,
+            "low_container_alerts": low_container_alerts,
+        },
+    )
 
 @app.get("/tanks/{tank_id}/journal", response_class=HTMLResponse)
 def tank_journal(request: Request, tank_id: int):

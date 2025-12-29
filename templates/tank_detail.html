@@ -378,19 +378,18 @@
 <div class="card shadow-sm mb-4">
   <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0 fw-bold">Trend Analysis</h5>
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
       <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/targets">
         <i class="bi bi-sliders"></i> Edit Target Range
       </a>
-      <form method="get" class="d-flex align-items-center gap-2">
-        <select name="parameter" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
-          {% for p in params %}
-            <option value="{{ p.id }}" {% if selected_parameter_id == p.id %}selected{% endif %}>
-              {{ p.name }}
-            </option>
-          {% endfor %}
-        </select>
-      </form>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        {% for p in params %}
+          <div class="form-check form-check-inline mb-0">
+            <input class="form-check-input" type="checkbox" data-param-checkbox value="{{ p.id }}" id="param-{{ p.id }}" {% if selected_parameter_id == p.id %}checked{% endif %}>
+            <label class="form-check-label small" for="param-{{ p.id }}">{{ p.name }}</label>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   </div>
   <div class="card-body">
@@ -488,8 +487,10 @@
   document.addEventListener('DOMContentLoaded', function() {
       try {
           const seriesData = {{ series|tojson|safe }};
+          const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets|tojson|safe }};
           const ctx = document.getElementById('historyChart');
+          const paramCheckboxes = Array.from(document.querySelectorAll('[data-param-checkbox]'));
           
           if (!ctx) return;
 
@@ -497,12 +498,12 @@
               throw new Error("Chart.js not found");
           }
 
-          if (!seriesData || seriesData.length === 0) {
+          if (!seriesMap || Object.keys(seriesMap).length === 0) {
               const c = ctx.getContext('2d');
               c.font = "14px sans-serif";
               c.fillStyle = "#6c757d";
               c.textAlign = "center";
-              c.fillText("No data available for this parameter.", ctx.width / 2, ctx.height / 2);
+              c.fillText("No data available for these parameters.", ctx.width / 2, ctx.height / 2);
               return; 
           }
 
@@ -513,130 +514,166 @@
               return isNaN(d.getTime()) ? new Date() : d;
           }
 
-          const labels = seriesData.map(d => {
-            const date = cleanDate(d.x);
-            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-          });
-          
-          const dataPoints = seriesData.map(d => d.y);
-          const pointColors = seriesData.map(d => {
-            const val = d.y;
-            if (!targets || targets.length === 0 || val === null || typeof val === 'undefined') {
-              return '#042f4b';
-            }
-            const t = targets[0];
-            const alertLow = t.alert_low;
-            const alertHigh = t.alert_high;
-            const targetLow = t.target_low;
-            const targetHigh = t.target_high;
-            if (alertLow !== null && typeof alertLow !== 'undefined' && val < alertLow) {
-              return '#ff7675';
-            }
-            if (alertHigh !== null && typeof alertHigh !== 'undefined' && val > alertHigh) {
-              return '#ff7675';
-            }
-            if (targetLow !== null && typeof targetLow !== 'undefined' && targetHigh !== null && typeof targetHigh !== 'undefined') {
-              if (val >= targetLow && val <= targetHigh) {
-                return '#10ac84';
-              }
-            }
-            return '#feca57';
-          });
+          const palette = ['#00d2d3', '#54a0ff', '#10ac84', '#feca57', '#ee5253', '#576574', '#5f27cd'];
 
-          const annotations = {};
-          if (targets && targets.length > 0) {
-              const t = targets[0]; 
-              
-              // 1. Target Range (The "Sweet Spot" - Green Box)
-              if (t.target_low !== null && t.target_high !== null) {
-                  annotations.targetRange = {
-                      type: 'box',
-                      yMin: t.target_low,
-                      yMax: t.target_high,
-                      backgroundColor: 'rgba(29, 209, 161, 0.15)', // Reef Teal
-                      borderWidth: 0,
-                      label: {
-                          display: true,
-                          content: 'Target Range',
-                          position: 'end',
-                          color: '#10ac84',
-                          font: { size: 10, weight: 'bold' }
-                      }
-                  };
-              }
-
-              // 2. Low Alert Line (Red)
-              if (t.alert_low !== null && typeof t.alert_low !== 'undefined') {
-                  annotations.alertLow = {
-                      type: 'line',
-                      yMin: t.alert_low,
-                      yMax: t.alert_low,
-                      borderColor: '#ff7675',
-                      borderWidth: 2,
-                      borderDash: [6, 6],
-                      label: {
-                          display: true,
-                          content: 'Low Alert: ' + t.alert_low,
-                          position: 'start',
-                          backgroundColor: '#ff7675',
-                          color: 'white',
-                          font: { size: 10 }
-                      }
-                  };
-              }
-
-              // 3. High Alert Line (Red)
-              if (t.alert_high !== null && typeof t.alert_high !== 'undefined') {
-                  annotations.alertHigh = {
-                      type: 'line',
-                      yMin: t.alert_high,
-                      yMax: t.alert_high,
-                      borderColor: '#ff7675',
-                      borderWidth: 2,
-                      borderDash: [6, 6],
-                      label: {
-                          display: true,
-                          content: 'High Alert: ' + t.alert_high,
-                          position: 'start',
-                          backgroundColor: '#ff7675',
-                          color: 'white',
-                          font: { size: 10 }
-                      }
-                  };
-              }
+          function buildLabels(selectedParams) {
+            const labelMap = new Map();
+            selectedParams.forEach((key) => {
+              (seriesMap[key] || []).forEach((d) => {
+                const date = cleanDate(d.x);
+                labelMap.set(date.getTime(), date);
+              });
+            });
+            const sorted = Array.from(labelMap.entries()).sort((a, b) => a[0] - b[0]);
+            return sorted.map((entry) => {
+              const date = entry[1];
+              return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            });
           }
 
-          new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: labels,
-              datasets: [{
-                label: 'Reading',
+          function buildDatasets(selectedParams, labels) {
+            const datasets = [];
+            selectedParams.forEach((key, index) => {
+              const series = seriesMap[key] || [];
+              const labelIndex = new Map();
+              labels.forEach((label, idx) => labelIndex.set(label, idx));
+              const dataPoints = Array(labels.length).fill(null);
+              series.forEach((d) => {
+                const date = cleanDate(d.x);
+                const label = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const idx = labelIndex.get(label);
+                if (idx !== undefined) {
+                  dataPoints[idx] = d.y;
+                }
+              });
+              datasets.push({
+                label: key,
                 data: dataPoints,
-                borderColor: '#00d2d3', // Reef Metrics Cyan
+                borderColor: palette[index % palette.length],
                 backgroundColor: 'rgba(0, 210, 211, 0.1)',
-                borderWidth: 3,
+                borderWidth: 2,
                 tension: 0.3,
-                fill: true,
-                pointRadius: 4,
-                pointBackgroundColor: pointColors,
-                pointBorderColor: pointColors
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              interaction: { mode: 'index', intersect: false },
-              plugins: {
-                legend: { display: false },
-                annotation: { annotations: annotations }
-              },
-              scales: {
-                y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
-                x: { display: false }
-              }
+                fill: false,
+                pointRadius: 3
+              });
+            });
+            return datasets;
+          }
+
+          function buildAnnotations(selectedParams) {
+            if (selectedParams.length !== 1 || !targets || targets.length === 0) {
+              return {};
             }
+            const t = targets[0];
+            const annotations = {};
+            if (t.target_low !== null && t.target_high !== null) {
+              annotations.targetRange = {
+                type: 'box',
+                yMin: t.target_low,
+                yMax: t.target_high,
+                backgroundColor: 'rgba(29, 209, 161, 0.15)',
+                borderWidth: 0,
+                label: {
+                  display: true,
+                  content: 'Target Range',
+                  position: 'end',
+                  color: '#10ac84',
+                  font: { size: 10, weight: 'bold' }
+                }
+              };
+            }
+            if (t.alert_low !== null && typeof t.alert_low !== 'undefined') {
+              annotations.alertLow = {
+                type: 'line',
+                yMin: t.alert_low,
+                yMax: t.alert_low,
+                borderColor: '#ff7675',
+                borderWidth: 2,
+                borderDash: [6, 6],
+                label: {
+                  display: true,
+                  content: 'Low Alert: ' + t.alert_low,
+                  position: 'start',
+                  backgroundColor: '#ff7675',
+                  color: 'white',
+                  font: { size: 10 }
+                }
+              };
+            }
+            if (t.alert_high !== null && typeof t.alert_high !== 'undefined') {
+              annotations.alertHigh = {
+                type: 'line',
+                yMin: t.alert_high,
+                yMax: t.alert_high,
+                borderColor: '#ff7675',
+                borderWidth: 2,
+                borderDash: [6, 6],
+                label: {
+                  display: true,
+                  content: 'High Alert: ' + t.alert_high,
+                  position: 'start',
+                  backgroundColor: '#ff7675',
+                  color: 'white',
+                  font: { size: 10 }
+                }
+              };
+            }
+            return annotations;
+          }
+
+          function selectedParams() {
+            let checked = paramCheckboxes.filter((box) => box.checked).map((box) => box.value);
+            if (checked.length === 0 && paramCheckboxes.length > 0) {
+              paramCheckboxes[0].checked = true;
+              checked = [paramCheckboxes[0].value];
+            }
+            return checked;
+          }
+
+          function renderChart() {
+            const selected = selectedParams();
+            const labels = buildLabels(selected);
+            const datasets = buildDatasets(selected, labels);
+            const annotations = buildAnnotations(selected);
+
+            if (!labels.length || datasets.length === 0) {
+              const c = ctx.getContext('2d');
+              c.clearRect(0, 0, ctx.width, ctx.height);
+              c.font = "14px sans-serif";
+              c.fillStyle = "#6c757d";
+              c.textAlign = "center";
+              c.fillText("No data available for these parameters.", ctx.width / 2, ctx.height / 2);
+              return;
+            }
+
+            if (window.historyChart) {
+              window.historyChart.destroy();
+            }
+
+            window.historyChart = new Chart(ctx, {
+              type: 'line',
+              data: { labels, datasets },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                  legend: { display: true, position: 'bottom' },
+                  annotation: { annotations }
+                },
+                scales: {
+                  y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
+                  x: { display: false }
+                }
+              }
+            });
+          }
+
+          paramCheckboxes.forEach((box) => {
+            box.addEventListener('change', renderChart);
           });
+
+          renderChart();
       } catch (err) {
           console.error("Chart Error:", err);
       }
