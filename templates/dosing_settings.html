@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-9 col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3">
+        <h4 class="mb-0">Daily Dosing Settings: {{ tank.name }}</h4>
+      </div>
+      <div class="card-body">
+        <form method="post" action="/tanks/{{ tank.id }}/dosing-settings">
+          <div class="row g-3 mb-3">
+            <div class="col-12">
+              <label class="form-label fw-bold">Dosing Mode</label>
+              <select class="form-select" name="dosing_mode">
+                <option value="">Not specified</option>
+                <option value="all_in_one" {% if tank.dosing_mode == 'all_in_one' %}selected{% endif %}>All-in-one (e.g. All For Reef)</option>
+                <option value="two_part" {% if tank.dosing_mode == 'two_part' %}selected{% endif %}>Two-part (Alk + Ca)</option>
+                <option value="three_part" {% if tank.dosing_mode == 'three_part' %}selected{% endif %}>Three-part (Alk + Ca + Mg)</option>
+              </select>
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+              <label class="form-label fw-bold">All-in-one Solution</label>
+              <select class="form-select" name="all_in_one_solution">
+                <option value="">Select additive</option>
+                {% for additive in additives %}
+                  <option value="{{ additive.name }}" {% if tank.all_in_one_solution == additive.name %}selected{% endif %}>
+                    {{ additive.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+              <label class="form-label fw-bold">All-in-one Daily (ml)</label>
+              <input type="number" step="any" name="all_in_one_daily_ml" class="form-control" value="{{ tank.all_in_one_daily_ml if tank.all_in_one_daily_ml is not none else '' }}" placeholder="e.g. 12">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+              <label class="form-label fw-bold">Alkalinity Solution</label>
+              <select class="form-select" name="alk_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}" {% if tank.alk_solution == additive.name %}selected{% endif %}>
+                    {{ additive.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+              <label class="form-label fw-bold">Alkalinity Daily (ml)</label>
+              <input type="number" step="any" name="alk_daily_ml" class="form-control" value="{{ tank.alk_daily_ml if tank.alk_daily_ml is not none else '' }}" placeholder="e.g. 25">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+              <label class="form-label fw-bold">Calcium Solution</label>
+              <select class="form-select" name="ca_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('calcium', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}" {% if tank.ca_solution == additive.name %}selected{% endif %}>
+                    {{ additive.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+              <label class="form-label fw-bold">Calcium Daily (ml)</label>
+              <input type="number" step="any" name="ca_daily_ml" class="form-control" value="{{ tank.ca_daily_ml if tank.ca_daily_ml is not none else '' }}" placeholder="e.g. 20">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="three_part">
+              <label class="form-label fw-bold">Magnesium Solution</label>
+              <select class="form-select" name="mg_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('magnesium', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}" {% if tank.mg_solution == additive.name %}selected{% endif %}>
+                    {{ additive.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="three_part">
+              <label class="form-label fw-bold">Magnesium Daily (ml)</label>
+              <input type="number" step="any" name="mg_daily_ml" class="form-control" value="{{ tank.mg_daily_ml if tank.mg_daily_ml is not none else '' }}" placeholder="e.g. 15">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-bold">Nitrate Solution</label>
+              <select class="form-select" name="nitrate_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('nitrate', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}" {% if tank.nitrate_solution == additive.name %}selected{% endif %}>
+                    {{ additive.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-bold">Nitrate Daily (ml)</label>
+              <input type="number" step="any" name="nitrate_daily_ml" class="form-control" value="{{ tank.nitrate_daily_ml if tank.nitrate_daily_ml is not none else '' }}" placeholder="e.g. 2">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-bold">Phosphate Solution</label>
+              <select class="form-select" name="phosphate_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('phosphate', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}" {% if tank.phosphate_solution == additive.name %}selected{% endif %}>
+                    {{ additive.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-bold">Phosphate Daily (ml)</label>
+              <input type="number" step="any" name="phosphate_daily_ml" class="form-control" value="{{ tank.phosphate_daily_ml if tank.phosphate_daily_ml is not none else '' }}" placeholder="e.g. 1">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label fw-bold">NoPox Daily (ml)</label>
+              <input type="number" step="any" name="nopox_daily_ml" class="form-control" value="{{ tank.nopox_daily_ml if tank.nopox_daily_ml is not none else '' }}" placeholder="e.g. 5">
+            </div>
+          </div>
+
+          <div class="border-top pt-4 mt-4">
+            <h6 class="text-muted text-uppercase small mb-3">Dosing Containers</h6>
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label fw-bold">Low Container Notification Threshold (days)</label>
+                <input type="number" step="any" name="dosing_low_days" class="form-control" value="{{ tank.dosing_low_days if tank.dosing_low_days is not none else 5 }}" placeholder="e.g. 5">
+                <div class="form-text">Shows an in-app notification when estimated days remaining falls at or below this value.</div>
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+                <label class="form-label fw-bold">All-in-one Container Size (ml)</label>
+                <input type="number" step="any" name="all_in_one_container_ml" class="form-control" value="{{ tank.all_in_one_container_ml if tank.all_in_one_container_ml is not none else '' }}" placeholder="e.g. 2000">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+                <label class="form-label fw-bold">All-in-one Remaining (ml)</label>
+                <input type="number" step="any" name="all_in_one_remaining_ml" class="form-control" value="{{ tank.all_in_one_remaining_ml if tank.all_in_one_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                <label class="form-label fw-bold">Alkalinity Container Size (ml)</label>
+                <input type="number" step="any" name="alk_container_ml" class="form-control" value="{{ tank.alk_container_ml if tank.alk_container_ml is not none else '' }}" placeholder="e.g. 2000">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                <label class="form-label fw-bold">Alkalinity Remaining (ml)</label>
+                <input type="number" step="any" name="alk_remaining_ml" class="form-control" value="{{ tank.alk_remaining_ml if tank.alk_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                <label class="form-label fw-bold">Calcium Container Size (ml)</label>
+                <input type="number" step="any" name="ca_container_ml" class="form-control" value="{{ tank.ca_container_ml if tank.ca_container_ml is not none else '' }}" placeholder="e.g. 2000">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                <label class="form-label fw-bold">Calcium Remaining (ml)</label>
+                <input type="number" step="any" name="ca_remaining_ml" class="form-control" value="{{ tank.ca_remaining_ml if tank.ca_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="three_part">
+                <label class="form-label fw-bold">Magnesium Container Size (ml)</label>
+                <input type="number" step="any" name="mg_container_ml" class="form-control" value="{{ tank.mg_container_ml if tank.mg_container_ml is not none else '' }}" placeholder="e.g. 2000">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-modes="three_part">
+                <label class="form-label fw-bold">Magnesium Remaining (ml)</label>
+                <input type="number" step="any" name="mg_remaining_ml" class="form-control" value="{{ tank.mg_remaining_ml if tank.mg_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Nitrate Container Size (ml)</label>
+                <input type="number" step="any" name="nitrate_container_ml" class="form-control" value="{{ tank.nitrate_container_ml if tank.nitrate_container_ml is not none else '' }}" placeholder="e.g. 500">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Nitrate Remaining (ml)</label>
+                <input type="number" step="any" name="nitrate_remaining_ml" class="form-control" value="{{ tank.nitrate_remaining_ml if tank.nitrate_remaining_ml is not none else '' }}" placeholder="e.g. 300">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Phosphate Container Size (ml)</label>
+                <input type="number" step="any" name="phosphate_container_ml" class="form-control" value="{{ tank.phosphate_container_ml if tank.phosphate_container_ml is not none else '' }}" placeholder="e.g. 500">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Phosphate Remaining (ml)</label>
+                <input type="number" step="any" name="phosphate_remaining_ml" class="form-control" value="{{ tank.phosphate_remaining_ml if tank.phosphate_remaining_ml is not none else '' }}" placeholder="e.g. 300">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">NoPox Container Size (ml)</label>
+                <input type="number" step="any" name="nopox_container_ml" class="form-control" value="{{ tank.nopox_container_ml if tank.nopox_container_ml is not none else '' }}" placeholder="e.g. 1000">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">NoPox Remaining (ml)</label>
+                <input type="number" step="any" name="nopox_remaining_ml" class="form-control" value="{{ tank.nopox_remaining_ml if tank.nopox_remaining_ml is not none else '' }}" placeholder="e.g. 600">
+              </div>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center mt-4">
+            <a href="/tanks/{{ tank.id }}" class="text-decoration-none">Cancel</a>
+            <button type="submit" class="btn btn-primary px-4">Save Dosing</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const dosingModeSelect = document.querySelector('select[name="dosing_mode"]');
+  const dosingModeFields = document.querySelectorAll('[data-dosing-modes]');
+
+  function updateDosingFields() {
+    const mode = dosingModeSelect.value;
+    dosingModeFields.forEach((field) => {
+      const modes = field.dataset.dosingModes.split(' ');
+      const shouldShow = !mode || modes.includes(mode);
+      field.classList.toggle('d-none', !shouldShow);
+    });
+  }
+
+  dosingModeSelect.addEventListener('change', updateDosingFields);
+  updateDosingFields();
+</script>
+{% endblock %}

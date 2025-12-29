@@ -3,6 +3,7 @@ import sqlite3
 import re
 import math
 import json
+import time
 import csv
 import pandas as pd
 from io import BytesIO
@@ -69,7 +70,12 @@ def fmt2(v: Any) -> str:
 def dtfmt(v: Any) -> str:
     dt = parse_dt_any(v) if not isinstance(v, datetime) else v
     if dt is None: return ""
-    return dt.strftime("%H:%M - %d/%m/%Y")
+    day = dt.day
+    if 10 <= day % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{dt.strftime('%a')} {day}{suffix} {dt.strftime('%b %y')}"
 
 def time_ago(v: Any) -> str:
     """Returns a string like '2 days ago' or 'Today'."""
@@ -105,12 +111,100 @@ def _finalize(v: Any) -> Any:
 
 templates.env.finalize = _finalize
 
+def collect_dosing_notifications(db: sqlite3.Connection, tank_id: int | None = None) -> List[Dict[str, Any]]:
+    today = date.today().isoformat()
+    params: List[Any] = []
+    where_clause = ""
+    if tank_id is not None:
+        where_clause = "WHERE p.tank_id=?"
+        params.append(tank_id)
+    rows = q(
+        db,
+        f"""SELECT t.id AS tank_id, t.name AS tank_name, p.*
+            FROM tank_profiles p
+            JOIN tanks t ON t.id = p.tank_id
+            {where_clause}""",
+        tuple(params),
+    )
+    notifications: List[Dict[str, Any]] = []
+    dosing_containers = [
+        ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "all_in_one_solution", "All-in-one"),
+        ("alk", "alk_container_ml", "alk_remaining_ml", "alk_daily_ml", "alk_solution", "Alkalinity"),
+        ("ca", "ca_container_ml", "ca_remaining_ml", "ca_daily_ml", "ca_solution", "Calcium"),
+        ("mg", "mg_container_ml", "mg_remaining_ml", "mg_daily_ml", "mg_solution", "Magnesium"),
+        ("nitrate", "nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml", "nitrate_solution", "Nitrate"),
+        ("phosphate", "phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml", "phosphate_solution", "Phosphate"),
+        ("nopox", "nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml", None, "NoPox"),
+    ]
+    for row in rows:
+        threshold_days = row_get(row, "dosing_low_days", 5)
+        try:
+            threshold_days = float(threshold_days) if threshold_days is not None else 5
+        except Exception:
+            threshold_days = 5
+        for key, container_col, remaining_col, daily_col, solution_col, default_label in dosing_containers:
+            container_ml = row_get(row, container_col)
+            if container_ml is None:
+                continue
+            remaining_ml = row_get(row, remaining_col)
+            daily_ml = row_get(row, daily_col)
+            solution_name = row_get(row, solution_col) if solution_col else None
+            label = solution_name or default_label
+            if remaining_ml is None:
+                remaining_ml = container_ml
+            if not daily_ml:
+                continue
+            days_remaining = remaining_ml / float(daily_ml)
+            if days_remaining <= threshold_days:
+                notifications.append(
+                    {
+                        "tank_id": row_get(row, "tank_id"),
+                        "tank_name": row_get(row, "tank_name"),
+                        "label": label,
+                        "days": days_remaining,
+                        "threshold": threshold_days,
+                    }
+                )
+                exists = one(
+                    db,
+                    "SELECT 1 FROM dosing_notifications WHERE tank_id=? AND container_key=? AND notified_on=?",
+                    (row_get(row, "tank_id"), key, today),
+                )
+                if not exists:
+                    db.execute(
+                        "INSERT INTO dosing_notifications (tank_id, container_key, notified_on) VALUES (?, ?, ?)",
+                        (row_get(row, "tank_id"), key, today),
+                    )
+                    db.commit()
+    return notifications
+
+def global_dosing_notifications() -> List[Dict[str, Any]]:
+    db = get_db()
+    try:
+        return collect_dosing_notifications(db)
+    finally:
+        db.close()
+
+templates.env.globals["global_dosing_notifications"] = global_dosing_notifications
+
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
+def execute_with_retry(cur: sqlite3.Cursor, sql: str, params: Tuple[Any, ...] = (), attempts: int = 5) -> None:
+    for idx in range(attempts):
+        try:
+            cur.execute(sql, params)
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or idx == attempts - 1:
+                raise
+            time.sleep(0.2 * (idx + 1))
+
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 def q(db: sqlite3.Connection, sql: str, params: Tuple[Any, ...] = ()) -> List[sqlite3.Row]:
@@ -169,7 +263,8 @@ def list_parameters(db: sqlite3.Connection) -> List[sqlite3.Row]:
     if table_exists(db, "parameter_defs"):
         return q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     if table_exists(db, "parameters"):
-        return q(db, "SELECT DISTINCT name, COALESCE(unit,'') AS unit FROM parameters ORDER BY name")
+        rows = q(db, "SELECT DISTINCT name, COALESCE(unit,'') AS unit FROM parameters ORDER BY name")
+        return [{"id": slug_key(r["name"]), "name": r["name"], "unit": r["unit"]} for r in rows]
     return []
 
 def get_active_param_defs(db: sqlite3.Connection) -> List[sqlite3.Row]:
@@ -529,7 +624,7 @@ def init_db() -> None:
     cur.executescript('''
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -539,6 +634,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
@@ -572,6 +668,22 @@ def init_db() -> None:
     ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
     ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "all_in_one_container_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_container_ml REAL")
+    ensure_column(db, "tank_profiles", "all_in_one_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "alk_container_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_container_ml REAL")
+    ensure_column(db, "tank_profiles", "alk_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_container_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_container_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_container_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_container_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_container_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_container_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "dosing_container_updated_at", "ALTER TABLE tank_profiles ADD COLUMN dosing_container_updated_at TEXT")
+    ensure_column(db, "tank_profiles", "dosing_low_days", "ALTER TABLE tank_profiles ADD COLUMN dosing_low_days REAL")
     cur.execute('''
         CREATE TABLE IF NOT EXISTS tank_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -709,16 +821,113 @@ def add_reading_selector(request: Request):
 
 @app.get("/tanks/new", response_class=HTMLResponse)
 def tank_new_form(request: Request):
-    html = """<html><head><title>Add Tank</title></head><body style="font-family: sans-serif; max-width: 720px; margin: 40px auto;"><h2>Add Tank</h2><form method="post" action="/tanks/new"><label>Tank name</label><br/><input name="name" style="width:100%; padding:10px; margin:10px 0;" required /><label>Volume (L)</label><br/><input name="volume_l" type="number" step="any" style="width:100%; padding:10px; margin:10px 0;" placeholder="e.g. 1500" /><button type="submit" style="padding:10px 16px;">Create</button></form><p><a href="/">Back to dashboard</a></p></body></html>"""
-    return HTMLResponse(html)
+    db = get_db()
+    params = list_parameters(db)
+    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    for a in additives_rows:
+        parameter = (a["parameter"] or "other").strip().lower()
+        if "alk" in parameter or "kh" in parameter:
+            key = "alkalinity"
+        elif "calcium" in parameter or parameter == "ca":
+            key = "calcium"
+        elif "magnesium" in parameter or parameter == "mg":
+            key = "magnesium"
+        elif "nitrate" in parameter or "no3" in parameter:
+            key = "nitrate"
+        elif "phosphate" in parameter or "po4" in parameter:
+            key = "phosphate"
+        else:
+            key = parameter
+        grouped_additives.setdefault(key, []).append(a)
+    grouped_additives.setdefault("all", []).extend(additives_rows)
+    db.close()
+    return templates.TemplateResponse(
+        "tank_new.html",
+        {
+            "request": request,
+            "params": params,
+            "recommended_targets": RECOMMENDED_DEFAULTS,
+            "additives": additives_rows,
+            "grouped_additives": grouped_additives,
+        },
+    )
 
 @app.post("/tanks/new")
-def tank_new(name: str = Form(...), volume_l: float | None = Form(None)):
+async def tank_new(request: Request):
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    volume_l = to_float(form.get("volume_l"))
+    net_percent = to_float(form.get("net_percent")) or 100
+    dosing_mode = (form.get("dosing_mode") or "").strip() or None
     db = get_db()
     cur = db.cursor()
-    cur.execute("INSERT INTO tanks (name, volume_l) VALUES (?, ?)", (name.strip(), volume_l))
+    cur.execute("INSERT INTO tanks (name, volume_l) VALUES (?, ?)", (name, volume_l))
     tank_id = cur.lastrowid
-    cur.execute("INSERT OR IGNORE INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, 100)", (tank_id, volume_l))
+    profile_fields = {
+        "tank_id": tank_id,
+        "volume_l": volume_l,
+        "net_percent": net_percent,
+        "dosing_mode": dosing_mode,
+        "all_in_one_solution": form.get("all_in_one_solution") or None,
+        "all_in_one_daily_ml": to_float(form.get("all_in_one_daily_ml")),
+        "alk_solution": form.get("alk_solution") or None,
+        "alk_daily_ml": to_float(form.get("alk_daily_ml")),
+        "ca_solution": form.get("ca_solution") or None,
+        "ca_daily_ml": to_float(form.get("ca_daily_ml")),
+        "mg_solution": form.get("mg_solution") or None,
+        "mg_daily_ml": to_float(form.get("mg_daily_ml")),
+        "nitrate_solution": form.get("nitrate_solution") or None,
+        "nitrate_daily_ml": to_float(form.get("nitrate_daily_ml")),
+        "phosphate_solution": form.get("phosphate_solution") or None,
+        "phosphate_daily_ml": to_float(form.get("phosphate_daily_ml")),
+        "nopox_daily_ml": to_float(form.get("nopox_daily_ml")),
+        "dosing_low_days": to_float(form.get("dosing_low_days")),
+        "all_in_one_container_ml": to_float(form.get("all_in_one_container_ml")),
+        "all_in_one_remaining_ml": to_float(form.get("all_in_one_remaining_ml")),
+        "alk_container_ml": to_float(form.get("alk_container_ml")),
+        "alk_remaining_ml": to_float(form.get("alk_remaining_ml")),
+        "ca_container_ml": to_float(form.get("ca_container_ml")),
+        "ca_remaining_ml": to_float(form.get("ca_remaining_ml")),
+        "mg_container_ml": to_float(form.get("mg_container_ml")),
+        "mg_remaining_ml": to_float(form.get("mg_remaining_ml")),
+        "nitrate_container_ml": to_float(form.get("nitrate_container_ml")),
+        "nitrate_remaining_ml": to_float(form.get("nitrate_remaining_ml")),
+        "phosphate_container_ml": to_float(form.get("phosphate_container_ml")),
+        "phosphate_remaining_ml": to_float(form.get("phosphate_remaining_ml")),
+        "nopox_container_ml": to_float(form.get("nopox_container_ml")),
+        "nopox_remaining_ml": to_float(form.get("nopox_remaining_ml")),
+    }
+    columns = ", ".join(profile_fields.keys())
+    placeholders = ", ".join(["?"] * len(profile_fields))
+    cur.execute(
+        f"INSERT OR IGNORE INTO tank_profiles ({columns}) VALUES ({placeholders})",
+        tuple(profile_fields.values()),
+    )
+    if table_exists(db, "targets"):
+        cols = [row[1] for row in db.execute("PRAGMA table_info(targets)").fetchall()]
+        has_target_cols = "target_low" in cols
+        params = list_parameters(db)
+        for p in params:
+            pname = p["name"]
+            pid = p["id"]
+            target_low = to_float(form.get(f"target_low_{pid}"))
+            target_high = to_float(form.get(f"target_high_{pid}"))
+            alert_low = to_float(form.get(f"alert_low_{pid}"))
+            alert_high = to_float(form.get(f"alert_high_{pid}"))
+            if target_low is None and target_high is None and alert_low is None and alert_high is None:
+                continue
+            unit = row_get(p, "unit") or ""
+            if has_target_cols:
+                cur.execute(
+                    "INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                    (tank_id, pname, target_low, target_high, alert_low, alert_high, unit),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO targets (tank_id, parameter, low, high, unit, enabled) VALUES (?, ?, ?, ?, ?, 1)",
+                    (tank_id, pname, target_low, target_high, unit),
+                )
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
@@ -764,6 +973,44 @@ def tank_detail(request: Request, tank_id: int):
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     tank_view = dict(tank)
     if profile:
+        now = datetime.utcnow()
+        last_update = parse_dt_any(row_get(profile, "dosing_container_updated_at"))
+        if last_update is None:
+            last_update = now
+        days_since_update = max((now - last_update).days, 0)
+        container_updates = {}
+        if days_since_update:
+            dosing_containers = [
+                ("all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml"),
+                ("alk_container_ml", "alk_remaining_ml", "alk_daily_ml"),
+                ("ca_container_ml", "ca_remaining_ml", "ca_daily_ml"),
+                ("mg_container_ml", "mg_remaining_ml", "mg_daily_ml"),
+                ("nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml"),
+                ("phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml"),
+                ("nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml"),
+            ]
+            for container_col, remaining_col, daily_col in dosing_containers:
+                container_ml = row_get(profile, container_col)
+                daily_ml = row_get(profile, daily_col)
+                if container_ml is None or daily_ml in (None, 0):
+                    continue
+                remaining_ml = row_get(profile, remaining_col)
+                if remaining_ml is None:
+                    remaining_ml = container_ml
+                updated_remaining = max(remaining_ml - (float(daily_ml) * days_since_update), 0)
+                if updated_remaining != remaining_ml:
+                    container_updates[remaining_col] = updated_remaining
+        if container_updates or row_get(profile, "dosing_container_updated_at") is None:
+            container_updates["dosing_container_updated_at"] = now.isoformat()
+            set_clause = ", ".join([f"{col}=?" for col in container_updates.keys()])
+            db.execute(
+                f"UPDATE tank_profiles SET {set_clause} WHERE tank_id=?",
+                (*container_updates.values(), tank_id),
+            )
+            profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+        dosing_low_days = row_get(profile, "dosing_low_days")
+        if dosing_low_days is None:
+            dosing_low_days = 5
         tank_view.update({
             "volume_l": row_get(profile, "volume_l", tank_view.get("volume_l")),
             "net_percent": row_get(profile, "net_percent"),
@@ -773,8 +1020,41 @@ def tank_detail(request: Request, tank_id: int):
             "ca_daily_ml": row_get(profile, "ca_daily_ml"),
             "mg_solution": row_get(profile, "mg_solution"),
             "mg_daily_ml": row_get(profile, "mg_daily_ml"),
+            "dosing_mode": row_get(profile, "dosing_mode"),
+            "all_in_one_solution": row_get(profile, "all_in_one_solution"),
+            "all_in_one_daily_ml": row_get(profile, "all_in_one_daily_ml"),
+            "nitrate_solution": row_get(profile, "nitrate_solution"),
+            "nitrate_daily_ml": row_get(profile, "nitrate_daily_ml"),
+            "phosphate_solution": row_get(profile, "phosphate_solution"),
+            "phosphate_daily_ml": row_get(profile, "phosphate_daily_ml"),
+            "nopox_daily_ml": row_get(profile, "nopox_daily_ml"),
+            "all_in_one_container_ml": row_get(profile, "all_in_one_container_ml"),
+            "all_in_one_remaining_ml": row_get(profile, "all_in_one_remaining_ml"),
+            "alk_container_ml": row_get(profile, "alk_container_ml"),
+            "alk_remaining_ml": row_get(profile, "alk_remaining_ml"),
+            "ca_container_ml": row_get(profile, "ca_container_ml"),
+            "ca_remaining_ml": row_get(profile, "ca_remaining_ml"),
+            "mg_container_ml": row_get(profile, "mg_container_ml"),
+            "mg_remaining_ml": row_get(profile, "mg_remaining_ml"),
+            "nitrate_container_ml": row_get(profile, "nitrate_container_ml"),
+            "nitrate_remaining_ml": row_get(profile, "nitrate_remaining_ml"),
+            "phosphate_container_ml": row_get(profile, "phosphate_container_ml"),
+            "phosphate_remaining_ml": row_get(profile, "phosphate_remaining_ml"),
+            "nopox_container_ml": row_get(profile, "nopox_container_ml"),
+            "nopox_remaining_ml": row_get(profile, "nopox_remaining_ml"),
+            "dosing_container_updated_at": row_get(profile, "dosing_container_updated_at"),
+            "dosing_low_days": dosing_low_days,
         })
     
+    low_container_alerts = []
+    if profile:
+        all_notifications = collect_dosing_notifications(db, tank_id=tank_id)
+        low_container_alerts = [
+            {"label": alert["label"], "days": alert["days"]}
+            for alert in all_notifications
+            if alert.get("tank_id") == tank_id
+        ]
+
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
     for _row in samples_rows:
@@ -827,21 +1107,34 @@ def tank_detail(request: Request, tank_id: int):
     series = series_map.get(selected_parameter_id, [])
     
    # Build chart targets with distinct Alert and Target values
-    chart_targets = []
+    def normalize_param_key(value: str) -> str:
+        return re.sub(r"[\s/_-]+", "", str(value or "").lower())
+
+    chart_targets_map = {}
     for t in targets:
-        if (t["parameter"] or "") == selected_parameter_id:
-            chart_targets.append({
-                "parameter": t["parameter"],
-                # These are the dashed red lines
-                "alert_low": row_get(t, "alert_low"),
-                "alert_high": row_get(t, "alert_high"),
-                # These are the green box range
-                "target_low": row_get(t, "target_low") if row_get(t, "target_low") is not None else row_get(t, "low"),
-                "target_high": row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high"),
-                "unit": row_get(t, "unit") or unit_by_name.get(selected_parameter_id, "")
-            })
+        param_name = t["parameter"] or ""
+        if not param_name:
+            continue
+        chart_targets_map[normalize_param_key(param_name)] = {
+            "parameter": param_name,
+            # These are the dashed red lines
+            "alert_low": row_get(t, "alert_low"),
+            "alert_high": row_get(t, "alert_high"),
+            # These are the green box range
+            "target_low": row_get(t, "target_low") if row_get(t, "target_low") is not None else row_get(t, "low"),
+            "target_high": row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high"),
+            "unit": row_get(t, "unit") or unit_by_name.get(param_name, "")
+        }
             
-    params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
+    params = [
+        {
+            "id": name,
+            "name": name,
+            "unit": unit_by_name.get(name, ""),
+            "key": normalize_param_key(name),
+        }
+        for name in available_params
+    ]
     
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
@@ -894,7 +1187,28 @@ def tank_detail(request: Request, tank_id: int):
         
     recent_samples = samples[:10] if samples else []
     db.close()
-    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank_view, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+    return templates.TemplateResponse(
+        "tank_detail.html",
+        {
+            "request": request,
+            "tank": tank_view,
+            "params": params,
+            "recent_samples": recent_samples,
+            "sample_values": sample_values,
+            "latest_vals": latest_by_param_id,
+            "status_by_param_id": status_by_param_id,
+            "trend_warning_by_param": trend_warning_by_param,
+            "overdue_by_param": overdue_by_param,
+            "targets": targets,
+            "target_map": targets_by_param,
+            "series": series,
+            "series_map": series_map,
+            "chart_targets_map": chart_targets_map,
+            "selected_parameter_id": selected_parameter_id,
+            "format_value": format_value,
+            "low_container_alerts": low_container_alerts,
+        },
+    )
 
 @app.get("/tanks/{tank_id}/journal", response_class=HTMLResponse)
 def tank_journal(request: Request, tank_id: int):
@@ -1004,36 +1318,176 @@ def tank_profile(request: Request, tank_id: int):
             tank_view["phosphate_solution"] = profile["phosphate_solution"]
             tank_view["phosphate_daily_ml"] = profile["phosphate_daily_ml"]
             tank_view["nopox_daily_ml"] = profile["nopox_daily_ml"]
+            tank_view["all_in_one_container_ml"] = profile["all_in_one_container_ml"]
+            tank_view["all_in_one_remaining_ml"] = profile["all_in_one_remaining_ml"]
+            tank_view["alk_container_ml"] = profile["alk_container_ml"]
+            tank_view["alk_remaining_ml"] = profile["alk_remaining_ml"]
+            tank_view["ca_container_ml"] = profile["ca_container_ml"]
+            tank_view["ca_remaining_ml"] = profile["ca_remaining_ml"]
+            tank_view["mg_container_ml"] = profile["mg_container_ml"]
+            tank_view["mg_remaining_ml"] = profile["mg_remaining_ml"]
+            tank_view["nitrate_container_ml"] = profile["nitrate_container_ml"]
+            tank_view["nitrate_remaining_ml"] = profile["nitrate_remaining_ml"]
+            tank_view["phosphate_container_ml"] = profile["phosphate_container_ml"]
+            tank_view["phosphate_remaining_ml"] = profile["phosphate_remaining_ml"]
+            tank_view["nopox_container_ml"] = profile["nopox_container_ml"]
+            tank_view["nopox_remaining_ml"] = profile["nopox_remaining_ml"]
+            tank_view["dosing_container_updated_at"] = profile["dosing_container_updated_at"]
+            tank_view["dosing_low_days"] = profile["dosing_low_days"] if profile["dosing_low_days"] is not None else 5
         except Exception: pass
     db.close()
     return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": tank_view})
 
-@app.post("/tanks/{tank_id}/profile")
-@app.post("/tanks/{tank_id}/edit", include_in_schema=False)
-async def tank_profile_save(request: Request, tank_id: int):
-    form = await request.form()
-    volume_l = to_float(form.get("volume_l"))
-    net_percent = to_float(form.get("net_percent"))
-    if net_percent is None: net_percent = 100
-    alk_solution = (form.get("alk_solution") or "").strip() or None
-    ca_solution = (form.get("ca_solution") or "").strip() or None
-    mg_solution = (form.get("mg_solution") or "").strip() or None
-    alk_daily_ml = to_float(form.get("alk_daily_ml"))
-    ca_daily_ml = to_float(form.get("ca_daily_ml"))
-    mg_daily_ml = to_float(form.get("mg_daily_ml"))
-    dosing_mode = (form.get("dosing_mode") or "").strip() or None
-    all_in_one_solution = (form.get("all_in_one_solution") or "").strip() or None
-    all_in_one_daily_ml = to_float(form.get("all_in_one_daily_ml"))
-    nitrate_solution = (form.get("nitrate_solution") or "").strip() or None
-    nitrate_daily_ml = to_float(form.get("nitrate_daily_ml"))
-    phosphate_solution = (form.get("phosphate_solution") or "").strip() or None
-    phosphate_daily_ml = to_float(form.get("phosphate_daily_ml"))
-    nopox_daily_ml = to_float(form.get("nopox_daily_ml"))
+@app.get("/tanks/{tank_id}/dosing-settings", response_class=HTMLResponse)
+def tank_dosing_settings(request: Request, tank_id: int):
     db = get_db()
     tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
+    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    for a in additives_rows:
+        parameter = (a["parameter"] or "other").strip().lower()
+        if "alk" in parameter or "kh" in parameter:
+            key = "alkalinity"
+        elif "calcium" in parameter or parameter == "ca":
+            key = "calcium"
+        elif "magnesium" in parameter or parameter == "mg":
+            key = "magnesium"
+        elif "nitrate" in parameter or "no3" in parameter:
+            key = "nitrate"
+        elif "phosphate" in parameter or "po4" in parameter:
+            key = "phosphate"
+        else:
+            key = parameter
+        grouped_additives.setdefault(key, []).append(a)
+    grouped_additives.setdefault("all", []).extend(additives_rows)
+    profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    if not profile:
+        try: vol = tank["volume_l"] if "volume_l" in tank.keys() else None
+        except Exception: vol = None
+        db.execute("INSERT OR IGNORE INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, 100)", (tank_id, vol))
+        db.commit()
+        profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    tank_view = dict(tank)
+    if profile:
+        try:
+            tank_view["dosing_mode"] = profile["dosing_mode"]
+            tank_view["all_in_one_solution"] = profile["all_in_one_solution"]
+            tank_view["all_in_one_daily_ml"] = profile["all_in_one_daily_ml"]
+            tank_view["alk_solution"] = profile["alk_solution"]
+            tank_view["alk_daily_ml"] = profile["alk_daily_ml"]
+            tank_view["ca_solution"] = profile["ca_solution"]
+            tank_view["ca_daily_ml"] = profile["ca_daily_ml"]
+            tank_view["mg_solution"] = profile["mg_solution"]
+            tank_view["mg_daily_ml"] = profile["mg_daily_ml"]
+            tank_view["nitrate_solution"] = profile["nitrate_solution"]
+            tank_view["nitrate_daily_ml"] = profile["nitrate_daily_ml"]
+            tank_view["phosphate_solution"] = profile["phosphate_solution"]
+            tank_view["phosphate_daily_ml"] = profile["phosphate_daily_ml"]
+            tank_view["nopox_daily_ml"] = profile["nopox_daily_ml"]
+            tank_view["all_in_one_container_ml"] = profile["all_in_one_container_ml"]
+            tank_view["all_in_one_remaining_ml"] = profile["all_in_one_remaining_ml"]
+            tank_view["alk_container_ml"] = profile["alk_container_ml"]
+            tank_view["alk_remaining_ml"] = profile["alk_remaining_ml"]
+            tank_view["ca_container_ml"] = profile["ca_container_ml"]
+            tank_view["ca_remaining_ml"] = profile["ca_remaining_ml"]
+            tank_view["mg_container_ml"] = profile["mg_container_ml"]
+            tank_view["mg_remaining_ml"] = profile["mg_remaining_ml"]
+            tank_view["nitrate_container_ml"] = profile["nitrate_container_ml"]
+            tank_view["nitrate_remaining_ml"] = profile["nitrate_remaining_ml"]
+            tank_view["phosphate_container_ml"] = profile["phosphate_container_ml"]
+            tank_view["phosphate_remaining_ml"] = profile["phosphate_remaining_ml"]
+            tank_view["nopox_container_ml"] = profile["nopox_container_ml"]
+            tank_view["nopox_remaining_ml"] = profile["nopox_remaining_ml"]
+            tank_view["dosing_low_days"] = profile["dosing_low_days"] if profile["dosing_low_days"] is not None else 5
+        except Exception: pass
+    db.close()
+    return templates.TemplateResponse(
+        "dosing_settings.html",
+        {
+            "request": request,
+            "tank": tank_view,
+            "additives": additives_rows,
+            "grouped_additives": grouped_additives,
+        },
+    )
+
+@app.post("/tanks/{tank_id}/dosing-settings")
+async def tank_dosing_settings_save(request: Request, tank_id: int):
+    form = await request.form()
+    dosing_mode = (form.get("dosing_mode") or "").strip() or None
+    all_in_one_solution = (form.get("all_in_one_solution") or "").strip() or None
+    all_in_one_daily_ml = to_float(form.get("all_in_one_daily_ml"))
+    alk_solution = (form.get("alk_solution") or "").strip() or None
+    alk_daily_ml = to_float(form.get("alk_daily_ml"))
+    ca_solution = (form.get("ca_solution") or "").strip() or None
+    ca_daily_ml = to_float(form.get("ca_daily_ml"))
+    mg_solution = (form.get("mg_solution") or "").strip() or None
+    mg_daily_ml = to_float(form.get("mg_daily_ml"))
+    nitrate_solution = (form.get("nitrate_solution") or "").strip() or None
+    nitrate_daily_ml = to_float(form.get("nitrate_daily_ml"))
+    phosphate_solution = (form.get("phosphate_solution") or "").strip() or None
+    phosphate_daily_ml = to_float(form.get("phosphate_daily_ml"))
+    nopox_daily_ml = to_float(form.get("nopox_daily_ml"))
+    all_in_one_container_ml = to_float(form.get("all_in_one_container_ml"))
+    all_in_one_remaining_ml = to_float(form.get("all_in_one_remaining_ml"))
+    alk_container_ml = to_float(form.get("alk_container_ml"))
+    alk_remaining_ml = to_float(form.get("alk_remaining_ml"))
+    ca_container_ml = to_float(form.get("ca_container_ml"))
+    ca_remaining_ml = to_float(form.get("ca_remaining_ml"))
+    mg_container_ml = to_float(form.get("mg_container_ml"))
+    mg_remaining_ml = to_float(form.get("mg_remaining_ml"))
+    nitrate_container_ml = to_float(form.get("nitrate_container_ml"))
+    nitrate_remaining_ml = to_float(form.get("nitrate_remaining_ml"))
+    phosphate_container_ml = to_float(form.get("phosphate_container_ml"))
+    phosphate_remaining_ml = to_float(form.get("phosphate_remaining_ml"))
+    nopox_container_ml = to_float(form.get("nopox_container_ml"))
+    nopox_remaining_ml = to_float(form.get("nopox_remaining_ml"))
+    dosing_low_days = to_float(form.get("dosing_low_days"))
+    if dosing_low_days is None:
+        dosing_low_days = 5
+    if all_in_one_container_ml is not None and all_in_one_remaining_ml is None:
+        all_in_one_remaining_ml = all_in_one_container_ml
+    if alk_container_ml is not None and alk_remaining_ml is None:
+        alk_remaining_ml = alk_container_ml
+    if ca_container_ml is not None and ca_remaining_ml is None:
+        ca_remaining_ml = ca_container_ml
+    if mg_container_ml is not None and mg_remaining_ml is None:
+        mg_remaining_ml = mg_container_ml
+    if nitrate_container_ml is not None and nitrate_remaining_ml is None:
+        nitrate_remaining_ml = nitrate_container_ml
+    if phosphate_container_ml is not None and phosphate_remaining_ml is None:
+        phosphate_remaining_ml = phosphate_container_ml
+    if nopox_container_ml is not None and nopox_remaining_ml is None:
+        nopox_remaining_ml = nopox_container_ml
+    container_updated_at = None
+    if any(
+        value is not None
+        for value in (
+            all_in_one_container_ml,
+            all_in_one_remaining_ml,
+            alk_container_ml,
+            alk_remaining_ml,
+            ca_container_ml,
+            ca_remaining_ml,
+            mg_container_ml,
+            mg_remaining_ml,
+            nitrate_container_ml,
+            nitrate_remaining_ml,
+            phosphate_container_ml,
+            phosphate_remaining_ml,
+            nopox_container_ml,
+            nopox_remaining_ml,
+        )
+    ):
+        container_updated_at = datetime.utcnow().isoformat()
+    db = get_db()
+    profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    if not profile:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank profile not found")
     ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
     ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
     ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
@@ -1048,30 +1502,155 @@ async def tank_profile_save(request: Request, tank_id: int):
     ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
     ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
-    db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
+    ensure_column(db, "tank_profiles", "all_in_one_container_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_container_ml REAL")
+    ensure_column(db, "tank_profiles", "all_in_one_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "alk_container_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_container_ml REAL")
+    ensure_column(db, "tank_profiles", "alk_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_container_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_container_ml REAL")
+    ensure_column(db, "tank_profiles", "ca_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_container_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_container_ml REAL")
+    ensure_column(db, "tank_profiles", "mg_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_container_ml REAL")
+    ensure_column(db, "tank_profiles", "nitrate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_container_ml REAL")
+    ensure_column(db, "tank_profiles", "phosphate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
+    ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "dosing_container_updated_at", "ALTER TABLE tank_profiles ADD COLUMN dosing_container_updated_at TEXT")
+    ensure_column(db, "tank_profiles", "dosing_low_days", "ALTER TABLE tank_profiles ADD COLUMN dosing_low_days REAL")
     db.execute(
-        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(tank_id) DO UPDATE SET
-             volume_l=excluded.volume_l,
-             net_percent=excluded.net_percent,
-             alk_solution=excluded.alk_solution,
-             alk_daily_ml=excluded.alk_daily_ml,
-             ca_solution=excluded.ca_solution,
-             ca_daily_ml=excluded.ca_daily_ml,
-             mg_solution=excluded.mg_solution,
-             mg_daily_ml=excluded.mg_daily_ml,
-             dosing_mode=excluded.dosing_mode,
-             all_in_one_solution=excluded.all_in_one_solution,
-             all_in_one_daily_ml=excluded.all_in_one_daily_ml,
-             nitrate_solution=excluded.nitrate_solution,
-             nitrate_daily_ml=excluded.nitrate_daily_ml,
-             phosphate_solution=excluded.phosphate_solution,
-             phosphate_daily_ml=excluded.phosphate_daily_ml,
-             nopox_daily_ml=excluded.nopox_daily_ml""",
-        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml),
+        """UPDATE tank_profiles SET
+             dosing_mode=?,
+             all_in_one_solution=?,
+             all_in_one_daily_ml=?,
+             alk_solution=?,
+             alk_daily_ml=?,
+             ca_solution=?,
+             ca_daily_ml=?,
+             mg_solution=?,
+             mg_daily_ml=?,
+             nitrate_solution=?,
+             nitrate_daily_ml=?,
+             phosphate_solution=?,
+             phosphate_daily_ml=?,
+             nopox_daily_ml=?,
+             all_in_one_container_ml=?,
+             all_in_one_remaining_ml=?,
+             alk_container_ml=?,
+             alk_remaining_ml=?,
+             ca_container_ml=?,
+             ca_remaining_ml=?,
+             mg_container_ml=?,
+             mg_remaining_ml=?,
+             nitrate_container_ml=?,
+             nitrate_remaining_ml=?,
+             phosphate_container_ml=?,
+             phosphate_remaining_ml=?,
+             nopox_container_ml=?,
+             nopox_remaining_ml=?,
+             dosing_container_updated_at=?,
+             dosing_low_days=?
+           WHERE tank_id=?""",
+        (
+            dosing_mode,
+            all_in_one_solution,
+            all_in_one_daily_ml,
+            alk_solution,
+            alk_daily_ml,
+            ca_solution,
+            ca_daily_ml,
+            mg_solution,
+            mg_daily_ml,
+            nitrate_solution,
+            nitrate_daily_ml,
+            phosphate_solution,
+            phosphate_daily_ml,
+            nopox_daily_ml,
+            all_in_one_container_ml,
+            all_in_one_remaining_ml,
+            alk_container_ml,
+            alk_remaining_ml,
+            ca_container_ml,
+            ca_remaining_ml,
+            mg_container_ml,
+            mg_remaining_ml,
+            nitrate_container_ml,
+            nitrate_remaining_ml,
+            phosphate_container_ml,
+            phosphate_remaining_ml,
+            nopox_container_ml,
+            nopox_remaining_ml,
+            container_updated_at,
+            dosing_low_days,
+            tank_id,
+        ),
     )
     db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}")
+
+@app.post("/tanks/{tank_id}/profile")
+@app.post("/tanks/{tank_id}/edit", include_in_schema=False)
+async def tank_profile_save(request: Request, tank_id: int):
+    form = await request.form()
+    volume_l = to_float(form.get("volume_l"))
+    net_percent = to_float(form.get("net_percent"))
+    if net_percent is None: net_percent = 100
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    ensure_column(db, "tank_profiles", "volume_l", "ALTER TABLE tank_profiles ADD COLUMN volume_l REAL")
+    ensure_column(db, "tank_profiles", "net_percent", "ALTER TABLE tank_profiles ADD COLUMN net_percent REAL")
+    db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
+    db.execute(
+        "INSERT OR IGNORE INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, ?)",
+        (tank_id, volume_l, float(net_percent)),
+    )
+    db.execute(
+        "UPDATE tank_profiles SET volume_l=?, net_percent=? WHERE tank_id=?",
+        (volume_l, float(net_percent), tank_id),
+    )
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}")
+
+@app.post("/tanks/{tank_id}/dosing-containers")
+async def dosing_container_action(request: Request, tank_id: int):
+    form = await request.form()
+    action = (form.get("action") or "").strip()
+    container_key = (form.get("container_key") or "").strip()
+    if action != "refill" or not container_key:
+        return redirect(f"/tanks/{tank_id}")
+    mapping = {
+        "all_in_one": ("all_in_one_container_ml", "all_in_one_remaining_ml"),
+        "alk": ("alk_container_ml", "alk_remaining_ml"),
+        "ca": ("ca_container_ml", "ca_remaining_ml"),
+        "mg": ("mg_container_ml", "mg_remaining_ml"),
+        "nitrate": ("nitrate_container_ml", "nitrate_remaining_ml"),
+        "phosphate": ("phosphate_container_ml", "phosphate_remaining_ml"),
+        "nopox": ("nopox_container_ml", "nopox_remaining_ml"),
+    }
+    if container_key not in mapping:
+        return redirect(f"/tanks/{tank_id}")
+    capacity_col, remaining_col = mapping[container_key]
+    db = get_db()
+    profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    if not profile:
+        db.close()
+        return redirect(f"/tanks/{tank_id}")
+    capacity = row_get(profile, capacity_col)
+    if capacity is not None:
+        db.execute(
+            f"UPDATE tank_profiles SET {remaining_col}=? WHERE tank_id=?",
+            (capacity, tank_id),
+        )
+        db.execute(
+            "DELETE FROM dosing_notifications WHERE tank_id=? AND container_key=?",
+            (tank_id, container_key),
+        )
+        db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
 
@@ -1176,19 +1755,20 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
         try: when_iso = datetime.fromisoformat(taken_at).isoformat()
         except Exception: when_iso = None
     if not when_iso: when_iso = (parse_dt_any(sample["taken_at"]) or datetime.utcnow()).isoformat()
-    cur.execute("UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
+    execute_with_retry(cur, "UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
     mode = values_mode(db)
     if mode == "sample_values" and table_exists(db, "sample_values"):
-        cur.execute("DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+        execute_with_retry(cur, "DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
         if table_exists(db, "sample_value_kits"):
-            cur.execute("DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
+            execute_with_retry(cur, "DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
     else:
-        if table_exists(db, "parameters"): cur.execute("DELETE FROM parameters WHERE sample_id=?", (sample_id,))
+        if table_exists(db, "parameters"):
+            execute_with_retry(cur, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
     pdefs = get_active_param_defs(db)
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
-        punit = (p.get("unit") or "")
+        punit = (row_get(p, "unit") or "")
         val = to_float(form.get(f"value_{pid}"))
         kit_id = to_float(form.get(f"kit_{pid}"))
         if val is None:
@@ -1205,6 +1785,54 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/samples/{sample_id}")
+
+@app.get("/tanks/{tank_id}/samples", response_class=HTMLResponse)
+def tank_samples(request: Request, tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC", (tank_id,))
+    samples = []
+    for _row in samples_rows:
+        _s = dict(_row)
+        dt = parse_dt_any(_s.get("taken_at"))
+        if dt is not None:
+            _s["taken_at"] = dt
+        samples.append(_s)
+    sample_values, unit_by_name = {}, {}
+    if samples:
+        sample_ids = [s["id"] for s in samples]
+        placeholders = ",".join(["?"] * len(sample_ids))
+        mode = values_mode(db)
+        if mode == "sample_values":
+            rows = q(db, f"SELECT pd.name AS name, sv.value AS value, COALESCE(pd.unit, '') AS unit, s.taken_at AS taken_at, s.id AS sample_id FROM sample_values sv JOIN parameter_defs pd ON pd.id = sv.parameter_id JOIN samples s ON s.id = sv.sample_id WHERE sv.sample_id IN ({placeholders}) ORDER BY s.taken_at ASC", tuple(sample_ids))
+        else:
+            rows = q(db, f"SELECT p.name AS name, p.value AS value, COALESCE(pd.unit, p.unit, '') AS unit, s.taken_at AS taken_at, s.id AS sample_id FROM parameters p JOIN samples s ON s.id = p.sample_id LEFT JOIN parameter_defs pd ON pd.name = p.name WHERE p.sample_id IN ({placeholders}) ORDER BY s.taken_at ASC", tuple(sample_ids))
+        for r in rows:
+            name = r["name"]
+            if name is None:
+                continue
+            try:
+                value = float(r["value"]) if r["value"] is not None else None
+            except Exception:
+                value = r["value"]
+            sid = int(r["sample_id"])
+            sample_values.setdefault(sid, {})[name] = value
+            try:
+                u = r["unit"] or ""
+            except Exception:
+                u = ""
+            if name not in unit_by_name and u:
+                unit_by_name[name] = u
+    all_param_names = set(unit_by_name.keys())
+    if samples:
+        all_param_names.update(sample_values.get(int(samples[0]["id"]), {}).keys())
+    available_params = sorted(all_param_names, key=lambda s: s.lower())
+    params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
+    db.close()
+    return templates.TemplateResponse("tank_samples.html", {"request": request, "tank": tank, "samples": samples, "params": params, "sample_values": sample_values})
 
 @app.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
 def edit_targets(request: Request, tank_id: int):
