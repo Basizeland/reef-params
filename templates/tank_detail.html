@@ -386,7 +386,7 @@
         {% for p in params %}
           {% set param_key = p.key %}
           <div class="form-check form-check-inline mb-0">
-            <input class="form-check-input" type="checkbox" data-param-checkbox data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
+            <input class="form-check-input" type="radio" name="trend-param" data-param-radio data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
             <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
           </div>
         {% endfor %}
@@ -490,7 +490,7 @@
           const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets_map|tojson|safe }};
           const ctx = document.getElementById('historyChart');
-          const paramCheckboxes = Array.from(document.querySelectorAll('[data-param-checkbox]'));
+          const paramRadios = Array.from(document.querySelectorAll('[data-param-radio]'));
           
           if (!ctx) return;
 
@@ -642,12 +642,12 @@
           }
 
           function selectedParams() {
-            let checked = paramCheckboxes.filter((box) => box.checked).map((box) => box.value);
-            if (checked.length === 0 && paramCheckboxes.length > 0) {
-              paramCheckboxes[0].checked = true;
-              checked = [paramCheckboxes[0].value];
+            let checked = paramRadios.filter((box) => box.checked).map((box) => box.value);
+            if (checked.length === 0 && paramRadios.length > 0) {
+              paramRadios[0].checked = true;
+              checked = [paramRadios[0].value];
             }
-            return checked;
+            return checked.slice(0, 1);
           }
 
           function renderChart() {
@@ -692,7 +692,7 @@
             });
           }
 
-          paramCheckboxes.forEach((box) => {
+          paramRadios.forEach((box) => {
             box.addEventListener('change', renderChart);
           });
 
