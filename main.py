@@ -1195,6 +1195,11 @@ def tank_dosing_settings(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
+    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    for a in additives_rows:
+        key = a["parameter"] or "Other"
+        grouped_additives.setdefault(key, []).append(a)
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
         try: vol = tank["volume_l"] if "volume_l" in tank.keys() else None
@@ -1236,7 +1241,15 @@ def tank_dosing_settings(request: Request, tank_id: int):
             tank_view["dosing_low_days"] = profile["dosing_low_days"] if profile["dosing_low_days"] is not None else 5
         except Exception: pass
     db.close()
-    return templates.TemplateResponse("dosing_settings.html", {"request": request, "tank": tank_view})
+    return templates.TemplateResponse(
+        "dosing_settings.html",
+        {
+            "request": request,
+            "tank": tank_view,
+            "additives": additives_rows,
+            "grouped_additives": grouped_additives,
+        },
+    )
 
 @app.post("/tanks/{tank_id}/dosing-settings")
 async def tank_dosing_settings_save(request: Request, tank_id: int):
