@@ -122,13 +122,13 @@ def collect_dosing_notifications(db: sqlite3.Connection, tank_id: int | None = N
     )
     notifications: List[Dict[str, Any]] = []
     dosing_containers = [
-        ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "All-in-one"),
-        ("alk", "alk_container_ml", "alk_remaining_ml", "alk_daily_ml", "Alkalinity"),
-        ("ca", "ca_container_ml", "ca_remaining_ml", "ca_daily_ml", "Calcium"),
-        ("mg", "mg_container_ml", "mg_remaining_ml", "mg_daily_ml", "Magnesium"),
-        ("nitrate", "nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml", "Nitrate"),
-        ("phosphate", "phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml", "Phosphate"),
-        ("nopox", "nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml", "NoPox"),
+        ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "all_in_one_solution", "All-in-one"),
+        ("alk", "alk_container_ml", "alk_remaining_ml", "alk_daily_ml", "alk_solution", "Alkalinity"),
+        ("ca", "ca_container_ml", "ca_remaining_ml", "ca_daily_ml", "ca_solution", "Calcium"),
+        ("mg", "mg_container_ml", "mg_remaining_ml", "mg_daily_ml", "mg_solution", "Magnesium"),
+        ("nitrate", "nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml", "nitrate_solution", "Nitrate"),
+        ("phosphate", "phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml", "phosphate_solution", "Phosphate"),
+        ("nopox", "nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml", None, "NoPox"),
     ]
     for row in rows:
         threshold_days = row_get(row, "dosing_low_days", 5)
@@ -136,12 +136,14 @@ def collect_dosing_notifications(db: sqlite3.Connection, tank_id: int | None = N
             threshold_days = float(threshold_days) if threshold_days is not None else 5
         except Exception:
             threshold_days = 5
-        for key, container_col, remaining_col, daily_col, label in dosing_containers:
+        for key, container_col, remaining_col, daily_col, solution_col, default_label in dosing_containers:
             container_ml = row_get(row, container_col)
             if container_ml is None:
                 continue
             remaining_ml = row_get(row, remaining_col)
             daily_ml = row_get(row, daily_col)
+            solution_name = row_get(row, solution_col) if solution_col else None
+            label = solution_name or default_label
             if remaining_ml is None:
                 remaining_ml = container_ml
             if not daily_ml:
