@@ -1199,19 +1199,20 @@ def tank_dosing_settings(request: Request, tank_id: int):
     grouped_additives: Dict[str, List[sqlite3.Row]] = {}
     for a in additives_rows:
         parameter = (a["parameter"] or "other").strip().lower()
-        if parameter in ("alkalinity", "alkalinity/kh", "alkalinity kh", "alk", "kh"):
+        if "alk" in parameter or "kh" in parameter:
             key = "alkalinity"
-        elif parameter in ("calcium", "ca"):
+        elif "calcium" in parameter or parameter == "ca":
             key = "calcium"
-        elif parameter in ("magnesium", "mg"):
+        elif "magnesium" in parameter or parameter == "mg":
             key = "magnesium"
-        elif parameter in ("nitrate", "no3"):
+        elif "nitrate" in parameter or "no3" in parameter:
             key = "nitrate"
-        elif parameter in ("phosphate", "po4"):
+        elif "phosphate" in parameter or "po4" in parameter:
             key = "phosphate"
         else:
             key = parameter
         grouped_additives.setdefault(key, []).append(a)
+    grouped_additives.setdefault("all", []).extend(additives_rows)
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
         try: vol = tank["volume_l"] if "volume_l" in tank.keys() else None

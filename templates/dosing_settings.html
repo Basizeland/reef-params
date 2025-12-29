@@ -39,7 +39,7 @@
               <label class="form-label fw-bold">Alkalinity Solution</label>
               <select class="form-select" name="alk_solution">
                 <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('alkalinity', []) %}
+                {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" {% if tank.alk_solution == additive.name %}selected{% endif %}>
                     {{ additive.name }}
                   </option>
@@ -54,7 +54,7 @@
               <label class="form-label fw-bold">Calcium Solution</label>
               <select class="form-select" name="ca_solution">
                 <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('calcium', []) %}
+                {% for additive in grouped_additives.get('calcium', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" {% if tank.ca_solution == additive.name %}selected{% endif %}>
                     {{ additive.name }}
                   </option>
@@ -69,7 +69,7 @@
               <label class="form-label fw-bold">Magnesium Solution</label>
               <select class="form-select" name="mg_solution">
                 <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('magnesium', []) %}
+                {% for additive in grouped_additives.get('magnesium', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" {% if tank.mg_solution == additive.name %}selected{% endif %}>
                     {{ additive.name }}
                   </option>
@@ -84,7 +84,7 @@
               <label class="form-label fw-bold">Nitrate Solution</label>
               <select class="form-select" name="nitrate_solution">
                 <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('nitrate', []) %}
+                {% for additive in grouped_additives.get('nitrate', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" {% if tank.nitrate_solution == additive.name %}selected{% endif %}>
                     {{ additive.name }}
                   </option>
@@ -99,7 +99,7 @@
               <label class="form-label fw-bold">Phosphate Solution</label>
               <select class="form-select" name="phosphate_solution">
                 <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('phosphate', []) %}
+                {% for additive in grouped_additives.get('phosphate', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" {% if tank.phosphate_solution == additive.name %}selected{% endif %}>
                     {{ additive.name }}
                   </option>
