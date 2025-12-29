@@ -637,6 +637,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
+    ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
     ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
     ensure_column(db, "test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
@@ -719,7 +720,7 @@ init_db()
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db()
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    tanks = q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
     tank_cards = []
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
@@ -862,7 +863,9 @@ async def tank_new(request: Request):
     dosing_mode = (form.get("dosing_mode") or "").strip() or None
     db = get_db()
     cur = db.cursor()
-    cur.execute("INSERT INTO tanks (name, volume_l) VALUES (?, ?)", (name, volume_l))
+    max_order = one(db, "SELECT MAX(sort_order) AS max_order FROM tanks")
+    next_order = ((max_order["max_order"] or 0) if max_order else 0) + 1
+    cur.execute("INSERT INTO tanks (name, volume_l, sort_order) VALUES (?, ?, ?)", (name, volume_l, next_order))
     tank_id = cur.lastrowid
     profile_fields = {
         "tank_id": tank_id,
@@ -931,6 +934,40 @@ async def tank_new(request: Request):
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
+
+@app.post("/tanks/{tank_id}/order")
+async def tank_order(request: Request, tank_id: int):
+    form = await request.form()
+    direction = (form.get("direction") or "").strip().lower()
+    db = get_db()
+    cur = db.cursor()
+    tanks = q(db, "SELECT id, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    if not tanks:
+        db.close()
+        return redirect("/")
+    missing = any(t["sort_order"] is None for t in tanks)
+    if missing:
+        for idx, t in enumerate(tanks):
+            execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (idx + 1, t["id"]))
+        tanks = q(db, "SELECT id, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    index_by_id = {t["id"]: idx for idx, t in enumerate(tanks)}
+    current_index = index_by_id.get(tank_id)
+    if current_index is None:
+        db.close()
+        return redirect("/")
+    swap_index = None
+    if direction == "up" and current_index > 0:
+        swap_index = current_index - 1
+    elif direction == "down" and current_index < len(tanks) - 1:
+        swap_index = current_index + 1
+    if swap_index is not None:
+        current = tanks[current_index]
+        swap = tanks[swap_index]
+        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (swap["sort_order"], current["id"]))
+        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (current["sort_order"], swap["id"]))
+        db.commit()
+    db.close()
+    return redirect("/")
 
 @app.post("/tanks/{tank_id}/delete")
 async def tank_delete(tank_id: int):

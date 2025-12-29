@@ -41,16 +41,32 @@
               </div>
               <div class="small text-muted">
                   {% if ts %}
-                    <span class="text-secondary">{{ ts|time_ago }}</span>
+                    <span class="text-secondary">Last test: {{ ts|time_ago }}</span>
                   {% else %}
                     No logs yet
                   {% endif %}
               </div>
             </div>
-            {% set vol = (t.volume_l if t.volume_l is defined else t.get('volume_l')) %}
-            {% if vol %}
-              <span class="badge bg-light text-secondary border">{{ vol|fmt2 }} L</span>
-            {% endif %}
+            <div class="d-flex align-items-center gap-2">
+              {% set vol = (t.volume_l if t.volume_l is defined else t.get('volume_l')) %}
+              {% if vol %}
+                <span class="badge bg-light text-secondary border">{{ vol|fmt2 }} L</span>
+              {% endif %}
+              <div class="btn-group btn-group-sm" role="group" aria-label="Reorder tank">
+                <form method="post" action="/tanks/{{ t.id if t.id is defined else t['id'] }}/order">
+                  <input type="hidden" name="direction" value="up">
+                  <button class="btn btn-outline-secondary" type="submit" title="Move up">
+                    <i class="bi bi-arrow-up"></i>
+                  </button>
+                </form>
+                <form method="post" action="/tanks/{{ t.id if t.id is defined else t['id'] }}/order">
+                  <input type="hidden" name="direction" value="down">
+                  <button class="btn btn-outline-secondary" type="submit" title="Move down">
+                    <i class="bi bi-arrow-down"></i>
+                  </button>
+                </form>
+              </div>
+            </div>
           </div>
 
           <div class="mt-3">
