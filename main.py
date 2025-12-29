@@ -70,7 +70,12 @@ def fmt2(v: Any) -> str:
 def dtfmt(v: Any) -> str:
     dt = parse_dt_any(v) if not isinstance(v, datetime) else v
     if dt is None: return ""
-    return dt.strftime("%H:%M - %d/%m/%Y")
+    day = dt.day
+    if 10 <= day % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{dt.strftime('%a')} {day}{suffix} {dt.strftime('%b %y')}"
 
 def time_ago(v: Any) -> str:
     """Returns a string like '2 days ago' or 'Today'."""
