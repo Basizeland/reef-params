@@ -811,6 +811,27 @@ def dashboard(request: Request):
     db.close()
     return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
 
+@app.get("/tanks/reorder", response_class=HTMLResponse)
+def tank_reorder(request: Request):
+    db = get_db()
+    tanks = q(db, "SELECT id, name, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    db.close()
+    return templates.TemplateResponse("tank_reorder.html", {"request": request, "tanks": tanks})
+
+@app.post("/tanks/order")
+async def tank_order_save(request: Request):
+    payload = await request.json()
+    order = payload.get("order", []) if isinstance(payload, dict) else []
+    if not order:
+        return {"ok": False}
+    db = get_db()
+    cur = db.cursor()
+    for idx, tank_id in enumerate(order, start=1):
+        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (idx, int(tank_id)))
+    db.commit()
+    db.close()
+    return {"ok": True}
+
 @app.get("/add", response_class=HTMLResponse)
 def add_reading_selector(request: Request):
     db = get_db()

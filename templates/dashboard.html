@@ -6,6 +6,9 @@
     <h1 class="h3 mb-0">Dashboard</h1>
     <div class="text-muted small">Latest readings per tank</div>
   </div>
+  <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
+    <i class="bi bi-arrow-down-up"></i> Reorder Tanks
+  </a>
 </div>
 
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">
@@ -52,20 +55,6 @@
               {% if vol %}
                 <span class="badge bg-light text-secondary border">{{ vol|fmt2 }} L</span>
               {% endif %}
-              <div class="btn-group btn-group-sm" role="group" aria-label="Reorder tank">
-                <form method="post" action="/tanks/{{ t.id if t.id is defined else t['id'] }}/order">
-                  <input type="hidden" name="direction" value="up">
-                  <button class="btn btn-outline-secondary" type="submit" title="Move up">
-                    <i class="bi bi-arrow-up"></i>
-                  </button>
-                </form>
-                <form method="post" action="/tanks/{{ t.id if t.id is defined else t['id'] }}/order">
-                  <input type="hidden" name="direction" value="down">
-                  <button class="btn btn-outline-secondary" type="submit" title="Move down">
-                    <i class="bi bi-arrow-down"></i>
-                  </button>
-                </form>
-              </div>
             </div>
           </div>
 
