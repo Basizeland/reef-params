@@ -1689,6 +1689,24 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     db.close()
     return redirect(f"/tanks/{tank_id}/samples/{sample_id}")
 
+@app.get("/tanks/{tank_id}/samples", response_class=HTMLResponse)
+def tank_samples(request: Request, tank_id: int):
+    db = get_db()
+    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC", (tank_id,))
+    samples = []
+    for _row in samples_rows:
+        _s = dict(_row)
+        dt = parse_dt_any(_s.get("taken_at"))
+        if dt is not None:
+            _s["taken_at"] = dt
+        samples.append(_s)
+    db.close()
+    return templates.TemplateResponse("tank_samples.html", {"request": request, "tank": tank, "samples": samples})
+
 @app.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
 def edit_targets(request: Request, tank_id: int):
     db = get_db()
