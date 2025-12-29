@@ -34,7 +34,7 @@
           {% for p in pdefs %}
             <div class="col-6 col-md-4 col-lg-3">
               <label class="form-label">{{ p.name }}{% if p.unit %} ({{ p.unit }}){% endif %}</label>
-              <input class="form-control" inputmode="decimal" name="value_{{ p.id }}" value="{{ readings.get(p.name) | fmt2 }}">
+              <input class="form-control reading-input" inputmode="decimal" name="value_{{ p.id }}" value="{{ readings.get(p.name) | fmt2 }}" data-param-id="{{ p.id }}">
               {% set kits = kits_by_param.get(p.name, []) %}
               {% if kits and kits|length > 0 %}
                 <select class="form-select form-select-sm mt-2 kit-select" name="kit_{{ p.id }}" data-param-id="{{ p.id }}">
@@ -45,7 +45,7 @@
                 </select>
                 <div class="mt-2 kit-conversion d-none" data-param-id="{{ p.id }}">
                   <label class="form-label small">Syringe remaining (ml)</label>
-                  <input class="form-control form-control-sm" name="remaining_{{ p.id }}" inputmode="decimal" placeholder="e.g. 0.35">
+                  <input class="form-control form-control-sm remaining-input" name="remaining_{{ p.id }}" inputmode="decimal" placeholder="e.g. 0.35" data-param-id="{{ p.id }}">
                   <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
                 </div>
               {% endif %}
@@ -64,6 +64,42 @@
 
 <script>
   (function () {
+    const conversionTables = {
+      {% for p in pdefs %}
+        {% set kits = kits_by_param.get(p.name, []) %}
+        {% for kit in kits %}
+          {% if kit.conversion_type == 'syringe_remaining_ml' and kit.conversion_data %}
+            "{{ kit.id }}": {{ kit.conversion_data|safe }},
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    };
+    const valueInputs = {};
+    document.querySelectorAll('.reading-input').forEach((input) => {
+      const paramId = input.name.replace("value_", "");
+      valueInputs[paramId] = input;
+    });
+
+    const computeValue = (remaining, table) => {
+      if (!table || !table.length || remaining === "" || remaining === null) return null;
+      const num = parseFloat(remaining);
+      if (Number.isNaN(num)) return null;
+      const sorted = [...table].sort((a, b) => a.remaining - b.remaining);
+      if (num <= sorted[0].remaining) return sorted[0].value;
+      if (num >= sorted[sorted.length - 1].remaining) return sorted[sorted.length - 1].value;
+      for (let i = 1; i < sorted.length; i += 1) {
+        const low = sorted[i - 1];
+        const high = sorted[i];
+        if (num >= low.remaining && num <= high.remaining) {
+          const span = high.remaining - low.remaining;
+          if (span === 0) return low.value;
+          const ratio = (num - low.remaining) / span;
+          return low.value + ratio * (high.value - low.value);
+        }
+      }
+      return null;
+    };
+
     const selects = document.querySelectorAll(".kit-select");
     if (!selects.length) return;
     const update = (select) => {
@@ -77,6 +113,19 @@
         block.classList.add("d-none");
       }
     };
+    const remainingInputs = document.querySelectorAll(".remaining-input");
+    remainingInputs.forEach((input) => {
+      input.addEventListener("input", () => {
+        const paramId = input.dataset.paramId;
+        const select = document.querySelector(`.kit-select[data-param-id="${paramId}"]`);
+        const kitId = select?.value;
+        const table = conversionTables[kitId];
+        const value = computeValue(input.value, table);
+        if (valueInputs[paramId]) {
+          valueInputs[paramId].value = value === null ? "" : value.toFixed(2);
+        }
+      });
+    });
     selects.forEach((select) => {
       select.addEventListener("change", () => update(select));
       update(select);
