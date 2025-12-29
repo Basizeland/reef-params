@@ -60,37 +60,39 @@
             <a class="navbar-brand" href="/">
                 <img src="/static/logo.png" alt="Reef Metrics" class="brand-logo-img">
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
+            <div class="d-flex align-items-center gap-2 ms-auto">
+                {% set global_notifications = global_dosing_notifications() %}
+                <div class="dropdown">
+                    <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
+                        <i class="bi bi-bell"></i>
+                        {% if global_notifications %}
+                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+                                {{ global_notifications|length }}
+                            </span>
+                        {% endif %}
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 320px;">
+                        <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
+                        {% if global_notifications %}
+                            {% for alert in global_notifications %}
+                                <li>
+                                    <a class="dropdown-item text-wrap" href="/tanks/{{ alert.tank_id }}">
+                                        <div class="fw-semibold">{{ alert.tank_name }}</div>
+                                        <div class="small text-muted">{{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})</div>
+                                    </a>
+                                </li>
+                            {% endfor %}
+                        {% else %}
+                            <li class="dropdown-item text-muted small">No dosing alerts right now.</li>
+                        {% endif %}
+                    </ul>
+                </div>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+            </div>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
-                    {% set global_notifications = global_dosing_notifications() %}
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-bell"></i>
-                            {% if global_notifications %}
-                                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
-                                    {{ global_notifications|length }}
-                                </span>
-                            {% endif %}
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 320px;">
-                            <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
-                            {% if global_notifications %}
-                                {% for alert in global_notifications %}
-                                    <li>
-                                        <a class="dropdown-item text-wrap" href="/tanks/{{ alert.tank_id }}">
-                                            <div class="fw-semibold">{{ alert.tank_name }}</div>
-                                            <div class="small text-muted">{{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})</div>
-                                        </a>
-                                    </li>
-                                {% endfor %}
-                            {% else %}
-                                <li class="dropdown-item text-muted small">No dosing alerts right now.</li>
-                            {% endif %}
-                        </ul>
-                    </li>
                     <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
                     
                     <li class="nav-item dropdown">
