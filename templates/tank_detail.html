@@ -102,6 +102,159 @@
   </div>
 {% endif %}
 
+{% set has_containers = tank.all_in_one_container_ml or tank.alk_container_ml or tank.ca_container_ml or tank.mg_container_ml or tank.nitrate_container_ml or tank.phosphate_container_ml or tank.nopox_container_ml %}
+{% if has_containers %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white py-3">
+      <h5 class="card-title mb-0 fw-bold">Dosing Containers</h5>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        {% if (tank.dosing_mode == 'all_in_one' or not tank.dosing_mode) and tank.all_in_one_container_ml %}
+          {% set remaining = tank.all_in_one_remaining_ml if tank.all_in_one_remaining_ml is not none else tank.all_in_one_container_ml %}
+          {% set pct = (remaining / tank.all_in_one_container_ml * 100) if tank.all_in_one_container_ml else 0 %}
+          {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+          {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">All-in-one</div>
+              <form method="post" action="/tanks/{{ tank.id }}/dosing-containers">
+                <input type="hidden" name="action" value="refill">
+                <input type="hidden" name="container_key" value="all_in_one">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+              </form>
+            </div>
+            <div class="text-muted small mb-2">{{ remaining|fmt2 }} / {{ tank.all_in_one_container_ml|fmt2 }} ml</div>
+            <div class="progress" style="height: 10px;">
+              <div class="progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+        {% endif %}
+        {% if (tank.dosing_mode in ['two_part', 'three_part'] or not tank.dosing_mode) and tank.alk_container_ml %}
+          {% set remaining = tank.alk_remaining_ml if tank.alk_remaining_ml is not none else tank.alk_container_ml %}
+          {% set pct = (remaining / tank.alk_container_ml * 100) if tank.alk_container_ml else 0 %}
+          {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+          {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">Alkalinity</div>
+              <form method="post" action="/tanks/{{ tank.id }}/dosing-containers">
+                <input type="hidden" name="action" value="refill">
+                <input type="hidden" name="container_key" value="alk">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+              </form>
+            </div>
+            <div class="text-muted small mb-2">{{ remaining|fmt2 }} / {{ tank.alk_container_ml|fmt2 }} ml</div>
+            <div class="progress" style="height: 10px;">
+              <div class="progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+        {% endif %}
+        {% if (tank.dosing_mode in ['two_part', 'three_part'] or not tank.dosing_mode) and tank.ca_container_ml %}
+          {% set remaining = tank.ca_remaining_ml if tank.ca_remaining_ml is not none else tank.ca_container_ml %}
+          {% set pct = (remaining / tank.ca_container_ml * 100) if tank.ca_container_ml else 0 %}
+          {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+          {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">Calcium</div>
+              <form method="post" action="/tanks/{{ tank.id }}/dosing-containers">
+                <input type="hidden" name="action" value="refill">
+                <input type="hidden" name="container_key" value="ca">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+              </form>
+            </div>
+            <div class="text-muted small mb-2">{{ remaining|fmt2 }} / {{ tank.ca_container_ml|fmt2 }} ml</div>
+            <div class="progress" style="height: 10px;">
+              <div class="progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+        {% endif %}
+        {% if (tank.dosing_mode == 'three_part' or not tank.dosing_mode) and tank.mg_container_ml %}
+          {% set remaining = tank.mg_remaining_ml if tank.mg_remaining_ml is not none else tank.mg_container_ml %}
+          {% set pct = (remaining / tank.mg_container_ml * 100) if tank.mg_container_ml else 0 %}
+          {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+          {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">Magnesium</div>
+              <form method="post" action="/tanks/{{ tank.id }}/dosing-containers">
+                <input type="hidden" name="action" value="refill">
+                <input type="hidden" name="container_key" value="mg">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+              </form>
+            </div>
+            <div class="text-muted small mb-2">{{ remaining|fmt2 }} / {{ tank.mg_container_ml|fmt2 }} ml</div>
+            <div class="progress" style="height: 10px;">
+              <div class="progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+        {% endif %}
+        {% if tank.nitrate_container_ml %}
+          {% set remaining = tank.nitrate_remaining_ml if tank.nitrate_remaining_ml is not none else tank.nitrate_container_ml %}
+          {% set pct = (remaining / tank.nitrate_container_ml * 100) if tank.nitrate_container_ml else 0 %}
+          {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+          {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">Nitrate</div>
+              <form method="post" action="/tanks/{{ tank.id }}/dosing-containers">
+                <input type="hidden" name="action" value="refill">
+                <input type="hidden" name="container_key" value="nitrate">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+              </form>
+            </div>
+            <div class="text-muted small mb-2">{{ remaining|fmt2 }} / {{ tank.nitrate_container_ml|fmt2 }} ml</div>
+            <div class="progress" style="height: 10px;">
+              <div class="progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+        {% endif %}
+        {% if tank.phosphate_container_ml %}
+          {% set remaining = tank.phosphate_remaining_ml if tank.phosphate_remaining_ml is not none else tank.phosphate_container_ml %}
+          {% set pct = (remaining / tank.phosphate_container_ml * 100) if tank.phosphate_container_ml else 0 %}
+          {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+          {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">Phosphate</div>
+              <form method="post" action="/tanks/{{ tank.id }}/dosing-containers">
+                <input type="hidden" name="action" value="refill">
+                <input type="hidden" name="container_key" value="phosphate">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+              </form>
+            </div>
+            <div class="text-muted small mb-2">{{ remaining|fmt2 }} / {{ tank.phosphate_container_ml|fmt2 }} ml</div>
+            <div class="progress" style="height: 10px;">
+              <div class="progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+        {% endif %}
+        {% if tank.nopox_container_ml %}
+          {% set remaining = tank.nopox_remaining_ml if tank.nopox_remaining_ml is not none else tank.nopox_container_ml %}
+          {% set pct = (remaining / tank.nopox_container_ml * 100) if tank.nopox_container_ml else 0 %}
+          {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+          {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">NoPox</div>
+              <form method="post" action="/tanks/{{ tank.id }}/dosing-containers">
+                <input type="hidden" name="action" value="refill">
+                <input type="hidden" name="container_key" value="nopox">
+                <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+              </form>
+            </div>
+            <div class="text-muted small mb-2">{{ remaining|fmt2 }} / {{ tank.nopox_container_ml|fmt2 }} ml</div>
+            <div class="progress" style="height: 10px;">
+              <div class="progress-bar" role="progressbar" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endif %}
+
 <h4 class="mb-3 h5 fw-bold">Latest Readings</h4>
 <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
   {% for p in params %}

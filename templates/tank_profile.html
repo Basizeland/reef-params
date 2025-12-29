@@ -97,6 +97,68 @@
                 <input type="number" step="any" name="nopox_daily_ml" class="form-control" value="{{ tank.nopox_daily_ml if tank.nopox_daily_ml is not none else '' }}" placeholder="e.g. 5">
               </div>
             </div>
+
+            <div class="border-top pt-4 mt-4">
+              <h6 class="text-muted text-uppercase small mb-3">Dosing Containers</h6>
+              <div class="row g-3">
+                <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+                  <label class="form-label fw-bold">All-in-one Container Size (ml)</label>
+                  <input type="number" step="any" name="all_in_one_container_ml" class="form-control" value="{{ tank.all_in_one_container_ml if tank.all_in_one_container_ml is not none else '' }}" placeholder="e.g. 2000">
+                </div>
+                <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+                  <label class="form-label fw-bold">All-in-one Remaining (ml)</label>
+                  <input type="number" step="any" name="all_in_one_remaining_ml" class="form-control" value="{{ tank.all_in_one_remaining_ml if tank.all_in_one_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+                </div>
+                <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                  <label class="form-label fw-bold">Alkalinity Container Size (ml)</label>
+                  <input type="number" step="any" name="alk_container_ml" class="form-control" value="{{ tank.alk_container_ml if tank.alk_container_ml is not none else '' }}" placeholder="e.g. 2000">
+                </div>
+                <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                  <label class="form-label fw-bold">Alkalinity Remaining (ml)</label>
+                  <input type="number" step="any" name="alk_remaining_ml" class="form-control" value="{{ tank.alk_remaining_ml if tank.alk_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+                </div>
+                <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                  <label class="form-label fw-bold">Calcium Container Size (ml)</label>
+                  <input type="number" step="any" name="ca_container_ml" class="form-control" value="{{ tank.ca_container_ml if tank.ca_container_ml is not none else '' }}" placeholder="e.g. 2000">
+                </div>
+                <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+                  <label class="form-label fw-bold">Calcium Remaining (ml)</label>
+                  <input type="number" step="any" name="ca_remaining_ml" class="form-control" value="{{ tank.ca_remaining_ml if tank.ca_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+                </div>
+                <div class="col-12 col-md-6" data-dosing-modes="three_part">
+                  <label class="form-label fw-bold">Magnesium Container Size (ml)</label>
+                  <input type="number" step="any" name="mg_container_ml" class="form-control" value="{{ tank.mg_container_ml if tank.mg_container_ml is not none else '' }}" placeholder="e.g. 2000">
+                </div>
+                <div class="col-12 col-md-6" data-dosing-modes="three_part">
+                  <label class="form-label fw-bold">Magnesium Remaining (ml)</label>
+                  <input type="number" step="any" name="mg_remaining_ml" class="form-control" value="{{ tank.mg_remaining_ml if tank.mg_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-bold">Nitrate Container Size (ml)</label>
+                  <input type="number" step="any" name="nitrate_container_ml" class="form-control" value="{{ tank.nitrate_container_ml if tank.nitrate_container_ml is not none else '' }}" placeholder="e.g. 500">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-bold">Nitrate Remaining (ml)</label>
+                  <input type="number" step="any" name="nitrate_remaining_ml" class="form-control" value="{{ tank.nitrate_remaining_ml if tank.nitrate_remaining_ml is not none else '' }}" placeholder="e.g. 300">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-bold">Phosphate Container Size (ml)</label>
+                  <input type="number" step="any" name="phosphate_container_ml" class="form-control" value="{{ tank.phosphate_container_ml if tank.phosphate_container_ml is not none else '' }}" placeholder="e.g. 500">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-bold">Phosphate Remaining (ml)</label>
+                  <input type="number" step="any" name="phosphate_remaining_ml" class="form-control" value="{{ tank.phosphate_remaining_ml if tank.phosphate_remaining_ml is not none else '' }}" placeholder="e.g. 300">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-bold">NoPox Container Size (ml)</label>
+                  <input type="number" step="any" name="nopox_container_ml" class="form-control" value="{{ tank.nopox_container_ml if tank.nopox_container_ml is not none else '' }}" placeholder="e.g. 1000">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label fw-bold">NoPox Remaining (ml)</label>
+                  <input type="number" step="any" name="nopox_remaining_ml" class="form-control" value="{{ tank.nopox_remaining_ml if tank.nopox_remaining_ml is not none else '' }}" placeholder="e.g. 600">
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="d-flex justify-content-between align-items-center mt-4">
