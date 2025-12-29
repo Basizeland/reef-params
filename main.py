@@ -540,6 +540,8 @@ def dashboard(request: Request):
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         
         readings = []
+        out_of_range = 0
+        overdue_count = 0
         for pname, p in pdefs.items():
             data = latest_map.get(pname)
             if not data or not data.get("latest"):
@@ -586,6 +588,10 @@ def dashboard(request: Request):
                         overdue = (datetime.now() - latest_taken).days >= int(interval_days)
                     except Exception:
                         overdue = False
+            if status in ("danger", "warn"):
+                out_of_range += 1
+            if overdue:
+                overdue_count += 1
             readings.append({
                 "name": pname,
                 "value": latest_val,
@@ -600,8 +606,19 @@ def dashboard(request: Request):
         tank_data = dict(t)
         if "volume_l" not in tank_data:
             tank_data["volume_l"] = None 
-            
-        tank_cards.append({"tank": tank_data, "latest": latest, "readings": readings})
+
+        last_dose = one(db, "SELECT logged_at FROM dose_logs WHERE tank_id=? ORDER BY logged_at DESC LIMIT 1", (t["id"],))
+        last_dose_at = parse_dt_any(last_dose["logged_at"]) if last_dose else None
+        tank_cards.append({
+            "tank": tank_data,
+            "latest": latest,
+            "readings": readings,
+            "summary": {
+                "out_of_range": out_of_range,
+                "overdue": overdue_count,
+                "last_dose_at": last_dose_at,
+            },
+        })
     db.close()
     return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
 
