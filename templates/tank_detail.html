@@ -104,7 +104,8 @@
                 <th class="text-center">{{ p.name }}</th>
             {% endif %}
           {% endfor %}
-          </tr>
+          <th class="text-end">Actions</th>
+        </tr>
       </thead>
       <tbody>
         {% for s in recent_samples %}
@@ -125,7 +126,15 @@
                   </td>
               {% endif %}
             {% endfor %}
-            </tr>
+            <td class="text-end" onclick="event.stopPropagation()">
+                <form action="/samples/{{ s.id }}/delete" method="post" onsubmit="return confirm('Really delete this log?');" class="d-inline">
+                    <input type="hidden" name="tank_id" value="{{ tank.id }}">
+                    <button class="btn btn-link btn-sm text-danger p-0" type="submit">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </form>
+            </td>
+          </tr>
         {% endfor %}
       </tbody>
     </table>
@@ -201,16 +210,16 @@
             data: {
               labels: labels,
               datasets: [{
-    label: 'Reading',
-    data: dataPoints,
-    borderColor: '#00d2d3', // Reef Cyan
-    backgroundColor: 'rgba(0, 210, 211, 0.1)', // Light Cyan Fill
-    borderWidth: 3,
-    tension: 0.3,
-    fill: true,
-    pointRadius: 5,
-    pointBackgroundColor: '#042f4b' // Reef Navy points
-}]
+                label: 'Reading',
+                data: dataPoints,
+                borderColor: '#00d2d3', // Reef Cyan
+                backgroundColor: 'rgba(0, 210, 211, 0.1)', // Light Cyan Fill
+                borderWidth: 3,
+                tension: 0.3,
+                fill: true,
+                pointRadius: 4,
+                pointBackgroundColor: '#042f4b' // Reef Navy points
+              }]
             },
             options: {
               responsive: true,
