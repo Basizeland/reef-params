@@ -1198,7 +1198,19 @@ def tank_dosing_settings(request: Request, tank_id: int):
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
     grouped_additives: Dict[str, List[sqlite3.Row]] = {}
     for a in additives_rows:
-        key = a["parameter"] or "Other"
+        parameter = (a["parameter"] or "other").strip().lower()
+        if parameter in ("alkalinity", "alkalinity/kh", "alkalinity kh", "alk", "kh"):
+            key = "alkalinity"
+        elif parameter in ("calcium", "ca"):
+            key = "calcium"
+        elif parameter in ("magnesium", "mg"):
+            key = "magnesium"
+        elif parameter in ("nitrate", "no3"):
+            key = "nitrate"
+        elif parameter in ("phosphate", "po4"):
+            key = "phosphate"
+        else:
+            key = parameter
         grouped_additives.setdefault(key, []).append(a)
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
