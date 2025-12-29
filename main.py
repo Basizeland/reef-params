@@ -636,6 +636,9 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
     ''')
+    ensure_column(db, "users", "email", "ALTER TABLE users ADD COLUMN email TEXT")
+    ensure_column(db, "users", "password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT")
+    ensure_column(db, "users", "created_at", "ALTER TABLE users ADD COLUMN created_at TEXT")
     ensure_column(db, "users", "last_login_at", "ALTER TABLE users ADD COLUMN last_login_at TEXT")
     ensure_column(db, "users", "google_sub", "ALTER TABLE users ADD COLUMN google_sub TEXT")
     ensure_column(db, "users", "is_admin", "ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
