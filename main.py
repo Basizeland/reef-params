@@ -529,7 +529,7 @@ def init_db() -> None:
     cur.executescript('''
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, dosing_container_updated_at TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -539,6 +539,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
@@ -587,6 +588,7 @@ def init_db() -> None:
     ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "dosing_container_updated_at", "ALTER TABLE tank_profiles ADD COLUMN dosing_container_updated_at TEXT")
+    ensure_column(db, "tank_profiles", "dosing_low_days", "ALTER TABLE tank_profiles ADD COLUMN dosing_low_days REAL")
     cur.execute('''
         CREATE TABLE IF NOT EXISTS tank_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -814,6 +816,9 @@ def tank_detail(request: Request, tank_id: int):
                 (*container_updates.values(), tank_id),
             )
             profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+        dosing_low_days = row_get(profile, "dosing_low_days")
+        if dosing_low_days is None:
+            dosing_low_days = 5
         tank_view.update({
             "volume_l": row_get(profile, "volume_l", tank_view.get("volume_l")),
             "net_percent": row_get(profile, "net_percent"),
@@ -846,8 +851,47 @@ def tank_detail(request: Request, tank_id: int):
             "nopox_container_ml": row_get(profile, "nopox_container_ml"),
             "nopox_remaining_ml": row_get(profile, "nopox_remaining_ml"),
             "dosing_container_updated_at": row_get(profile, "dosing_container_updated_at"),
+            "dosing_low_days": dosing_low_days,
         })
     
+    low_container_alerts = []
+    if profile:
+        today = date.today().isoformat()
+        dosing_containers = [
+            ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "All-in-one"),
+            ("alk", "alk_container_ml", "alk_remaining_ml", "alk_daily_ml", "Alkalinity"),
+            ("ca", "ca_container_ml", "ca_remaining_ml", "ca_daily_ml", "Calcium"),
+            ("mg", "mg_container_ml", "mg_remaining_ml", "mg_daily_ml", "Magnesium"),
+            ("nitrate", "nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml", "Nitrate"),
+            ("phosphate", "phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml", "Phosphate"),
+            ("nopox", "nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml", "NoPox"),
+        ]
+        threshold_days = float(tank_view.get("dosing_low_days") or 5)
+        for key, container_col, remaining_col, daily_col, label in dosing_containers:
+            container_ml = tank_view.get(container_col)
+            if container_ml is None:
+                continue
+            remaining_ml = tank_view.get(remaining_col)
+            daily_ml = tank_view.get(daily_col)
+            if remaining_ml is None:
+                remaining_ml = container_ml
+            if not daily_ml:
+                continue
+            days_remaining = remaining_ml / float(daily_ml)
+            if days_remaining <= threshold_days:
+                low_container_alerts.append({"label": label, "days": days_remaining})
+                exists = one(
+                    db,
+                    "SELECT 1 FROM dosing_notifications WHERE tank_id=? AND container_key=? AND notified_on=?",
+                    (tank_id, key, today),
+                )
+                if not exists:
+                    db.execute(
+                        "INSERT INTO dosing_notifications (tank_id, container_key, notified_on) VALUES (?, ?, ?)",
+                        (tank_id, key, today),
+                    )
+                    db.commit()
+
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
     for _row in samples_rows:
@@ -967,7 +1011,7 @@ def tank_detail(request: Request, tank_id: int):
         
     recent_samples = samples[:10] if samples else []
     db.close()
-    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank_view, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value})
+    return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": tank_view, "params": params, "recent_samples": recent_samples, "sample_values": sample_values, "latest_vals": latest_by_param_id, "status_by_param_id": status_by_param_id, "trend_warning_by_param": trend_warning_by_param, "overdue_by_param": overdue_by_param, "targets": targets, "target_map": targets_by_param, "series": series, "chart_targets": chart_targets, "selected_parameter_id": selected_parameter_id, "format_value": format_value, "low_container_alerts": low_container_alerts})
 
 @app.get("/tanks/{tank_id}/journal", response_class=HTMLResponse)
 def tank_journal(request: Request, tank_id: int):
@@ -1092,6 +1136,7 @@ def tank_profile(request: Request, tank_id: int):
             tank_view["nopox_container_ml"] = profile["nopox_container_ml"]
             tank_view["nopox_remaining_ml"] = profile["nopox_remaining_ml"]
             tank_view["dosing_container_updated_at"] = profile["dosing_container_updated_at"]
+            tank_view["dosing_low_days"] = profile["dosing_low_days"] if profile["dosing_low_days"] is not None else 5
         except Exception: pass
     db.close()
     return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": tank_view})
@@ -1131,6 +1176,9 @@ async def tank_profile_save(request: Request, tank_id: int):
     phosphate_remaining_ml = to_float(form.get("phosphate_remaining_ml"))
     nopox_container_ml = to_float(form.get("nopox_container_ml"))
     nopox_remaining_ml = to_float(form.get("nopox_remaining_ml"))
+    dosing_low_days = to_float(form.get("dosing_low_days"))
+    if dosing_low_days is None:
+        dosing_low_days = 5
     if all_in_one_container_ml is not None and all_in_one_remaining_ml is None:
         all_in_one_remaining_ml = all_in_one_container_ml
     if alk_container_ml is not None and alk_remaining_ml is None:
@@ -1200,10 +1248,11 @@ async def tank_profile_save(request: Request, tank_id: int):
     ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "dosing_container_updated_at", "ALTER TABLE tank_profiles ADD COLUMN dosing_container_updated_at TEXT")
+    ensure_column(db, "tank_profiles", "dosing_low_days", "ALTER TABLE tank_profiles ADD COLUMN dosing_low_days REAL")
     db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
     db.execute(
-        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml, all_in_one_container_ml, all_in_one_remaining_ml, alk_container_ml, alk_remaining_ml, ca_container_ml, ca_remaining_ml, mg_container_ml, mg_remaining_ml, nitrate_container_ml, nitrate_remaining_ml, phosphate_container_ml, phosphate_remaining_ml, nopox_container_ml, nopox_remaining_ml, dosing_container_updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """INSERT INTO tank_profiles (tank_id, volume_l, net_percent, alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml, all_in_one_container_ml, all_in_one_remaining_ml, alk_container_ml, alk_remaining_ml, ca_container_ml, ca_remaining_ml, mg_container_ml, mg_remaining_ml, nitrate_container_ml, nitrate_remaining_ml, phosphate_container_ml, phosphate_remaining_ml, nopox_container_ml, nopox_remaining_ml, dosing_container_updated_at, dosing_low_days)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(tank_id) DO UPDATE SET
              volume_l=excluded.volume_l,
              net_percent=excluded.net_percent,
@@ -1235,8 +1284,9 @@ async def tank_profile_save(request: Request, tank_id: int):
              phosphate_remaining_ml=excluded.phosphate_remaining_ml,
              nopox_container_ml=excluded.nopox_container_ml,
              nopox_remaining_ml=excluded.nopox_remaining_ml,
-             dosing_container_updated_at=excluded.dosing_container_updated_at""",
-        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml, all_in_one_container_ml, all_in_one_remaining_ml, alk_container_ml, alk_remaining_ml, ca_container_ml, ca_remaining_ml, mg_container_ml, mg_remaining_ml, nitrate_container_ml, nitrate_remaining_ml, phosphate_container_ml, phosphate_remaining_ml, nopox_container_ml, nopox_remaining_ml, container_updated_at),
+             dosing_container_updated_at=excluded.dosing_container_updated_at,
+             dosing_low_days=excluded.dosing_low_days""",
+        (tank_id, volume_l, float(net_percent), alk_solution, alk_daily_ml, ca_solution, ca_daily_ml, mg_solution, mg_daily_ml, dosing_mode, all_in_one_solution, all_in_one_daily_ml, nitrate_solution, nitrate_daily_ml, phosphate_solution, phosphate_daily_ml, nopox_daily_ml, all_in_one_container_ml, all_in_one_remaining_ml, alk_container_ml, alk_remaining_ml, ca_container_ml, ca_remaining_ml, mg_container_ml, mg_remaining_ml, nitrate_container_ml, nitrate_remaining_ml, phosphate_container_ml, phosphate_remaining_ml, nopox_container_ml, nopox_remaining_ml, container_updated_at, dosing_low_days),
     )
     db.commit()
     db.close()
@@ -1271,6 +1321,10 @@ async def dosing_container_action(request: Request, tank_id: int):
         db.execute(
             f"UPDATE tank_profiles SET {remaining_col}=? WHERE tank_id=?",
             (capacity, tank_id),
+        )
+        db.execute(
+            "DELETE FROM dosing_notifications WHERE tank_id=? AND container_key=?",
+            (tank_id, container_key),
         )
         db.commit()
     db.close()

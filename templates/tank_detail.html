@@ -44,6 +44,16 @@
       <h5 class="card-title mb-0 fw-bold">Daily Dosing</h5>
     </div>
     <div class="card-body">
+      {% if low_container_alerts %}
+        <div class="alert alert-warning small mb-3">
+          <div class="fw-semibold">Dosing containers running low (≤ {{ tank.dosing_low_days }} days)</div>
+          <ul class="mb-0">
+            {% for alert in low_container_alerts %}
+              <li>{{ alert.label }}: {{ alert.days|round(1) }} days remaining</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
       <div class="mb-3 text-muted small">
         Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
       </div>

@@ -101,6 +101,11 @@
             <div class="border-top pt-4 mt-4">
               <h6 class="text-muted text-uppercase small mb-3">Dosing Containers</h6>
               <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label fw-bold">Low Container Notification Threshold (days)</label>
+                  <input type="number" step="any" name="dosing_low_days" class="form-control" value="{{ tank.dosing_low_days if tank.dosing_low_days is not none else 5 }}" placeholder="e.g. 5">
+                  <div class="form-text">Shows an in-app notification when estimated days remaining falls at or below this value.</div>
+                </div>
                 <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
                   <label class="form-label fw-bold">All-in-one Container Size (ml)</label>
                   <input type="number" step="any" name="all_in_one_container_ml" class="form-control" value="{{ tank.all_in_one_container_ml if tank.all_in_one_container_ml is not none else '' }}" placeholder="e.g. 2000">
