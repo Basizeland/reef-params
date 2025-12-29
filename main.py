@@ -1704,8 +1704,38 @@ def tank_samples(request: Request, tank_id: int):
         if dt is not None:
             _s["taken_at"] = dt
         samples.append(_s)
+    sample_values, unit_by_name = {}, {}
+    if samples:
+        sample_ids = [s["id"] for s in samples]
+        placeholders = ",".join(["?"] * len(sample_ids))
+        mode = values_mode(db)
+        if mode == "sample_values":
+            rows = q(db, f"SELECT pd.name AS name, sv.value AS value, COALESCE(pd.unit, '') AS unit, s.taken_at AS taken_at, s.id AS sample_id FROM sample_values sv JOIN parameter_defs pd ON pd.id = sv.parameter_id JOIN samples s ON s.id = sv.sample_id WHERE sv.sample_id IN ({placeholders}) ORDER BY s.taken_at ASC", tuple(sample_ids))
+        else:
+            rows = q(db, f"SELECT p.name AS name, p.value AS value, COALESCE(pd.unit, p.unit, '') AS unit, s.taken_at AS taken_at, s.id AS sample_id FROM parameters p JOIN samples s ON s.id = p.sample_id LEFT JOIN parameter_defs pd ON pd.name = p.name WHERE p.sample_id IN ({placeholders}) ORDER BY s.taken_at ASC", tuple(sample_ids))
+        for r in rows:
+            name = r["name"]
+            if name is None:
+                continue
+            try:
+                value = float(r["value"]) if r["value"] is not None else None
+            except Exception:
+                value = r["value"]
+            sid = int(r["sample_id"])
+            sample_values.setdefault(sid, {})[name] = value
+            try:
+                u = r["unit"] or ""
+            except Exception:
+                u = ""
+            if name not in unit_by_name and u:
+                unit_by_name[name] = u
+    all_param_names = set(unit_by_name.keys())
+    if samples:
+        all_param_names.update(sample_values.get(int(samples[0]["id"]), {}).keys())
+    available_params = sorted(all_param_names, key=lambda s: s.lower())
+    params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
     db.close()
-    return templates.TemplateResponse("tank_samples.html", {"request": request, "tank": tank, "samples": samples})
+    return templates.TemplateResponse("tank_samples.html", {"request": request, "tank": tank, "samples": samples, "params": params, "sample_values": sample_values})
 
 @app.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
 def edit_targets(request: Request, tank_id: int):

@@ -22,6 +22,11 @@
       <thead class="table-light">
         <tr>
           <th class="ps-3">Date</th>
+          {% for p in params %}
+            {% if p.name not in ['Temperature', 'Salinity'] %}
+              <th class="text-center">{{ p.name }}</th>
+            {% endif %}
+          {% endfor %}
           <th>Notes</th>
           <th class="text-end pe-3">Actions</th>
         </tr>
@@ -30,6 +35,19 @@
         {% for s in samples %}
           <tr>
             <td class="fw-medium ps-3 text-navy">{{ s.taken_at|dtfmt }}</td>
+            {% for p in params %}
+              {% if p.name not in ['Temperature', 'Salinity'] %}
+                {% set sv = sample_values.get(s.id, {}) %}
+                {% set val = sv.get(p.id) %}
+                <td class="text-center">
+                  {% if val is not none %}
+                    <span class="fw-semibold">{{ val|fmt2 }}</span> <small class="text-muted">{{ p.unit }}</small>
+                  {% else %}
+                    <span class="text-muted">-</span>
+                  {% endif %}
+                </td>
+              {% endif %}
+            {% endfor %}
             <td>{{ s.notes or "—" }}</td>
             <td class="text-end pe-3">
               <a class="btn btn-sm btn-outline-primary" href="/tanks/{{ tank.id }}/samples/{{ s.id }}">
