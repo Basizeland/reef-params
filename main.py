@@ -1276,7 +1276,14 @@ def additives(request: Request):
     db = get_db()
     rows = q(db, "SELECT * FROM additives ORDER BY parameter, name")
     db.close()
-    return templates.TemplateResponse("additives.html", {"request": request, "additives": rows, "rows": rows})
+    grouped = []
+    groups: Dict[str, List[sqlite3.Row]] = {}
+    for r in rows:
+        key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        groups.setdefault(key, []).append(r)
+    for key in sorted(groups.keys(), key=lambda s: s.lower()):
+        grouped.append({"parameter": key, "items": groups[key]})
+    return templates.TemplateResponse("additives.html", {"request": request, "additives": rows, "rows": rows, "grouped_additives": grouped})
 
 @app.get("/settings/additives", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/settings/additives/", response_class=HTMLResponse, include_in_schema=False)
