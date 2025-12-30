@@ -50,6 +50,14 @@ def insert_additives():
         # --- TRITON (Core7) ---
         # Core7 Base Elements: 1ml raises 100L by 0.2 dKH (Part 1 or 2 depending on version)
         ("Triton", "Core7 Base Elements", "Alkalinity/KH", 0.2, "dKH", 1.0),
+
+        # --- TROPIC MARIN ---
+        # All For Reef: 1ml raises 100L by ~0.05 dKH (based on 10ml/100L -> 0.5 dKH)
+        ("Tropic Marin", "All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0),
+
+        # --- KALKWASSER ---
+        # Saturated kalkwasser: ~112 dKH solution -> 1ml/100L raises ~0.00112 dKH
+        ("Generic", "Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0),
     ]
 
     print(f"Connecting to {DB_PATH}...")
