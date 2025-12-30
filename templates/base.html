@@ -88,6 +88,9 @@
                                     <i class="bi bi-database"></i> Data Center
                                 </a>
                             </li>
+                            {% if request.state.user is defined and request.state.user and request.state.user.admin %}
+                                <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people"></i> Users</a></li>
+                            {% endif %}
                         </ul>
                     </li>
                 </ul>

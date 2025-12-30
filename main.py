@@ -217,6 +217,10 @@ def get_current_user(db: sqlite3.Connection, request: Request) -> Optional[sqlit
     """, (token, datetime.utcnow().isoformat()))
     return row
 
+def require_admin(user: Optional[sqlite3.Row]) -> None:
+    if not user or not row_get(user, "admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
 def create_session(db: sqlite3.Connection, user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.utcnow() + timedelta(days=30)).isoformat()
@@ -681,6 +685,10 @@ def init_db() -> None:
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
+    ensure_column(db, "tanks", "owner_user_id", "ALTER TABLE tanks ADD COLUMN owner_user_id INTEGER")
+    ensure_column(db, "users", "password_salt", "ALTER TABLE users ADD COLUMN password_salt TEXT")
+    ensure_column(db, "users", "google_sub", "ALTER TABLE users ADD COLUMN google_sub TEXT")
+    ensure_column(db, "users", "admin", "ALTER TABLE users ADD COLUMN admin INTEGER DEFAULT 0")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
     ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
     ensure_column(db, "test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
@@ -778,7 +786,13 @@ async def auth_middleware(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db()
-    tanks = q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    user = get_current_user(db, request)
+    if user and row_get(user, "admin"):
+        tanks = q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    elif user:
+        tanks = q(db, "SELECT * FROM tanks WHERE owner_user_id=? ORDER BY COALESCE(sort_order, 0), name", (user["id"],))
+    else:
+        tanks = q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
     tank_cards = []
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
@@ -907,14 +921,15 @@ async def register_submit(request: Request):
     if password != confirm:
         return templates.TemplateResponse("register.html", {"request": request, "error": "Passwords do not match."})
     db = get_db()
+    first_user = not users_exist(db)
     existing = one(db, "SELECT id FROM users WHERE email=?", (email,))
     if existing:
         db.close()
         return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered."})
     password_hash, password_salt = hash_password(password)
     db.execute(
-        "INSERT INTO users (email, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?)",
-        (email, password_hash, password_salt, datetime.utcnow().isoformat()),
+        "INSERT INTO users (email, password_hash, password_salt, created_at, admin) VALUES (?, ?, ?, ?, ?)",
+        (email, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
     )
     user = one(db, "SELECT id FROM users WHERE email=?", (email,))
     token = create_session(db, user["id"])
@@ -1012,7 +1027,13 @@ def google_callback(request: Request, code: str | None = None, state: str | None
 @app.get("/tanks/reorder", response_class=HTMLResponse)
 def tank_reorder(request: Request):
     db = get_db()
-    tanks = q(db, "SELECT id, name, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    user = get_current_user(db, request)
+    if user and row_get(user, "admin"):
+        tanks = q(db, "SELECT id, name, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    elif user:
+        tanks = q(db, "SELECT id, name, sort_order FROM tanks WHERE owner_user_id=? ORDER BY COALESCE(sort_order, 0), name", (user["id"],))
+    else:
+        tanks = q(db, "SELECT id, name, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
     db.close()
     return templates.TemplateResponse("tank_reorder.html", {"request": request, "tanks": tanks})
 
@@ -1023,9 +1044,18 @@ async def tank_order_save(request: Request):
     if not order:
         return {"ok": False}
     db = get_db()
+    user = get_current_user(db, request)
+    allowed_ids = set()
+    if user and row_get(user, "admin"):
+        allowed_ids = {row["id"] for row in q(db, "SELECT id FROM tanks")}
+    elif user:
+        allowed_ids = {row["id"] for row in q(db, "SELECT id FROM tanks WHERE owner_user_id=?", (user["id"],))}
     cur = db.cursor()
     for idx, tank_id in enumerate(order, start=1):
-        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (idx, int(tank_id)))
+        tank_id = int(tank_id)
+        if allowed_ids and tank_id not in allowed_ids:
+            continue
+        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (idx, tank_id))
     db.commit()
     db.close()
     return {"ok": True}
@@ -1081,10 +1111,14 @@ async def tank_new(request: Request):
     net_percent = to_float(form.get("net_percent")) or 100
     dosing_mode = (form.get("dosing_mode") or "").strip() or None
     db = get_db()
+    user = get_current_user(db, request)
     cur = db.cursor()
     max_order = one(db, "SELECT MAX(sort_order) AS max_order FROM tanks")
     next_order = ((max_order["max_order"] or 0) if max_order else 0) + 1
-    cur.execute("INSERT INTO tanks (name, volume_l, sort_order) VALUES (?, ?, ?)", (name, volume_l, next_order))
+    cur.execute(
+        "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
+        (name, volume_l, next_order, user["id"] if user else None),
+    )
     tank_id = cur.lastrowid
     profile_fields = {
         "tank_id": tank_id,
@@ -1222,7 +1256,11 @@ async def sample_delete(sample_id: int):
 @app.get("/tanks/{tank_id}", response_class=HTMLResponse)
 def tank_detail(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    if user and not row_get(user, "admin"):
+        tank = one(db, "SELECT * FROM tanks WHERE id=? AND owner_user_id=?", (tank_id, user["id"]))
+    else:
+        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
         db.close()
         return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": None, "params": [], "recent_samples": [], "sample_values": {}, "latest_vals": {}, "status_by_param_id": {}, "targets": [], "series": [], "chart_targets": [], "selected_parameter_id": "", "format_value": format_value, "target_map": {}})
@@ -2817,11 +2855,39 @@ async def dose_plan_check(request: Request):
 
 @app.get("/admin/import", response_class=HTMLResponse)
 def import_page(request: Request):
+    db = get_db()
+    require_admin(get_current_user(db, request))
+    db.close()
     return templates.TemplateResponse("import_manager.html", {"request": request})
+
+@app.get("/admin/users", response_class=HTMLResponse)
+def admin_users(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    require_admin(user)
+    users = q(db, "SELECT id, email, admin, created_at FROM users ORDER BY created_at DESC")
+    tanks = q(db, "SELECT id, name, owner_user_id FROM tanks ORDER BY name")
+    db.close()
+    return templates.TemplateResponse("admin_users.html", {"request": request, "users": users, "tanks": tanks})
+
+@app.post("/admin/tanks/{tank_id}/assign")
+async def assign_tank(request: Request, tank_id: int):
+    form = await request.form()
+    user_id = to_float(form.get("user_id"))
+    db = get_db()
+    require_admin(get_current_user(db, request))
+    if user_id is None:
+        db.execute("UPDATE tanks SET owner_user_id=NULL WHERE id=?", (tank_id,))
+    else:
+        db.execute("UPDATE tanks SET owner_user_id=? WHERE id=?", (int(user_id), tank_id))
+    db.commit()
+    db.close()
+    return redirect("/admin/users")
 
 @app.get("/admin/download-template")
 def download_template(request: Request):
     db = get_db()
+    require_admin(get_current_user(db, request))
     # 1. Get your actual parameters for column headers
     params = list_parameters(db)
     # 2. Get your actual tanks to pre-fill the rows
@@ -2877,6 +2943,7 @@ def download_template(request: Request):
 @app.get("/admin/export-all")
 def export_all(request: Request):
     db = get_db()
+    require_admin(get_current_user(db, request))
     tanks = q(db, "SELECT * FROM tanks ORDER BY name")
     params = list_parameters(db)
     output = BytesIO()
@@ -2907,10 +2974,16 @@ def export_all(request: Request):
 
 @app.get("/admin/backup-download")
 def backup_download(request: Request):
+    db = get_db()
+    require_admin(get_current_user(db, request))
+    db.close()
     return FileResponse(DB_PATH, filename="reef_backup.sqlite")
 
 @app.post("/admin/backup-restore")
 async def backup_restore(request: Request, file: UploadFile = File(...)):
+    db = get_db()
+    require_admin(get_current_user(db, request))
+    db.close()
     if not file.filename or not file.filename.endswith((".db", ".sqlite")):
         return templates.TemplateResponse(
             "import_manager.html",
@@ -2988,12 +3061,14 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
         return templates.TemplateResponse("import_manager.html", {"request": request, "error": "Invalid format. Please upload an Excel file."})
     
     db = get_db()
+    require_admin(get_current_user(db, request))
     stats = {"tanks": 0, "samples": 0}
     try:
         contents = await file.read()
         df = pd.read_excel(BytesIO(contents))
         cur = db.cursor()
         pdefs = list_parameters(db)
+        current_user = get_current_user(db, request)
 
         for _, row in df.iterrows():
             t_name = str(row.get("Tank Name", "Unknown")).strip()
@@ -3003,7 +3078,10 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
             tank = one(db, "SELECT id FROM tanks WHERE name=?", (t_name,))
             if not tank:
                 vol = to_float(row.get("Volume (L)", 0))
-                cur.execute("INSERT INTO tanks (name, volume_l) VALUES (?,?)", (t_name, vol))
+                cur.execute(
+                    "INSERT INTO tanks (name, volume_l, owner_user_id) VALUES (?,?,?)",
+                    (t_name, vol, current_user["id"] if current_user else None),
+                )
                 tid = cur.lastrowid
                 cur.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?,?,100)", (tid, vol))
                 stats["tanks"] += 1
@@ -3035,11 +3113,15 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
 # --- Legacy Import (kept for compatibility) ---
 @app.get("/admin/import-excel", response_class=HTMLResponse)
 def import_excel_page(request: Request):
+    db = get_db()
+    require_admin(get_current_user(db, request))
+    db.close()
     return templates.TemplateResponse("simple_message.html", {"request": request, "title": "Import Tank Parameters Sheet", "message": "This will import tank volumes and historical readings from the bundled Tank Parameters Sheet.xlsx.", "actions": [{"label": "Run import", "method": "post", "href": "/admin/import-excel"}]})
 
 @app.post("/admin/import-excel")
 async def import_excel_run(request: Request):
     db = get_db()
+    require_admin(get_current_user(db, request))
     candidates = []
     env_path = os.environ.get("REEF_EXCEL_PATH")
     if env_path: candidates.append(env_path)

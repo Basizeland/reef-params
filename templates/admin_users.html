@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Admin: Users & Tanks</h1>
+    <div class="text-muted small">Manage user accounts and tank ownership.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/">
+    <i class="bi bi-arrow-left"></i> Back to Dashboard
+  </a>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3">
+        <h5 class="card-title mb-0 fw-bold">Users</h5>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">Email</th>
+              <th>Role</th>
+              <th class="text-end pe-3">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in users %}
+              <tr>
+                <td class="ps-3">{{ u.email }}</td>
+                <td>{{ "Admin" if u.admin else "User" }}</td>
+                <td class="text-end pe-3">{{ u.created_at|dtfmt }}</td>
+              </tr>
+            {% endfor %}
+            {% if users|length == 0 %}
+              <tr>
+                <td colspan="3" class="text-center text-muted py-3">No users found.</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white py-3">
+        <h5 class="card-title mb-0 fw-bold">Tank Ownership</h5>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">Tank</th>
+              <th>Owner</th>
+              <th class="text-end pe-3">Update</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in tanks %}
+              <tr>
+                <td class="ps-3">{{ t.name }}</td>
+                <td>
+                  <form method="post" action="/admin/tanks/{{ t.id }}/assign" class="d-flex align-items-center gap-2">
+                    <select class="form-select form-select-sm" name="user_id">
+                      <option value="">Unassigned</option>
+                      {% for u in users %}
+                        <option value="{{ u.id }}" {% if t.owner_user_id == u.id %}selected{% endif %}>
+                          {{ u.email }}
+                        </option>
+                      {% endfor %}
+                    </select>
+                </td>
+                <td class="text-end pe-3">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+            {% if tanks|length == 0 %}
+              <tr>
+                <td colspan="3" class="text-center text-muted py-3">No tanks found.</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
