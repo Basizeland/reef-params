@@ -44,6 +44,92 @@ def require_pandas():
         )
     return pandas
 
+def normalize_param_name(name: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "", name.lower())
+    if cleaned in {"alkalinitykh", "alkalinity", "kh"}:
+        return "Alkalinity/KH"
+    if cleaned in {"calcium", "ca"}:
+        return "Calcium"
+    if cleaned in {"magnesium", "mg"}:
+        return "Magnesium"
+    if cleaned in {"nitrate", "no3"}:
+        return "Nitrate"
+    if cleaned in {"phosphate", "po4"}:
+        return "Phosphate"
+    return name.strip() or name
+
+def build_daily_consumption(db: sqlite3.Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    daily_consumption: Dict[str, Dict[str, Any]] = {}
+    volume_l = row_get(tank_view, "volume_l")
+    if not volume_l:
+        return daily_consumption
+
+    def add_consumption(param_name: str, value: float, unit: str | None = None, source_label: str | None = None) -> None:
+        if not param_name:
+            return
+        canonical_param = normalize_param_name(param_name)
+        entry = daily_consumption.setdefault(canonical_param, {"value": 0.0, "unit": unit or "", "sources": []})
+        entry["value"] += float(value)
+        if not entry.get("unit") and unit:
+            entry["unit"] = unit
+        if source_label:
+            entry["sources"].append({"label": source_label, "value": float(value), "unit": unit or entry.get("unit") or ""})
+
+    def is_enabled(flag: Any, has_data: bool) -> bool:
+        if flag is None:
+            return has_data
+        return bool(flag)
+
+    additives = q(db, "SELECT name, parameter, strength, unit FROM additives WHERE active=1")
+    additive_by_name = {str(a["name"]).strip().lower(): a for a in additives}
+    dosing_entries = [
+        ("all_in_one", tank_view.get("all_in_one_solution"), tank_view.get("all_in_one_daily_ml"), tank_view.get("use_all_in_one")),
+        ("alk", tank_view.get("alk_solution"), tank_view.get("alk_daily_ml"), tank_view.get("use_alk")),
+        ("kalkwasser", tank_view.get("kalk_solution"), tank_view.get("kalk_daily_ml"), tank_view.get("use_kalkwasser")),
+        ("ca", tank_view.get("ca_solution"), tank_view.get("ca_daily_ml"), tank_view.get("use_ca")),
+        ("mg", tank_view.get("mg_solution"), tank_view.get("mg_daily_ml"), tank_view.get("use_mg")),
+        ("nitrate", tank_view.get("nitrate_solution"), tank_view.get("nitrate_daily_ml"), tank_view.get("use_nitrate")),
+        ("phosphate", tank_view.get("phosphate_solution"), tank_view.get("phosphate_daily_ml"), tank_view.get("use_phosphate")),
+    ]
+    for key, solution_name, daily_ml, enabled in dosing_entries:
+        has_data = solution_name and daily_ml not in (None, 0)
+        if not is_enabled(enabled, bool(has_data)):
+            continue
+        if not solution_name or daily_ml in (None, 0):
+            continue
+        additive = additive_by_name.get(str(solution_name).strip().lower())
+        if not additive:
+            continue
+        strength = row_get(additive, "strength")
+        if strength in (None, 0):
+            continue
+        daily_change = float(daily_ml) * float(strength) * (100.0 / float(volume_l))
+        additive_name = row_get(additive, "name") or solution_name
+        additive_param = row_get(additive, "parameter") or ""
+        additive_unit = row_get(additive, "unit") or ""
+        add_consumption(additive_param, daily_change, additive_unit, additive_name)
+        name_key = str(additive_name or "").strip().lower()
+        if "all for reef" in name_key:
+            ca_per_dkh = 7.14
+            mg_per_dkh = 1.25
+            add_consumption("Calcium", daily_change * ca_per_dkh, "ppm", f"{additive_name} (Ca est.)")
+            add_consumption("Magnesium", daily_change * mg_per_dkh, "ppm", f"{additive_name} (Mg est.)")
+        if "kalkwasser" in name_key or key == "kalkwasser":
+            ca_per_dkh = 7.14
+            add_consumption("Calcium", daily_change * ca_per_dkh, "ppm", f"{additive_name} (Ca est.)")
+
+    reactor_daily_ml = row_get(tank_view, "calcium_reactor_daily_ml")
+    reactor_effluent_dkh = row_get(tank_view, "calcium_reactor_effluent_dkh")
+    reactor_enabled = is_enabled(
+        row_get(tank_view, "use_calcium_reactor"),
+        reactor_daily_ml not in (None, 0) and reactor_effluent_dkh not in (None, 0),
+    )
+    if reactor_enabled and reactor_daily_ml not in (None, 0) and reactor_effluent_dkh not in (None, 0):
+        daily_change = float(reactor_effluent_dkh) * (float(reactor_daily_ml) / (float(volume_l) * 1000.0))
+        add_consumption("Alkalinity/KH", daily_change, "dKH", "Calcium Reactor")
+
+    return daily_consumption
+
 def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None) -> Tuple[bool, str]:
     host = os.environ.get("SMTP_HOST")
     sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME")
@@ -1841,86 +1927,7 @@ def tank_detail(request: Request, tank_id: int):
             "dosing_low_days": dosing_low_days,
         })
 
-    daily_consumption = {}
-    if profile:
-        volume_l = row_get(tank_view, "volume_l")
-        if volume_l:
-            def normalize_param_name(name: str) -> str:
-                cleaned = re.sub(r"[^a-z0-9]+", "", name.lower())
-                if cleaned in {"alkalinitykh", "alkalinity", "kh"}:
-                    return "Alkalinity/KH"
-                if cleaned in {"calcium", "ca"}:
-                    return "Calcium"
-                if cleaned in {"magnesium", "mg"}:
-                    return "Magnesium"
-                if cleaned in {"nitrate", "no3"}:
-                    return "Nitrate"
-                if cleaned in {"phosphate", "po4"}:
-                    return "Phosphate"
-                return name.strip() or name
-
-            def add_consumption(param_name: str, value: float, unit: str | None = None, source_label: str | None = None) -> None:
-                if not param_name:
-                    return
-                canonical_param = normalize_param_name(param_name)
-                entry = daily_consumption.setdefault(canonical_param, {"value": 0.0, "unit": unit or "", "sources": []})
-                entry["value"] += float(value)
-                if not entry.get("unit") and unit:
-                    entry["unit"] = unit
-                if source_label:
-                    entry["sources"].append({"label": source_label, "value": float(value), "unit": unit or entry.get("unit") or ""})
-
-            def is_enabled(flag: Any, has_data: bool) -> bool:
-                if flag is None:
-                    return has_data
-                return bool(flag)
-
-            additives = q(db, "SELECT name, parameter, strength, unit FROM additives WHERE active=1")
-            additive_by_name = {str(a["name"]).strip().lower(): a for a in additives}
-            dosing_entries = [
-                ("all_in_one", tank_view.get("all_in_one_solution"), tank_view.get("all_in_one_daily_ml"), tank_view.get("use_all_in_one")),
-                ("alk", tank_view.get("alk_solution"), tank_view.get("alk_daily_ml"), tank_view.get("use_alk")),
-                ("kalkwasser", tank_view.get("kalk_solution"), tank_view.get("kalk_daily_ml"), tank_view.get("use_kalkwasser")),
-                ("ca", tank_view.get("ca_solution"), tank_view.get("ca_daily_ml"), tank_view.get("use_ca")),
-                ("mg", tank_view.get("mg_solution"), tank_view.get("mg_daily_ml"), tank_view.get("use_mg")),
-                ("nitrate", tank_view.get("nitrate_solution"), tank_view.get("nitrate_daily_ml"), tank_view.get("use_nitrate")),
-                ("phosphate", tank_view.get("phosphate_solution"), tank_view.get("phosphate_daily_ml"), tank_view.get("use_phosphate")),
-            ]
-            for key, solution_name, daily_ml, enabled in dosing_entries:
-                has_data = solution_name and daily_ml not in (None, 0)
-                if not is_enabled(enabled, bool(has_data)):
-                    continue
-                if not solution_name or daily_ml in (None, 0):
-                    continue
-                additive = additive_by_name.get(str(solution_name).strip().lower())
-                if not additive:
-                    continue
-                strength = row_get(additive, "strength")
-                if strength in (None, 0):
-                    continue
-                daily_change = float(daily_ml) * float(strength) * (100.0 / float(volume_l))
-                additive_name = row_get(additive, "name") or solution_name
-                additive_param = row_get(additive, "parameter") or ""
-                additive_unit = row_get(additive, "unit") or ""
-                add_consumption(additive_param, daily_change, additive_unit, additive_name)
-                name_key = str(additive_name or "").strip().lower()
-                if "all for reef" in name_key:
-                    ca_per_dkh = 7.14
-                    mg_per_dkh = 1.25
-                    add_consumption("Calcium", daily_change * ca_per_dkh, "ppm", f"{additive_name} (Ca est.)")
-                    add_consumption("Magnesium", daily_change * mg_per_dkh, "ppm", f"{additive_name} (Mg est.)")
-                if "kalkwasser" in name_key or key == "kalkwasser":
-                    ca_per_dkh = 7.14
-                    add_consumption("Calcium", daily_change * ca_per_dkh, "ppm", f"{additive_name} (Ca est.)")
-            reactor_daily_ml = row_get(tank_view, "calcium_reactor_daily_ml")
-            reactor_effluent_dkh = row_get(tank_view, "calcium_reactor_effluent_dkh")
-            reactor_enabled = is_enabled(
-                row_get(tank_view, "use_calcium_reactor"),
-                reactor_daily_ml not in (None, 0) and reactor_effluent_dkh not in (None, 0),
-            )
-            if reactor_enabled and reactor_daily_ml not in (None, 0) and reactor_effluent_dkh not in (None, 0):
-                daily_change = float(reactor_effluent_dkh) * (float(reactor_daily_ml) / (float(volume_l) * 1000.0))
-                add_consumption("Alkalinity/KH", daily_change, "dKH", "Calcium Reactor")
+    daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
     
     low_container_alerts = []
     if profile:
@@ -2300,6 +2307,20 @@ def tank_dosing_settings(request: Request, tank_id: int):
             tank_view["nopox_remaining_ml"] = profile["nopox_remaining_ml"]
             tank_view["dosing_low_days"] = profile["dosing_low_days"] if profile["dosing_low_days"] is not None else 5
         except Exception: pass
+    daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
+    suggested_dosing: Dict[str, float] = {}
+    volume_l = row_get(tank_view, "volume_l")
+    if volume_l and daily_consumption:
+        for additive in additives_rows:
+            strength = row_get(additive, "strength")
+            parameter = row_get(additive, "parameter") or ""
+            if strength in (None, 0):
+                continue
+            entry = daily_consumption.get(normalize_param_name(parameter))
+            if not entry:
+                continue
+            suggested_ml = (float(entry["value"]) / float(strength)) * (float(volume_l) / 100.0)
+            suggested_dosing[additive["name"]] = round(suggested_ml, 2)
     db.close()
     return templates.TemplateResponse(
         "dosing_settings.html",
@@ -2308,6 +2329,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
             "tank": tank_view,
             "additives": additives_rows,
             "grouped_additives": grouped_additives,
+            "suggested_dosing": suggested_dosing,
         },
     )
 

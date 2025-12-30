@@ -66,6 +66,9 @@
             <div class="col-12 col-md-6" data-dosing-group="all_in_one">
               <label class="form-label fw-bold">All-in-one Daily (ml)</label>
               <input type="number" step="any" name="all_in_one_daily_ml" class="form-control" value="{{ tank.all_in_one_daily_ml if tank.all_in_one_daily_ml is not none else '' }}" placeholder="e.g. 12">
+              {% if tank.all_in_one_solution and suggested_dosing.get(tank.all_in_one_solution) %}
+                <div class="form-text">Suggested start: {{ suggested_dosing.get(tank.all_in_one_solution) }} ml/day</div>
+              {% endif %}
             </div>
             <div class="col-12 col-md-6" data-dosing-group="alk">
               <label class="form-label fw-bold">Alkalinity Solution</label>
@@ -81,6 +84,9 @@
             <div class="col-12 col-md-6" data-dosing-group="alk">
               <label class="form-label fw-bold">Alkalinity Daily (ml)</label>
               <input type="number" step="any" name="alk_daily_ml" class="form-control" value="{{ tank.alk_daily_ml if tank.alk_daily_ml is not none else '' }}" placeholder="e.g. 25">
+              {% if tank.alk_solution and suggested_dosing.get(tank.alk_solution) %}
+                <div class="form-text">Suggested start: {{ suggested_dosing.get(tank.alk_solution) }} ml/day</div>
+              {% endif %}
             </div>
             <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
               <label class="form-label fw-bold">Kalkwasser Solution</label>
@@ -96,6 +102,9 @@
             <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
               <label class="form-label fw-bold">Kalkwasser Daily (ml)</label>
               <input type="number" step="any" name="kalk_daily_ml" class="form-control" value="{{ tank.kalk_daily_ml if tank.kalk_daily_ml is not none else '' }}" placeholder="e.g. 500">
+              {% if tank.kalk_solution and suggested_dosing.get(tank.kalk_solution) %}
+                <div class="form-text">Suggested start: {{ suggested_dosing.get(tank.kalk_solution) }} ml/day</div>
+              {% endif %}
             </div>
             <div class="col-12 col-md-6" data-dosing-group="ca">
               <label class="form-label fw-bold">Calcium Solution</label>
@@ -111,6 +120,9 @@
             <div class="col-12 col-md-6" data-dosing-group="ca">
               <label class="form-label fw-bold">Calcium Daily (ml)</label>
               <input type="number" step="any" name="ca_daily_ml" class="form-control" value="{{ tank.ca_daily_ml if tank.ca_daily_ml is not none else '' }}" placeholder="e.g. 20">
+              {% if tank.ca_solution and suggested_dosing.get(tank.ca_solution) %}
+                <div class="form-text">Suggested start: {{ suggested_dosing.get(tank.ca_solution) }} ml/day</div>
+              {% endif %}
             </div>
             <div class="col-12 col-md-6" data-dosing-group="mg">
               <label class="form-label fw-bold">Magnesium Solution</label>
@@ -126,6 +138,9 @@
             <div class="col-12 col-md-6" data-dosing-group="mg">
               <label class="form-label fw-bold">Magnesium Daily (ml)</label>
               <input type="number" step="any" name="mg_daily_ml" class="form-control" value="{{ tank.mg_daily_ml if tank.mg_daily_ml is not none else '' }}" placeholder="e.g. 15">
+              {% if tank.mg_solution and suggested_dosing.get(tank.mg_solution) %}
+                <div class="form-text">Suggested start: {{ suggested_dosing.get(tank.mg_solution) }} ml/day</div>
+              {% endif %}
             </div>
             <div class="col-12 col-md-6" data-dosing-group="calcium_reactor">
               <label class="form-label fw-bold">Calcium Reactor Effluent (dKH)</label>
@@ -151,6 +166,9 @@
             <div class="col-12 col-md-6" data-dosing-group="nitrate">
               <label class="form-label fw-bold">Nitrate Daily (ml)</label>
               <input type="number" step="any" name="nitrate_daily_ml" class="form-control" value="{{ tank.nitrate_daily_ml if tank.nitrate_daily_ml is not none else '' }}" placeholder="e.g. 2">
+              {% if tank.nitrate_solution and suggested_dosing.get(tank.nitrate_solution) %}
+                <div class="form-text">Suggested start: {{ suggested_dosing.get(tank.nitrate_solution) }} ml/day</div>
+              {% endif %}
             </div>
             <div class="col-12 col-md-6" data-dosing-group="phosphate">
               <label class="form-label fw-bold">Phosphate Solution</label>
@@ -166,6 +184,9 @@
             <div class="col-12 col-md-6" data-dosing-group="phosphate">
               <label class="form-label fw-bold">Phosphate Daily (ml)</label>
               <input type="number" step="any" name="phosphate_daily_ml" class="form-control" value="{{ tank.phosphate_daily_ml if tank.phosphate_daily_ml is not none else '' }}" placeholder="e.g. 1">
+              {% if tank.phosphate_solution and suggested_dosing.get(tank.phosphate_solution) %}
+                <div class="form-text">Suggested start: {{ suggested_dosing.get(tank.phosphate_solution) }} ml/day</div>
+              {% endif %}
             </div>
             <div class="col-12 col-md-6" data-dosing-group="nopox">
               <label class="form-label fw-bold">NoPox Daily (ml)</label>
