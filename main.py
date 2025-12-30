@@ -1100,9 +1100,21 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     user = one(db, "SELECT * FROM users WHERE google_sub=? OR email=?", (sub, email))
     if not user:
         username = (email.split("@")[0] if email else "") or email
+        first_user = not users_exist(db)
+        role = "admin" if first_user else "user"
         db.execute(
-            "INSERT INTO users (email, username, role, google_sub, created_at) VALUES (?, ?, ?, ?, ?)",
-            (email, username, "user", sub, datetime.utcnow().isoformat()),
+            "INSERT INTO users (email, username, role, password_hash, password_salt, google_sub, created_at, admin) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                email,
+                username,
+                role,
+                "",
+                "",
+                sub,
+                datetime.utcnow().isoformat(),
+                1 if first_user else 0,
+            ),
         )
         send_welcome_email(email, username)
         user = one(db, "SELECT * FROM users WHERE email=?", (email,))
