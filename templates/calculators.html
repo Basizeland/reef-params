@@ -35,7 +35,7 @@
                 <optgroup label="{{ parameter }}">
                   {% for a in items %}
                     <option value="{{ a.id }}" data-unit="{{ a.unit or '' }}" {% if selected and selected.additive_id==a.id %}selected{% endif %}>
-                      {{ a.name }}
+                      {{ a|additive_label }}
                     </option>
                   {% endfor %}
                 </optgroup>
@@ -92,7 +92,7 @@
             {% endif %}
             
             <br/>
-            Additive: {{ result.additive.name }} — strength {{ result.additive.strength }} {{ result.additive.unit }}
+            Additive: {{ result.additive|additive_label }} — strength {{ result.additive.strength }} {{ result.additive.unit }}
           </div>
         {% else %}
           <div class="text-muted">Fill in the form and calculate.</div>

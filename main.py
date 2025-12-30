@@ -58,6 +58,18 @@ def normalize_param_name(name: str) -> str:
         return "Phosphate"
     return name.strip() or name
 
+def additive_label(additive: Any) -> str:
+    if not additive:
+        return ""
+    if isinstance(additive, str):
+        return additive
+    name = row_get(additive, "name") or ""
+    brand = row_get(additive, "brand") or ""
+    if brand and name.lower().startswith(brand.lower()):
+        return name
+    label = f"{brand} {name}".strip()
+    return label or name
+
 def build_daily_consumption(db: sqlite3.Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     daily_consumption: Dict[str, Dict[str, Any]] = {}
     volume_l = row_get(tank_view, "volume_l")
@@ -104,7 +116,7 @@ def build_daily_consumption(db: sqlite3.Connection, tank_view: Dict[str, Any]) -
         if strength in (None, 0):
             continue
         daily_change = float(daily_ml) * float(strength) * (100.0 / float(volume_l))
-        additive_name = row_get(additive, "name") or solution_name
+        additive_name = additive_label(additive) or solution_name
         additive_param = row_get(additive, "parameter") or ""
         additive_unit = row_get(additive, "unit") or ""
         add_consumption(additive_param, daily_change, additive_unit, additive_name)
@@ -319,6 +331,7 @@ templates.env.filters["dtfmt"] = dtfmt
 templates.env.filters["dtfmt_time"] = dtfmt_time
 templates.env.filters["time_ago"] = time_ago
 templates.env.filters["tojson"] = tojson_filter
+templates.env.filters["additive_label"] = additive_label
 
 def _finalize(v: Any) -> Any:
     try:
@@ -1947,6 +1960,24 @@ def tank_detail(request: Request, tank_id: int):
         })
 
     daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
+    if profile:
+        try:
+            additive_rows = q(db, "SELECT name, brand FROM additives")
+            additive_map = {str(a["name"]).strip(): additive_label(a) for a in additive_rows}
+            for key in (
+                "all_in_one_solution",
+                "alk_solution",
+                "kalk_solution",
+                "ca_solution",
+                "mg_solution",
+                "nitrate_solution",
+                "phosphate_solution",
+            ):
+                current = tank_view.get(key)
+                if current and current in additive_map:
+                    tank_view[key] = additive_map[current]
+        except Exception:
+            pass
     
     low_container_alerts = []
     if profile:
@@ -3422,7 +3453,11 @@ def dosing_log(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
-    logs = q(db, "SELECT dl.*, a.name AS additive_name FROM dose_logs dl LEFT JOIN additives a ON a.id = dl.additive_id WHERE dl.tank_id=? ORDER BY dl.logged_at DESC, dl.id DESC", (tank_id,))
+    logs = q(
+        db,
+        "SELECT dl.*, COALESCE(NULLIF(TRIM(a.brand), '') || ' ' || a.name, a.name) AS additive_name FROM dose_logs dl LEFT JOIN additives a ON a.id = dl.additive_id WHERE dl.tank_id=? ORDER BY dl.logged_at DESC, dl.id DESC",
+        (tank_id,),
+    )
     norm_logs = []
     for r in logs:
         d = dict(r)
@@ -3687,7 +3722,7 @@ def dose_plan(request: Request):
                 
                 add_rows.append({
                     "additive_id": a["id"], 
-                    "additive_name": a["name"], 
+                    "additive_name": additive_label(a), 
                     "strength": a["strength"], 
                     "max_daily_change": max_change_f, 
                     "total_ml": total_ml, 

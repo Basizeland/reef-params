@@ -58,7 +58,7 @@
                 <option value="">Select additive</option>
                 {% for additive in additives %}
                   <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" {% if tank.all_in_one_solution == additive.name %}selected{% endif %}>
-                    {{ additive.name }}
+                    {{ additive|additive_label }}
                   </option>
                 {% endfor %}
               </select>
@@ -74,7 +74,7 @@
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" {% if tank.alk_solution == additive.name %}selected{% endif %}>
-                    {{ additive.name }}
+                    {{ additive|additive_label }}
                   </option>
                 {% endfor %}
               </select>
@@ -90,7 +90,7 @@
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" {% if tank.kalk_solution == additive.name %}selected{% endif %}>
-                    {{ additive.name }}
+                    {{ additive|additive_label }}
                   </option>
                 {% endfor %}
               </select>
@@ -106,7 +106,7 @@
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('calcium', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" {% if tank.ca_solution == additive.name %}selected{% endif %}>
-                    {{ additive.name }}
+                    {{ additive|additive_label }}
                   </option>
                 {% endfor %}
               </select>
@@ -122,7 +122,7 @@
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('magnesium', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" {% if tank.mg_solution == additive.name %}selected{% endif %}>
-                    {{ additive.name }}
+                    {{ additive|additive_label }}
                   </option>
                 {% endfor %}
               </select>
@@ -148,7 +148,7 @@
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('nitrate', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" {% if tank.nitrate_solution == additive.name %}selected{% endif %}>
-                    {{ additive.name }}
+                    {{ additive|additive_label }}
                   </option>
                 {% endfor %}
               </select>
@@ -164,7 +164,7 @@
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('phosphate', grouped_additives.get('all', additives)) %}
                   <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" {% if tank.phosphate_solution == additive.name %}selected{% endif %}>
-                    {{ additive.name }}
+                    {{ additive|additive_label }}
                   </option>
                 {% endfor %}
               </select>

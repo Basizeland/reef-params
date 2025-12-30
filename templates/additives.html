@@ -40,7 +40,7 @@
               {% for a in group["items"] %}
               <tr>
                 <td class="text-muted">{{ a.brand or "—" }}</td>
-                <td class="fw-semibold">{{ a.name }}</td>
+                <td class="fw-semibold">{{ a|additive_label }}</td>
                 <td class="text-end">{{ a.strength|string if a.strength is not none else "—" }}</td>
                 <td class="text-muted">{{ a.unit }}</td>
                 <td class="text-end">{{ a.max_daily if a.max_daily is not none else "—" }}</td>

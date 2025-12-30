@@ -127,7 +127,7 @@
               <select class="form-select" name="all_in_one_solution">
                 <option value="">Select additive</option>
                 {% for additive in additives %}
-                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                  <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -149,7 +149,7 @@
               <select class="form-select" name="alk_solution">
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                  <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -171,7 +171,7 @@
               <select class="form-select" name="kalk_solution">
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                  <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -193,7 +193,7 @@
               <select class="form-select" name="ca_solution">
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('calcium', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                  <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -215,7 +215,7 @@
               <select class="form-select" name="mg_solution">
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('magnesium', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                  <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -248,7 +248,7 @@
               <select class="form-select" name="nitrate_solution">
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('nitrate', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                  <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -270,7 +270,7 @@
               <select class="form-select" name="phosphate_solution">
                 <option value="">Select additive</option>
                 {% for additive in grouped_additives.get('phosphate', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                  <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
                 {% endfor %}
               </select>
             </div>
