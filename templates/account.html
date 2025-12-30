@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Account Settings</h1>
+    <div class="text-muted small">Update your password.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/">
+    <i class="bi bi-arrow-left"></i> Back to Dashboard
+  </a>
+</div>
+
+{% if error %}
+  <div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+{% if success %}
+  <div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="post" action="/account/password" class="row g-3">
+      <div class="col-12">
+        <label class="form-label">Current Password</label>
+        <input class="form-control" type="password" name="current_password" required>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">New Password</label>
+        <input class="form-control" type="password" name="new_password" required>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Confirm New Password</label>
+        <input class="form-control" type="password" name="confirm_password" required>
+      </div>
+      <div class="col-12">
+        <button class="btn btn-primary" type="submit">
+          <i class="bi bi-check-circle"></i> Update Password
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
+      <div>
+        <h1 class="h3 mb-0 fw-bold">Add Tank</h1>
+        <div class="text-muted small">Set up your tank, targets, and dosing preferences.</div>
+      </div>
+      <a class="btn btn-outline-secondary" href="/">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+      </a>
+    </div>
+
+    <form method="post" action="/tanks/new">
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white py-3">
+          <h5 class="card-title mb-0 fw-bold">Tank Basics</h5>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Tank name</label>
+              <input class="form-control" name="name" required placeholder="e.g. Reef Display">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-bold">Volume (L)</label>
+              <input class="form-control" type="number" step="any" name="volume_l" placeholder="e.g. 350">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-bold">Net water %</label>
+              <input class="form-control" type="number" step="any" name="net_percent" value="100" placeholder="e.g. 90">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white py-3">
+          <h5 class="card-title mb-0 fw-bold">Target Ranges</h5>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th class="ps-3">Parameter</th>
+                  <th>Target Low</th>
+                  <th>Target High</th>
+                  <th>Alert Low</th>
+                  <th>Alert High</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in params %}
+                  {% set defaults = recommended_targets.get(p.name, {}) %}
+                  <tr>
+                    <td class="ps-3 fw-semibold">{{ p.name }}{% if p.unit %} <span class="text-muted">({{ p.unit }})</span>{% endif %}</td>
+                    <td><input class="form-control form-control-sm" type="number" step="any" name="target_low_{{ p.id }}" value="{{ defaults.get('target_low', '') }}"></td>
+                    <td><input class="form-control form-control-sm" type="number" step="any" name="target_high_{{ p.id }}" value="{{ defaults.get('target_high', '') }}"></td>
+                    <td><input class="form-control form-control-sm" type="number" step="any" name="alert_low_{{ p.id }}" value="{{ defaults.get('alert_low', '') }}"></td>
+                    <td><input class="form-control form-control-sm" type="number" step="any" name="alert_high_{{ p.id }}" value="{{ defaults.get('alert_high', '') }}"></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white py-3">
+          <h5 class="card-title mb-0 fw-bold">Daily Dosing & Containers</h5>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Dosing Methods</label>
+              <div class="d-flex flex-wrap gap-3">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_all_in_one" id="new_use_all_in_one" data-dosing-toggle="all_in_one">
+                  <label class="form-check-label" for="new_use_all_in_one">All-in-one</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_alk" id="new_use_alk" data-dosing-toggle="alk">
+                  <label class="form-check-label" for="new_use_alk">Alkalinity</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_kalkwasser" id="new_use_kalkwasser" data-dosing-toggle="kalkwasser">
+                  <label class="form-check-label" for="new_use_kalkwasser">Kalkwasser</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_ca" id="new_use_ca" data-dosing-toggle="ca">
+                  <label class="form-check-label" for="new_use_ca">Calcium</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_mg" id="new_use_mg" data-dosing-toggle="mg">
+                  <label class="form-check-label" for="new_use_mg">Magnesium</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_nitrate" id="new_use_nitrate" data-dosing-toggle="nitrate">
+                  <label class="form-check-label" for="new_use_nitrate">Nitrate</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_phosphate" id="new_use_phosphate" data-dosing-toggle="phosphate">
+                  <label class="form-check-label" for="new_use_phosphate">Phosphate</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_nopox" id="new_use_nopox" data-dosing-toggle="nopox">
+                  <label class="form-check-label" for="new_use_nopox">NoPox</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_calcium_reactor" id="new_use_calcium_reactor" data-dosing-toggle="calcium_reactor">
+                  <label class="form-check-label" for="new_use_calcium_reactor">Calcium Reactor</label>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Low Container Alert (days)</label>
+              <input class="form-control" type="number" step="any" name="dosing_low_days" value="5">
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12 col-md-6" data-dosing-group="all_in_one">
+              <label class="form-label fw-bold">All-in-one Solution</label>
+              <select class="form-select" name="all_in_one_solution">
+                <option value="">Select additive</option>
+                {% for additive in additives %}
+                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="all_in_one">
+              <label class="form-label fw-bold">All-in-one Daily (ml)</label>
+              <input type="number" step="any" name="all_in_one_daily_ml" class="form-control" placeholder="e.g. 12">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="all_in_one">
+              <label class="form-label fw-bold">All-in-one Container Size (ml)</label>
+              <input type="number" step="any" name="all_in_one_container_ml" class="form-control" placeholder="e.g. 2000">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="all_in_one">
+              <label class="form-label fw-bold">All-in-one Remaining (ml)</label>
+              <input type="number" step="any" name="all_in_one_remaining_ml" class="form-control" placeholder="e.g. 1200">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="alk">
+              <label class="form-label fw-bold">Alkalinity Solution</label>
+              <select class="form-select" name="alk_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="alk">
+              <label class="form-label fw-bold">Alkalinity Daily (ml)</label>
+              <input type="number" step="any" name="alk_daily_ml" class="form-control" placeholder="e.g. 25">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="alk">
+              <label class="form-label fw-bold">Alkalinity Container Size (ml)</label>
+              <input type="number" step="any" name="alk_container_ml" class="form-control" placeholder="e.g. 2000">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="alk">
+              <label class="form-label fw-bold">Alkalinity Remaining (ml)</label>
+              <input type="number" step="any" name="alk_remaining_ml" class="form-control" placeholder="e.g. 1200">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
+              <label class="form-label fw-bold">Kalkwasser Solution</label>
+              <select class="form-select" name="kalk_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
+              <label class="form-label fw-bold">Kalkwasser Daily (ml)</label>
+              <input type="number" step="any" name="kalk_daily_ml" class="form-control" placeholder="e.g. 500">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
+              <label class="form-label fw-bold">Kalkwasser Container Size (ml)</label>
+              <input type="number" step="any" name="kalk_container_ml" class="form-control" placeholder="e.g. 5000">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
+              <label class="form-label fw-bold">Kalkwasser Remaining (ml)</label>
+              <input type="number" step="any" name="kalk_remaining_ml" class="form-control" placeholder="e.g. 3500">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="ca">
+              <label class="form-label fw-bold">Calcium Solution</label>
+              <select class="form-select" name="ca_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('calcium', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="ca">
+              <label class="form-label fw-bold">Calcium Daily (ml)</label>
+              <input type="number" step="any" name="ca_daily_ml" class="form-control" placeholder="e.g. 20">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="ca">
+              <label class="form-label fw-bold">Calcium Container Size (ml)</label>
+              <input type="number" step="any" name="ca_container_ml" class="form-control" placeholder="e.g. 2000">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="ca">
+              <label class="form-label fw-bold">Calcium Remaining (ml)</label>
+              <input type="number" step="any" name="ca_remaining_ml" class="form-control" placeholder="e.g. 1200">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="mg">
+              <label class="form-label fw-bold">Magnesium Solution</label>
+              <select class="form-select" name="mg_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('magnesium', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="mg">
+              <label class="form-label fw-bold">Magnesium Daily (ml)</label>
+              <input type="number" step="any" name="mg_daily_ml" class="form-control" placeholder="e.g. 15">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="mg">
+              <label class="form-label fw-bold">Magnesium Container Size (ml)</label>
+              <input type="number" step="any" name="mg_container_ml" class="form-control" placeholder="e.g. 2000">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="mg">
+              <label class="form-label fw-bold">Magnesium Remaining (ml)</label>
+              <input type="number" step="any" name="mg_remaining_ml" class="form-control" placeholder="e.g. 1200">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="calcium_reactor">
+              <label class="form-label fw-bold">Calcium Reactor Effluent (dKH)</label>
+              <input type="number" step="any" name="calcium_reactor_effluent_dkh" class="form-control" placeholder="e.g. 30">
+              <div class="form-text">Enter the tested dKH of the effluent.</div>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="calcium_reactor">
+              <label class="form-label fw-bold">Calcium Reactor Effluent (ml/day)</label>
+              <input type="number" step="any" name="calcium_reactor_daily_ml" class="form-control" placeholder="e.g. 2000">
+              <div class="form-text">Used to estimate daily alkalinity addition.</div>
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="nitrate">
+              <label class="form-label fw-bold">Nitrate Solution</label>
+              <select class="form-select" name="nitrate_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('nitrate', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="nitrate">
+              <label class="form-label fw-bold">Nitrate Daily (ml)</label>
+              <input type="number" step="any" name="nitrate_daily_ml" class="form-control" placeholder="e.g. 2">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="phosphate">
+              <label class="form-label fw-bold">Nitrate Container Size (ml)</label>
+              <input type="number" step="any" name="nitrate_container_ml" class="form-control" placeholder="e.g. 500">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="phosphate">
+              <label class="form-label fw-bold">Nitrate Remaining (ml)</label>
+              <input type="number" step="any" name="nitrate_remaining_ml" class="form-control" placeholder="e.g. 300">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="nopox">
+              <label class="form-label fw-bold">Phosphate Solution</label>
+              <select class="form-select" name="phosphate_solution">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('phosphate', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}">{{ additive.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="phosphate">
+              <label class="form-label fw-bold">Phosphate Daily (ml)</label>
+              <input type="number" step="any" name="phosphate_daily_ml" class="form-control" placeholder="e.g. 1">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="phosphate">
+              <label class="form-label fw-bold">Phosphate Container Size (ml)</label>
+              <input type="number" step="any" name="phosphate_container_ml" class="form-control" placeholder="e.g. 500">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="phosphate">
+              <label class="form-label fw-bold">Phosphate Remaining (ml)</label>
+              <input type="number" step="any" name="phosphate_remaining_ml" class="form-control" placeholder="e.g. 300">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-group="nopox">
+              <label class="form-label fw-bold">NoPox Daily (ml)</label>
+              <input type="number" step="any" name="nopox_daily_ml" class="form-control" placeholder="e.g. 5">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="nopox">
+              <label class="form-label fw-bold">NoPox Container Size (ml)</label>
+              <input type="number" step="any" name="nopox_container_ml" class="form-control" placeholder="e.g. 1000">
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="nopox">
+              <label class="form-label fw-bold">NoPox Remaining (ml)</label>
+              <input type="number" step="any" name="nopox_remaining_ml" class="form-control" placeholder="e.g. 600">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <a href="/" class="text-decoration-none">Cancel</a>
+        <button type="submit" class="btn btn-primary px-4">Create Tank</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const dosingToggles = document.querySelectorAll('[data-dosing-toggle]');
+  const dosingFields = document.querySelectorAll('[data-dosing-group]');
+
+  function updateDosingFields() {
+    const toggleMap = {};
+    dosingToggles.forEach((toggle) => {
+      toggleMap[toggle.dataset.dosingToggle] = toggle.checked;
+    });
+    dosingFields.forEach((field) => {
+      const group = field.dataset.dosingGroup;
+      if (toggleMap[group]) {
+        field.classList.remove("d-none");
+      } else {
+        field.classList.add("d-none");
+      }
+    });
+  }
+
+  dosingToggles.forEach((toggle) => toggle.addEventListener("change", updateDosingFields));
+  updateDosingFields();
+</script>
+{% endblock %}

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Reorder Tanks</h1>
+    <div class="text-muted small">Drag tanks to change their dashboard order.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/">
+    <i class="bi bi-arrow-left"></i> Back to Dashboard
+  </a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <ul class="list-group" id="tankOrderList">
+      {% for t in tanks %}
+        <li class="list-group-item d-flex align-items-center gap-3" draggable="true" data-tank-id="{{ t.id }}">
+          <span class="text-muted"><i class="bi bi-grip-vertical"></i></span>
+          <span class="fw-semibold">{{ t.name }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<div class="mt-3 d-flex justify-content-end">
+  <button class="btn btn-primary" id="saveOrder">Save Order</button>
+</div>
+
+<script>
+  const list = document.getElementById("tankOrderList");
+  const saveButton = document.getElementById("saveOrder");
+  let dragging = null;
+
+  list.addEventListener("dragstart", (event) => {
+    dragging = event.target.closest("[data-tank-id]");
+    if (dragging) {
+      dragging.classList.add("opacity-50");
+    }
+  });
+
+  list.addEventListener("dragend", () => {
+    if (dragging) {
+      dragging.classList.remove("opacity-50");
+      dragging = null;
+    }
+  });
+
+  list.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    const target = event.target.closest("[data-tank-id]");
+    if (!target || target === dragging) return;
+    const rect = target.getBoundingClientRect();
+    const next = (event.clientY - rect.top) / rect.height > 0.5;
+    list.insertBefore(dragging, next ? target.nextSibling : target);
+  });
+
+  saveButton.addEventListener("click", async () => {
+    const order = Array.from(list.querySelectorAll("[data-tank-id]")).map((item) => item.dataset.tankId);
+    const response = await fetch("/tanks/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order })
+    });
+    if (response.ok) {
+      saveButton.textContent = "Saved!";
+      setTimeout(() => { saveButton.textContent = "Save Order"; }, 1500);
+    }
+  });
+</script>
+{% endblock %}
