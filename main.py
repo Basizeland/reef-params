@@ -116,13 +116,20 @@ def _finalize(v: Any) -> Any:
 
 templates.env.finalize = _finalize
 
-def collect_dosing_notifications(db: sqlite3.Connection, tank_id: int | None = None) -> List[Dict[str, Any]]:
+def collect_dosing_notifications(
+    db: sqlite3.Connection,
+    tank_id: int | None = None,
+    owner_user_id: int | None = None,
+) -> List[Dict[str, Any]]:
     today = date.today().isoformat()
     params: List[Any] = []
     where_clause = ""
     if tank_id is not None:
         where_clause = "WHERE p.tank_id=?"
         params.append(tank_id)
+    elif owner_user_id is not None:
+        where_clause = "WHERE t.owner_user_id=?"
+        params.append(owner_user_id)
     rows = q(
         db,
         f"""SELECT t.id AS tank_id, t.name AS tank_name, p.*
@@ -183,10 +190,15 @@ def collect_dosing_notifications(db: sqlite3.Connection, tank_id: int | None = N
                     db.commit()
     return notifications
 
-def global_dosing_notifications() -> List[Dict[str, Any]]:
+def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     db = get_db()
     try:
-        return collect_dosing_notifications(db)
+        user = get_current_user(db, request)
+        if user and row_get(user, "admin"):
+            return collect_dosing_notifications(db)
+        if user:
+            return collect_dosing_notifications(db, owner_user_id=user["id"])
+        return []
     finally:
         db.close()
 
