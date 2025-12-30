@@ -181,6 +181,12 @@ def dtfmt(v: Any) -> str:
         suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
     return f"{dt.strftime('%a')} {day}{suffix} {dt.strftime('%b %y')}"
 
+def dtfmt_time(v: Any) -> str:
+    dt = parse_dt_any(v) if not isinstance(v, datetime) else v
+    if dt is None:
+        return ""
+    return dt.strftime("%H:%M:%S")
+
 def time_ago(v: Any) -> str:
     """Returns a string like '2 days ago' or 'Today'."""
     dt = parse_dt_any(v)
@@ -202,6 +208,7 @@ def tojson_filter(v: Any) -> str:
 
 templates.env.filters["fmt2"] = fmt2
 templates.env.filters["dtfmt"] = dtfmt
+templates.env.filters["dtfmt_time"] = dtfmt_time
 templates.env.filters["time_ago"] = time_ago
 templates.env.filters["tojson"] = tojson_filter
 

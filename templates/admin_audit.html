@@ -62,7 +62,7 @@
       <tbody>
         {% for log in logs %}
           <tr>
-            <td class="ps-3">{{ log.created_at|dtfmt }}</td>
+            <td class="ps-3">{{ log.created_at|dtfmt }} {{ log.created_at|dtfmt_time }}</td>
             <td>{{ log.actor_email }}</td>
             <td>{{ log.action }}</td>
             <td class="text-end pe-3 text-muted small">{{ log.details }}</td>
