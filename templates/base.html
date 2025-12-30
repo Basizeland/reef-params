@@ -90,6 +90,19 @@
                             <li><a class="dropdown-item" href="/admin/merge-parameters">Merge Params</a></li>
                         </ul>
                     </li>
+
+                    {% if request.state.current_user %}
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                                <i class="bi bi-person-circle"></i> {{ request.state.current_user.email }}
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                                <li><a class="dropdown-item" href="/logout">Sign out</a></li>
+                            </ul>
+                        </li>
+                    {% else %}
+                        <li class="nav-item"><a class="nav-link" href="/login"><i class="bi bi-box-arrow-in-right"></i> Sign in</a></li>
+                    {% endif %}
                 </ul>
             </div>
         </div>
