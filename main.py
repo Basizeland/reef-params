@@ -710,6 +710,16 @@ def init_db() -> None:
         );
     ''')
 
+    if table_has_column(db, "users", "username"):
+        db.execute(
+            "UPDATE users SET username=lower(email) WHERE (username IS NULL OR username='') AND email IS NOT NULL"
+        )
+    if table_has_column(db, "users", "role"):
+        db.execute(
+            "UPDATE users SET role=CASE WHEN is_admin=1 THEN 'admin' ELSE 'user' END "
+            "WHERE role IS NULL OR role=''"
+        )
+
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin")
     admin_user = get_user_by_email(db, admin_email)
