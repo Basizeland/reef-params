@@ -236,7 +236,8 @@ def collect_dosing_notifications(
             FROM tank_profiles p
             JOIN tanks t ON t.id = p.tank_id
             LEFT JOIN user_tanks ut ON ut.tank_id = t.id
-            {where_clause}""",
+            {where_clause}
+            GROUP BY p.tank_id""",
         tuple(params),
     )
     dismissed_rows = q(
@@ -1580,11 +1581,15 @@ def tank_detail(request: Request, tank_id: int):
     low_container_alerts = []
     if profile:
         all_notifications = collect_dosing_notifications(db, tank_id=tank_id)
-        low_container_alerts = [
-            {"label": alert["label"], "days": alert["days"]}
-            for alert in all_notifications
-            if alert.get("tank_id") == tank_id
-        ]
+        seen_alerts = set()
+        for alert in all_notifications:
+            if alert.get("tank_id") != tank_id:
+                continue
+            key = alert.get("container_key") or alert.get("label")
+            if key in seen_alerts:
+                continue
+            seen_alerts.add(key)
+            low_container_alerts.append({"label": alert["label"], "days": alert["days"]})
 
     samples_rows = q(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 50", (tank_id,))
     samples = []
