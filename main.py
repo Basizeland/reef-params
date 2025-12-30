@@ -977,7 +977,7 @@ async def auth_middleware(request: Request, call_next):
         if users_exist(db) and user is None:
             return redirect("/auth/login")
         response = await call_next(request)
-        if user and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if user:
             log_audit(db, user, f"{request.method} {path}", f"status={response.status_code}")
         return response
     finally:
@@ -3326,16 +3326,56 @@ def admin_audit(request: Request):
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
+    action = (request.query_params.get("action") or "").strip()
+    user_id = (request.query_params.get("user_id") or "").strip()
+    date_from = (request.query_params.get("from") or "").strip()
+    date_to = (request.query_params.get("to") or "").strip()
+    search = (request.query_params.get("q") or "").strip()
+    where = []
+    params: List[Any] = []
+    if action:
+        where.append("a.action LIKE ?")
+        params.append(f"%{action}%")
+    if user_id:
+        where.append("a.actor_user_id=?")
+        params.append(int(user_id))
+    if date_from:
+        where.append("a.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("a.created_at <= ?")
+        params.append(date_to)
+    if search:
+        where.append("(a.details LIKE ? OR u.email LIKE ?)")
+        params.extend([f"%{search}%", f"%{search}%"])
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     logs = q(
         db,
-        """SELECT a.*, u.email AS actor_email
-           FROM audit_logs a
-           JOIN users u ON u.id = a.actor_user_id
-           ORDER BY a.created_at DESC
-           LIMIT 500""",
+        f"""SELECT a.*, u.email AS actor_email
+            FROM audit_logs a
+            JOIN users u ON u.id = a.actor_user_id
+            {where_sql}
+            ORDER BY a.created_at DESC
+            LIMIT 500""",
+        tuple(params),
     )
+    users = q(db, "SELECT id, email FROM users ORDER BY email")
     db.close()
-    return templates.TemplateResponse("admin_audit.html", {"request": request, "logs": logs})
+    return templates.TemplateResponse(
+        "admin_audit.html",
+        {
+            "request": request,
+            "logs": logs,
+            "users": users,
+            "filters": {
+                "action": action,
+                "user_id": user_id,
+                "from": date_from,
+                "to": date_to,
+                "q": search,
+            },
+        },
+    )
 
 @app.get("/admin/download-template")
 def download_template(request: Request):

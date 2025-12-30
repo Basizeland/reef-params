@@ -10,6 +10,44 @@
   </a>
 </div>
 
+<form class="card shadow-sm mb-4" method="get">
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small text-muted">User</label>
+        <select class="form-select" name="user_id">
+          <option value="">All users</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if filters.user_id == u.id|string %}selected{% endif %}>
+              {{ u.email }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted">Action contains</label>
+        <input class="form-control" type="text" name="action" value="{{ filters.action }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted">From</label>
+        <input class="form-control" type="datetime-local" name="from" value="{{ filters.from }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted">To</label>
+        <input class="form-control" type="datetime-local" name="to" value="{{ filters.to }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted">Search</label>
+        <input class="form-control" type="text" name="q" value="{{ filters.q }}" placeholder="details/email">
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-outline-primary" type="submit">Apply filters</button>
+        <a class="btn btn-outline-secondary" href="/admin/audit">Clear</a>
+      </div>
+    </div>
+  </div>
+</form>
+
 <div class="card shadow-sm">
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
