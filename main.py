@@ -5,6 +5,10 @@ import math
 import json
 import time
 import shutil
+import secrets
+import hashlib
+import urllib.parse
+import urllib.request
 import csv
 import pandas as pd
 from io import BytesIO
@@ -190,6 +194,42 @@ templates.env.globals["global_dosing_notifications"] = global_dosing_notificatio
 
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
+
+def hash_password(password: str, salt: str | None = None) -> Tuple[str, str]:
+    if not salt:
+        salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
+    return digest.hex(), salt
+
+def verify_password(password: str, password_hash: str, salt: str) -> bool:
+    digest, _ = hash_password(password, salt)
+    return secrets.compare_digest(digest, password_hash)
+
+def get_current_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+    token = request.cookies.get("session_token")
+    if not token:
+        return None
+    row = one(db, """
+        SELECT u.* FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.session_token=? AND (s.expires_at IS NULL OR s.expires_at > ?)
+        LIMIT 1
+    """, (token, datetime.utcnow().isoformat()))
+    return row
+
+def create_session(db: sqlite3.Connection, user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    db.execute(
+        "INSERT INTO sessions (user_id, session_token, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (user_id, token, datetime.utcnow().isoformat(), expires_at),
+    )
+    db.commit()
+    return token
+
+def users_exist(db: sqlite3.Connection) -> bool:
+    row = one(db, "SELECT COUNT(*) AS count FROM users")
+    return bool(row and row["count"] > 0)
 
 def execute_with_retry(cur: sqlite3.Cursor, sql: str, params: Tuple[Any, ...] = (), attempts: int = 5) -> None:
     for idx in range(attempts):
@@ -625,6 +665,8 @@ def init_db() -> None:
     cur.executescript('''
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT, password_salt TEXT, google_sub TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, session_token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
@@ -717,6 +759,21 @@ def init_db() -> None:
     db.close()
 
 init_db()
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
+        return await call_next(request)
+    db = get_db()
+    try:
+        user = get_current_user(db, request)
+        request.state.user = user
+        if users_exist(db) and user is None:
+            return redirect("/auth/login")
+    finally:
+        db.close()
+    return await call_next(request)
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -811,6 +868,146 @@ def dashboard(request: Request):
         })
     db.close()
     return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
+
+@app.get("/auth/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@app.post("/auth/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    email = (form.get("email") or "").strip().lower()
+    password = form.get("password") or ""
+    db = get_db()
+    user = one(db, "SELECT * FROM users WHERE email=?", (email,))
+    if not user or not user["password_hash"]:
+        db.close()
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid email or password."})
+    if not verify_password(password, user["password_hash"], user["password_salt"]):
+        db.close()
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid email or password."})
+    token = create_session(db, user["id"])
+    db.close()
+    response = redirect("/")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    return response
+
+@app.get("/auth/register", response_class=HTMLResponse)
+def register_form(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
+
+@app.post("/auth/register")
+async def register_submit(request: Request):
+    form = await request.form()
+    email = (form.get("email") or "").strip().lower()
+    password = form.get("password") or ""
+    confirm = form.get("confirm_password") or ""
+    if not email or not password:
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Email and password are required."})
+    if password != confirm:
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Passwords do not match."})
+    db = get_db()
+    existing = one(db, "SELECT id FROM users WHERE email=?", (email,))
+    if existing:
+        db.close()
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered."})
+    password_hash, password_salt = hash_password(password)
+    db.execute(
+        "INSERT INTO users (email, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?)",
+        (email, password_hash, password_salt, datetime.utcnow().isoformat()),
+    )
+    user = one(db, "SELECT id FROM users WHERE email=?", (email,))
+    token = create_session(db, user["id"])
+    db.close()
+    response = redirect("/")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    return response
+
+@app.get("/auth/logout")
+def logout(request: Request):
+    token = request.cookies.get("session_token")
+    if token:
+        db = get_db()
+        db.execute("DELETE FROM sessions WHERE session_token=?", (token,))
+        db.commit()
+        db.close()
+    response = redirect("/auth/login")
+    response.delete_cookie("session_token")
+    return response
+
+@app.get("/auth/google/start")
+def google_start(request: Request):
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    if not client_id:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})
+    state = secrets.token_urlsafe(16)
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    response = redirect(url)
+    response.set_cookie("oauth_state", state, httponly=True, samesite="lax")
+    return response
+
+@app.get("/auth/google/callback", name="google_callback")
+def google_callback(request: Request, code: str | None = None, state: str | None = None):
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
+    expected_state = request.cookies.get("oauth_state")
+    if not client_id or not client_secret:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})
+    if not code or not state or state != expected_state:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid OAuth state."})
+    data = urllib.parse.urlencode({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    }).encode("utf-8")
+    try:
+        with urllib.request.urlopen("https://oauth2.googleapis.com/token", data=data) as resp:
+            token_data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return templates.TemplateResponse("login.html", {"request": request, "error": f"OAuth token exchange failed: {exc}"})
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "OAuth token exchange failed."})
+    req = urllib.request.Request(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            info = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return templates.TemplateResponse("login.html", {"request": request, "error": f"OAuth user info failed: {exc}"})
+    email = (info.get("email") or "").lower()
+    sub = info.get("sub")
+    if not email or not sub:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Google account did not return email."})
+    db = get_db()
+    user = one(db, "SELECT * FROM users WHERE google_sub=? OR email=?", (sub, email))
+    if not user:
+        db.execute(
+            "INSERT INTO users (email, google_sub, created_at) VALUES (?, ?, ?)",
+            (email, sub, datetime.utcnow().isoformat()),
+        )
+        user = one(db, "SELECT * FROM users WHERE email=?", (email,))
+    token = create_session(db, user["id"])
+    db.close()
+    response = redirect("/")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    response.delete_cookie("oauth_state")
+    return response
 
 @app.get("/tanks/reorder", response_class=HTMLResponse)
 def tank_reorder(request: Request):
