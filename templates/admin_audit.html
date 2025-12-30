@@ -10,9 +10,9 @@
   </a>
 </div>
 
-<form class="card shadow-sm mb-4" method="get">
+<div class="card shadow-sm mb-4">
   <div class="card-body">
-    <div class="row g-3 align-items-end">
+    <form method="get" class="row g-3 align-items-end">
       <div class="col-md-3">
         <label class="form-label small text-muted">User</label>
         <select class="form-select" name="user_id">
@@ -44,9 +44,12 @@
         <button class="btn btn-outline-primary" type="submit">Apply filters</button>
         <a class="btn btn-outline-secondary" href="/admin/audit">Clear</a>
       </div>
-    </div>
+    </form>
+    <form method="post" action="/admin/send-daily-summaries" class="mt-3">
+      <button class="btn btn-outline-success" type="submit">Send Daily Summaries</button>
+    </form>
   </div>
-</form>
+</div>
 
 <div class="card shadow-sm">
   <div class="table-responsive">

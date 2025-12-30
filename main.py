@@ -44,33 +44,54 @@ def require_pandas():
         )
     return pandas
 
-def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
+def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None) -> Tuple[bool, str]:
     host = os.environ.get("SMTP_HOST")
     sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME")
     if not host or not sender or not recipient:
         msg = "missing SMTP_HOST/SMTP_FROM or recipient"
-        print(f"Welcome email skipped: {msg}")
+        print(f"Email skipped: {msg}")
         return False, msg
     port = int(os.environ.get("SMTP_PORT", "587"))
     use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     smtp_username = os.environ.get("SMTP_USERNAME")
     smtp_password = os.environ.get("SMTP_PASSWORD")
-    app_name = os.environ.get("APP_NAME", "Reef Metrics")
-    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
 
     message = EmailMessage()
-    message["Subject"] = f"Welcome to {app_name}"
+    message["Subject"] = subject
     message["From"] = sender
     message["To"] = recipient
-    message.set_content(
+    message.set_content(text_body)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
+    try:
+        if use_ssl:
+            server = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            server = smtplib.SMTP(host, port, timeout=10)
+        with server:
+            if use_tls and not use_ssl:
+                server.starttls()
+            if smtp_username and smtp_password:
+                server.login(smtp_username, smtp_password)
+            server.send_message(message)
+        return True, ""
+    except Exception as exc:
+        msg = str(exc)
+        print(f"Email failed: {msg}")
+        return False, msg
+
+def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
+    app_name = os.environ.get("APP_NAME", "Reef Metrics")
+    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
+    subject = f"Welcome to {app_name}"
+    text_body = (
         f"Hi {username or recipient},\n\n"
         f"Welcome to {app_name}! Your account is ready.\n\n"
         f"Get started here: {base_url}\n\n"
         "Thanks for joining!"
     )
-    message.add_alternative(
-        f"""
+    html_body = f"""
 <!DOCTYPE html>
 <html>
   <body style="margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
@@ -106,24 +127,8 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
   </body>
 </html>
 """,
-        subtype="html",
     )
-    try:
-        if use_ssl:
-            server = smtplib.SMTP_SSL(host, port, timeout=10)
-        else:
-            server = smtplib.SMTP(host, port, timeout=10)
-        with server:
-            if use_tls and not use_ssl:
-                server.starttls()
-            if smtp_username and smtp_password:
-                server.login(smtp_username, smtp_password)
-            server.send_message(message)
-        return True, ""
-    except Exception as exc:
-        msg = str(exc)
-        print(f"Welcome email failed: {msg}")
-        return False, msg
+    return send_email(recipient, subject, text_body, html_body)
 
 # --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
 RECOMMENDED_DEFAULTS = {
@@ -313,6 +318,86 @@ def collect_dosing_notifications(
                     )
                     db.commit()
     return notifications
+
+def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, Any]:
+    today = date.today().isoformat()
+    tanks = q(
+        db,
+        """SELECT DISTINCT t.*
+           FROM tanks t
+           LEFT JOIN user_tanks ut ON ut.tank_id = t.id
+           WHERE t.owner_user_id=? OR ut.user_id=?
+           ORDER BY COALESCE(t.sort_order, 0), t.name""",
+        (user["id"], user["id"]),
+    )
+    dosing_alerts = collect_dosing_notifications(db, owner_user_id=user["id"], actor_user=user)
+    dosing_by_tank: Dict[int, List[Dict[str, Any]]] = {}
+    for alert in dosing_alerts:
+        dosing_by_tank.setdefault(alert["tank_id"], []).append(alert)
+    overdue_by_tank: Dict[int, List[str]] = {}
+    for t in tanks:
+        latest_map = get_latest_and_previous_per_parameter(db, t["id"])
+        pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+        overdue = []
+        for pname, pdef in pdefs.items():
+            latest = latest_map.get(pname, {}).get("latest")
+            taken_at = latest.get("taken_at") if latest else None
+            interval_days = row_get(pdef, "test_interval_days")
+            if not interval_days:
+                continue
+            dt = parse_dt_any(taken_at)
+            if not dt:
+                overdue.append(pname)
+                continue
+            if (datetime.utcnow() - dt).days >= int(interval_days):
+                overdue.append(pname)
+        if overdue:
+            overdue_by_tank[t["id"]] = overdue
+    return {
+        "date": today,
+        "tanks": tanks,
+        "dosing_by_tank": dosing_by_tank,
+        "overdue_by_tank": overdue_by_tank,
+    }
+
+def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple[bool, str]:
+    app_name = os.environ.get("APP_NAME", "Reef Metrics")
+    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
+    summary = build_daily_summary(db, user)
+    subject = f"{app_name} Daily Summary"
+    lines = [f"Daily summary for {summary['date']}:"]
+    for t in summary["tanks"]:
+        alerts = summary["dosing_by_tank"].get(t["id"], [])
+        overdue = summary["overdue_by_tank"].get(t["id"], [])
+        if not alerts and not overdue:
+            continue
+        lines.append(f"- {t['name']}")
+        for alert in alerts:
+            lines.append(
+                f"  • Low {alert['label']}: {alert['days']:.1f} days remaining (≤ {alert['threshold']})"
+            )
+        for pname in overdue:
+            lines.append(f"  • Overdue test: {pname}")
+    if len(lines) == 1:
+        lines.append("No alerts today.")
+    text_body = "\n".join(lines)
+    html_rows = ""
+    for t in summary["tanks"]:
+        alerts = summary["dosing_by_tank"].get(t["id"], [])
+        overdue = summary["overdue_by_tank"].get(t["id"], [])
+        if not alerts and not overdue:
+            continue
+        html_rows += f"<tr><td style='padding:8px 0; font-weight:600;'>{t['name']}</td></tr>"
+        for alert in alerts:
+            html_rows += (
+                f"<tr><td style='padding:2px 0; color:#b45309;'>Low {alert['label']}: "
+                f"{alert['days']:.1f} days remaining (≤ {alert['threshold']})</td></tr>"
+            )
+        for pname in overdue:
+            html_rows += f"<tr><td style='padding:2px 0; color:#b91c1c;'>Overdue test: {pname}</td></tr>"
+    if not html_rows:
+        html_rows = "<tr><td style='padding:8px 0;'>No alerts today.</td></tr>"
+    html_body = f\"\"\"\n<!DOCTYPE html>\n<html>\n  <body style=\"margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">\n      <tr>\n        <td align=\"center\" style=\"padding:32px 12px;\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"max-width:560px; background:#ffffff; border-radius:12px; border:1px solid #e5e7eb;\">\n            <tr>\n              <td style=\"padding:28px 28px 8px;\">\n                <div style=\"font-size:18px; letter-spacing:0.08em; text-transform:uppercase; color:#0ea5e9; font-weight:700;\">{app_name}</div>\n              </td>\n            </tr>\n            <tr>\n              <td style=\"padding:8px 28px 16px;\">\n                <h1 style=\"margin:0 0 12px; font-size:22px; color:#0f172a;\">Daily Summary</h1>\n                <p style=\"margin:0 0 16px; font-size:14px; color:#475569;\">{summary['date']}</p>\n                <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"font-size:14px; color:#334155;\">\n                  {html_rows}\n                </table>\n                <div style=\"margin-top:16px;\">\n                  <a href=\"{base_url}\" style=\"display:inline-block; padding:10px 18px; background:#0ea5e9; color:#ffffff; text-decoration:none; border-radius:8px; font-size:14px;\">Open {app_name}</a>\n                </div>\n              </td>\n            </tr>\n          </table>\n        </td>\n      </tr>\n    </table>\n  </body>\n</html>\n\"\"\"\n    return send_email(user["email"], subject, text_body, html_body)
 
 def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     db = get_db()
@@ -1221,6 +1306,27 @@ async def account_change_password(request: Request):
         "account.html",
         {"request": request, "success": "Password updated successfully."},
     )
+
+@app.post("/admin/send-daily-summaries")
+async def admin_send_daily_summaries(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    users = q(db, "SELECT id, email FROM users ORDER BY email")
+    sent_count = 0
+    for u in users:
+        success, reason = send_daily_summary_email(db, u)
+        log_audit(
+            db,
+            current_user,
+            "daily-summary-send",
+            f"user_id={u['id']} email={u['email']} sent={success} reason={reason}" if reason else f"user_id={u['id']} email={u['email']} sent={success}",
+        )
+        if success:
+            sent_count += 1
+    db.commit()
+    db.close()
+    return redirect(f"/admin/audit?success=Sent {sent_count} summaries")
 
 @app.get("/auth/google/start")
 def google_start(request: Request):
