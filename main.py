@@ -46,11 +46,13 @@ def require_pandas():
 
 def send_welcome_email(recipient: str, username: str):
     host = os.environ.get("SMTP_HOST")
-    sender = os.environ.get("SMTP_FROM")
+    sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME")
     if not host or not sender or not recipient:
+        print("Welcome email skipped: missing SMTP_HOST/SMTP_FROM or recipient")
         return
     port = int(os.environ.get("SMTP_PORT", "587"))
     use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+    use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     smtp_username = os.environ.get("SMTP_USERNAME")
     smtp_password = os.environ.get("SMTP_PASSWORD")
     app_name = os.environ.get("APP_NAME", "Reef Params")
@@ -67,8 +69,12 @@ def send_welcome_email(recipient: str, username: str):
         "Thanks for joining!"
     )
     try:
-        with smtplib.SMTP(host, port, timeout=10) as server:
-            if use_tls:
+        if use_ssl:
+            server = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            server = smtplib.SMTP(host, port, timeout=10)
+        with server:
+            if use_tls and not use_ssl:
                 server.starttls()
             if smtp_username and smtp_password:
                 server.login(smtp_username, smtp_password)
@@ -3129,6 +3135,8 @@ def admin_users(request: Request):
     user_tanks_map: Dict[int, List[int]] = {}
     for row in assignments:
         user_tanks_map.setdefault(row["user_id"], []).append(row["tank_id"])
+    error = request.query_params.get("error")
+    success = request.query_params.get("success")
     db.close()
     return templates.TemplateResponse(
         "admin_users.html",
@@ -3137,6 +3145,8 @@ def admin_users(request: Request):
             "users": users,
             "tanks": tanks,
             "user_tanks_map": user_tanks_map,
+            "error": error,
+            "success": success,
         },
     )
 
@@ -3153,6 +3163,31 @@ async def admin_user_role(request: Request, user_id: int):
     db.commit()
     db.close()
     return redirect("/admin/users")
+
+@app.post("/admin/users/{user_id}/delete")
+async def admin_user_delete(request: Request, user_id: int):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    if current_user and int(current_user["id"]) == user_id:
+        db.close()
+        return redirect("/admin/users?error=Cannot delete your own account")
+    target = one(db, "SELECT id, admin, role FROM users WHERE id=?", (user_id,))
+    if not target:
+        db.close()
+        return redirect("/admin/users?error=User not found")
+    is_admin = row_get(target, "admin") in (1, True) or row_get(target, "role") == "admin"
+    if is_admin:
+        admin_count_row = one(db, "SELECT COUNT(*) AS count FROM users WHERE admin=1 OR role='admin'")
+        admin_count = admin_count_row["count"] if admin_count_row else 0
+        if admin_count <= 1:
+            db.close()
+            return redirect("/admin/users?error=Cannot delete the last admin")
+    db.execute("DELETE FROM users WHERE id=?", (user_id,))
+    log_audit(db, current_user, "user-delete", f"user_id={user_id}")
+    db.commit()
+    db.close()
+    return redirect("/admin/users?success=User deleted")
 
 @app.post("/admin/users/{user_id}/tanks")
 async def admin_user_tanks(request: Request, user_id: int):

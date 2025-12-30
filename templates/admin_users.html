@@ -10,6 +10,13 @@
   </a>
 </div>
 
+{% if error %}
+  <div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+{% if success %}
+  <div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
 <div class="row g-4">
   {% for u in users %}
     {% set assigned_ids = user_tanks_map.get(u.id, []) %}
@@ -20,13 +27,18 @@
             <div class="fw-bold">{{ u.email }}</div>
             <div class="small text-muted">Created {{ u.created_at|dtfmt }}</div>
           </div>
-          <form method="post" action="/admin/users/{{ u.id }}/role" class="d-flex align-items-center gap-2">
-            <div class="form-check form-switch m-0">
-              <input class="form-check-input" type="checkbox" name="admin" id="admin-{{ u.id }}" {% if u.admin or u.role == "admin" %}checked{% endif %}>
-              <label class="form-check-label small" for="admin-{{ u.id }}">Admin</label>
-            </div>
-            <button class="btn btn-sm btn-outline-primary" type="submit">Update Role</button>
-          </form>
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <form method="post" action="/admin/users/{{ u.id }}/role" class="d-flex align-items-center gap-2">
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" name="admin" id="admin-{{ u.id }}" {% if u.admin or u.role == "admin" %}checked{% endif %}>
+                <label class="form-check-label small" for="admin-{{ u.id }}">Admin</label>
+              </div>
+              <button class="btn btn-sm btn-outline-primary" type="submit">Update Role</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete this user and their sessions? This cannot be undone.');">
+              <button class="btn btn-sm btn-outline-danger" type="submit">Delete User</button>
+            </form>
+          </div>
         </div>
         <div class="card-body">
           <div class="mb-3">
