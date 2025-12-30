@@ -50,6 +50,34 @@
                 </div>
             </div>
         </div>
+
+        <div class="col-md-6">
+            <div class="card h-100 shadow-sm border-info">
+                <div class="card-body">
+                    <h5 class="card-title text-info">Full App Backup</h5>
+                    <p class="text-muted small">Download or restore the full app database for complete backups.</p>
+                    <a href="/admin/backup-download" class="btn btn-outline-info w-100 mt-2">
+                        <i class="bi bi-download"></i> Download Backup
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card h-100 shadow-sm border-warning">
+                <div class="card-body">
+                    <h5 class="card-title text-warning">Restore Backup</h5>
+                    <p class="text-muted small">Upload a full backup file to restore the app data.</p>
+                    <form action="/admin/backup-restore" method="post" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Select Backup (.sqlite)</label>
+                            <input class="form-control" type="file" name="file" accept=".sqlite,.db" required>
+                        </div>
+                        <button type="submit" class="btn btn-warning w-100">Restore Backup</button>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}

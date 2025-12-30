@@ -60,15 +60,14 @@
             <a class="navbar-brand" href="/">
                 <img src="/static/logo.png" alt="Reef Metrics" class="brand-logo-img">
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
+            <div class="collapse navbar-collapse me-auto" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
                     
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Tools</a>
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-tools"></i> Tools
+                        </a>
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
                             <li><a class="dropdown-item" href="/tools/calculators"><i class="bi bi-calculator"></i> Dosing Calculator</a></li>
                             <li><a class="dropdown-item" href="/tools/dose-plan"><i class="bi bi-calendar-check"></i> Dose Planner</a></li>
@@ -76,21 +75,84 @@
                     </li>
 
                     <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Manage</a>
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-gear"></i> Manage
+                        </a>
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-                            <li><a class="dropdown-item" href="/settings/parameters">Parameters</a></li>
-                            <li><a class="dropdown-item" href="/additives">Additives</a></li>
-                            <li><a class="dropdown-item" href="/settings/test-kits">Test Kits</a></li>
+                            <li><a class="dropdown-item" href="/settings/parameters"><i class="bi bi-sliders"></i> Parameters</a></li>
+                            <li><a class="dropdown-item" href="/additives"><i class="bi bi-droplet"></i> Additives</a></li>
+                            <li><a class="dropdown-item" href="/settings/test-kits"><i class="bi bi-eyedropper"></i> Test Kits</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <a class="dropdown-item fw-bold text-primary" href="/admin/import">
-                                    <i class="bi bi-arrow-down-up"></i> Data Center
+                                    <i class="bi bi-database"></i> Data Center
                                 </a>
                             </li>
-                            <li><a class="dropdown-item" href="/admin/merge-parameters">Merge Params</a></li>
+                            {% if request.state.user is defined and request.state.user and request.state.user.admin %}
+                                <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people"></i> Users</a></li>
+                                <li><a class="dropdown-item" href="/admin/audit"><i class="bi bi-journal-text"></i> Audit Log</a></li>
+                            {% endif %}
                         </ul>
                     </li>
                 </ul>
+            </div>
+            <div class="d-flex align-items-center gap-2 ms-auto">
+                {% set global_notifications = global_dosing_notifications(request) %}
+                <div class="dropdown">
+                    <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
+                        <i class="bi bi-bell"></i>
+                        {% if global_notifications %}
+                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="transform: translate(-50%, -50%);">
+                                {{ global_notifications|length }}
+                            </span>
+                        {% endif %}
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 320px;">
+                        <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
+                        {% if global_notifications %}
+                            {% for group in global_notifications|groupby('tank_id') %}
+                                {% set alerts = group.list %}
+                                <li class="dropdown-item text-wrap">
+                                    <div class="fw-semibold">{{ alerts[0].tank_name }}</div>
+                                    {% for alert in alerts %}
+                                        <div class="d-flex align-items-start justify-content-between gap-2 mt-2">
+                                            <a class="text-decoration-none text-reset small" href="/tanks/{{ alert.tank_id }}">
+                                                {{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})
+                                            </a>
+                                            <form method="post" action="/notifications/dismiss" class="ms-2">
+                                                <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
+                                                <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                                                <input type="hidden" name="notified_on" value="{{ alert.notified_on }}">
+                                                <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
+                                            </form>
+                                        </div>
+                                    {% endfor %}
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                            {% endfor %}
+                        {% else %}
+                            <li class="dropdown-item text-muted small">No dosing alerts right now.</li>
+                        {% endif %}
+                    </ul>
+                </div>
+                {% if request.state.user is defined and request.state.user %}
+                    <div class="dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle"></i> Account
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                            <li class="dropdown-header text-muted small">{{ request.state.user.email }}</li>
+                            <li><a class="dropdown-item" href="/account"><i class="bi bi-key"></i> Change Password</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/auth/logout"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+                        </ul>
+                    </div>
+                {% else %}
+                    <a class="nav-link" href="/auth/login"><i class="bi bi-box-arrow-in-right"></i> Login</a>
+                {% endif %}
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
             </div>
         </div>
     </nav>
