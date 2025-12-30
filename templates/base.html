@@ -122,6 +122,7 @@
                                             <form method="post" action="/notifications/dismiss" class="ms-2">
                                                 <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
                                                 <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                                                <input type="hidden" name="notified_on" value="{{ alert.notified_on }}">
                                                 <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
                                             </form>
                                         </div>

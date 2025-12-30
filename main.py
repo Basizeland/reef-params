@@ -283,6 +283,7 @@ def collect_dosing_notifications(
                         "days": days_remaining,
                         "threshold": threshold_days,
                         "container_key": key,
+                        "notified_on": today,
                     }
                 )
                 exists = one(
@@ -2177,7 +2178,8 @@ async def dismiss_notification(request: Request):
     form = await request.form()
     tank_id = to_float(form.get("tank_id"))
     container_key = (form.get("container_key") or "").strip()
-    if tank_id is None or not container_key:
+    notified_on = (form.get("notified_on") or "").strip()
+    if tank_id is None or not container_key or not notified_on:
         return redirect("/")
     db = get_db()
     user = get_current_user(db, request)
@@ -2186,10 +2188,15 @@ async def dismiss_notification(request: Request):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     db.execute(
-        "UPDATE dosing_notifications SET dismissed_at=? WHERE tank_id=? AND container_key=?",
-        (datetime.utcnow().isoformat(), int(tank_id), container_key),
+        "UPDATE dosing_notifications SET dismissed_at=? WHERE tank_id=? AND container_key=? AND notified_on=?",
+        (datetime.utcnow().isoformat(), int(tank_id), container_key, notified_on),
     )
-    log_audit(db, user, "notification-dismiss", f"tank_id={tank_id} container_key={container_key}")
+    log_audit(
+        db,
+        user,
+        "notification-dismiss",
+        f"tank_id={tank_id} container_key={container_key} notified_on={notified_on}",
+    )
     db.commit()
     db.close()
     return redirect(request.headers.get("referer") or "/")
