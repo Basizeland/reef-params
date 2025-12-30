@@ -6,6 +6,9 @@
     <h1 class="h3 mb-0">Dashboard</h1>
     <div class="text-muted small">Latest readings per tank</div>
   </div>
+  <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
+    <i class="bi bi-arrow-down-up"></i> Reorder Tanks
+  </a>
 </div>
 
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">
@@ -26,18 +29,33 @@
                     {{ t.name if t.name is defined else t['name'] }}
                   </a>
               </h5>
+              <div class="mt-2 d-flex flex-wrap gap-2">
+                {% if summary.out_of_range %}
+                  <span class="badge text-bg-warning">{{ summary.out_of_range }} out of range</span>
+                {% else %}
+                  <span class="badge text-bg-success">All in range</span>
+                {% endif %}
+                {% if summary.overdue %}
+                  <span class="badge text-bg-info">{{ summary.overdue }} overdue</span>
+                {% endif %}
+                {% if summary.last_dose_at %}
+                  <span class="badge bg-light text-secondary border">Last dose {{ summary.last_dose_at|time_ago }}</span>
+                {% endif %}
+              </div>
               <div class="small text-muted">
                   {% if ts %}
-                    <span class="text-secondary">{{ ts|time_ago }}</span>
+                    <span class="text-secondary">Last test: {{ ts|time_ago }}</span>
                   {% else %}
                     No logs yet
                   {% endif %}
               </div>
             </div>
-            {% set vol = (t.volume_l if t.volume_l is defined else t.get('volume_l')) %}
-            {% if vol %}
-              <span class="badge bg-light text-secondary border">{{ vol|fmt2 }} L</span>
-            {% endif %}
+            <div class="d-flex align-items-center gap-2">
+              {% set vol = (t.volume_l if t.volume_l is defined else t.get('volume_l')) %}
+              {% if vol %}
+                <span class="badge bg-light text-secondary border">{{ vol|fmt2 }} L</span>
+              {% endif %}
+            </div>
           </div>
 
           <div class="mt-3">
@@ -86,19 +104,6 @@
               </div>
             {% else %}
               <div class="text-muted small py-4 text-center fst-italic">No recent tests recorded.</div>
-            {% endif %}
-          </div>
-          <div class="mt-3 d-flex flex-wrap gap-2">
-            {% if summary.out_of_range %}
-              <span class="badge text-bg-warning">{{ summary.out_of_range }} out of range</span>
-            {% else %}
-              <span class="badge text-bg-success">All in range</span>
-            {% endif %}
-            {% if summary.overdue %}
-              <span class="badge text-bg-info">{{ summary.overdue }} overdue</span>
-            {% endif %}
-            {% if summary.last_dose_at %}
-              <span class="badge bg-light text-secondary border">Last dose {{ summary.last_dose_at|time_ago }}</span>
             {% endif %}
           </div>
         </div>
