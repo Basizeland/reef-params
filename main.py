@@ -2237,7 +2237,8 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
 @app.get("/tanks/{tank_id}/samples", response_class=HTMLResponse)
 def tank_samples(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2279,8 +2280,56 @@ def tank_samples(request: Request, tank_id: int):
         all_param_names.update(sample_values.get(int(samples[0]["id"]), {}).keys())
     available_params = sorted(all_param_names, key=lambda s: s.lower())
     params = [{"id": name, "name": name, "unit": unit_by_name.get(name, "")} for name in available_params]
+    deduped = request.query_params.get("deduped")
     db.close()
-    return templates.TemplateResponse("tank_samples.html", {"request": request, "tank": tank, "samples": samples, "params": params, "sample_values": sample_values})
+    return templates.TemplateResponse(
+        "tank_samples.html",
+        {
+            "request": request,
+            "tank": tank,
+            "samples": samples,
+            "params": params,
+            "sample_values": sample_values,
+            "deduped_count": int(deduped) if deduped and deduped.isdigit() else None,
+        },
+    )
+
+@app.post("/tanks/{tank_id}/samples/dedupe")
+async def tank_samples_dedupe(request: Request, tank_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    rows = q(db, "SELECT id, taken_at FROM samples WHERE tank_id=? ORDER BY taken_at ASC, id ASC", (tank_id,))
+    seen = {}
+    duplicates = []
+    for row in rows:
+        key = row_get(row, "taken_at") or ""
+        if key in seen:
+            duplicates.append(row["id"])
+        else:
+            seen[key] = row["id"]
+    removed = 0
+    if duplicates:
+        cur = db.cursor()
+        mode = values_mode(db)
+        for sample_id in duplicates:
+            execute_with_retry(cur, "DELETE FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
+            if mode == "sample_values":
+                if table_exists(db, "sample_values"):
+                    execute_with_retry(cur, "DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+                if table_exists(db, "sample_value_kits"):
+                    execute_with_retry(cur, "DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
+            else:
+                if table_exists(db, "parameters"):
+                    execute_with_retry(cur, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
+            removed += 1
+        log_audit(db, user, "samples-dedupe", f"tank_id={tank_id} removed={removed}")
+        db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/samples?deduped={removed}")
 
 @app.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
 def edit_targets(request: Request, tank_id: int):

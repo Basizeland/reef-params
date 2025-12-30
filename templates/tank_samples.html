@@ -6,11 +6,22 @@
     <div class="text-muted small">{{ tank.name }}</div>
   </div>
   <div class="d-flex gap-2">
+    <form method="post" action="/tanks/{{ tank.id }}/samples/dedupe" onsubmit="return confirm('Remove duplicate readings that share the same timestamp? This keeps the first entry and deletes the rest.');">
+      <button class="btn btn-outline-danger" type="submit">
+        <i class="bi bi-trash"></i> Remove Duplicates
+      </button>
+    </form>
     <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}">
       <i class="bi bi-arrow-left"></i> Back to Tank
     </a>
   </div>
 </div>
+
+{% if deduped_count is not none %}
+  <div class="alert alert-info">
+    Removed {{ deduped_count }} duplicate {{ "entry" if deduped_count == 1 else "entries" }}.
+  </div>
+{% endif %}
 
 <div class="card shadow-sm">
   <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
