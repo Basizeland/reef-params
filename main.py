@@ -669,7 +669,7 @@ def init_db() -> None:
     cur.executescript('''
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT, password_salt TEXT, google_sub TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, username TEXT, password_hash TEXT, password_salt TEXT, google_sub TEXT, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, session_token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
@@ -686,6 +686,7 @@ def init_db() -> None:
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
     ensure_column(db, "tanks", "owner_user_id", "ALTER TABLE tanks ADD COLUMN owner_user_id INTEGER")
+    ensure_column(db, "users", "username", "ALTER TABLE users ADD COLUMN username TEXT")
     ensure_column(db, "users", "password_salt", "ALTER TABLE users ADD COLUMN password_salt TEXT")
     ensure_column(db, "users", "google_sub", "ALTER TABLE users ADD COLUMN google_sub TEXT")
     ensure_column(db, "users", "admin", "ALTER TABLE users ADD COLUMN admin INTEGER DEFAULT 0")
@@ -914,6 +915,9 @@ def register_form(request: Request):
 async def register_submit(request: Request):
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
+    username = (form.get("username") or "").strip()
+    if not username:
+        username = (email.split("@")[0] if email else "").strip() or email
     password = form.get("password") or ""
     confirm = form.get("confirm_password") or ""
     if not email or not password:
@@ -928,8 +932,8 @@ async def register_submit(request: Request):
         return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered."})
     password_hash, password_salt = hash_password(password)
     db.execute(
-        "INSERT INTO users (email, password_hash, password_salt, created_at, admin) VALUES (?, ?, ?, ?, ?)",
-        (email, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
+        "INSERT INTO users (email, username, password_hash, password_salt, created_at, admin) VALUES (?, ?, ?, ?, ?, ?)",
+        (email, username, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
     )
     user = one(db, "SELECT id FROM users WHERE email=?", (email,))
     token = create_session(db, user["id"])
@@ -1012,9 +1016,10 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     db = get_db()
     user = one(db, "SELECT * FROM users WHERE google_sub=? OR email=?", (sub, email))
     if not user:
+        username = (email.split("@")[0] if email else "") or email
         db.execute(
-            "INSERT INTO users (email, google_sub, created_at) VALUES (?, ?, ?)",
-            (email, sub, datetime.utcnow().isoformat()),
+            "INSERT INTO users (email, username, google_sub, created_at) VALUES (?, ?, ?, ?)",
+            (email, username, sub, datetime.utcnow().isoformat()),
         )
         user = one(db, "SELECT * FROM users WHERE email=?", (email,))
     token = create_session(db, user["id"])
