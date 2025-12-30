@@ -1845,10 +1845,25 @@ def tank_detail(request: Request, tank_id: int):
     if profile:
         volume_l = row_get(tank_view, "volume_l")
         if volume_l:
+            def normalize_param_name(name: str) -> str:
+                cleaned = re.sub(r"[^a-z0-9]+", "", name.lower())
+                if cleaned in {"alkalinitykh", "alkalinity", "kh"}:
+                    return "Alkalinity/KH"
+                if cleaned in {"calcium", "ca"}:
+                    return "Calcium"
+                if cleaned in {"magnesium", "mg"}:
+                    return "Magnesium"
+                if cleaned in {"nitrate", "no3"}:
+                    return "Nitrate"
+                if cleaned in {"phosphate", "po4"}:
+                    return "Phosphate"
+                return name.strip() or name
+
             def add_consumption(param_name: str, value: float, unit: str | None = None, source_label: str | None = None) -> None:
                 if not param_name:
                     return
-                entry = daily_consumption.setdefault(param_name, {"value": 0.0, "unit": unit or "", "sources": []})
+                canonical_param = normalize_param_name(param_name)
+                entry = daily_consumption.setdefault(canonical_param, {"value": 0.0, "unit": unit or "", "sources": []})
                 entry["value"] += float(value)
                 if not entry.get("unit") and unit:
                     entry["unit"] = unit
@@ -1884,12 +1899,19 @@ def tank_detail(request: Request, tank_id: int):
                 if strength in (None, 0):
                     continue
                 daily_change = float(daily_ml) * float(strength) * (100.0 / float(volume_l))
-                add_consumption(
-                    row_get(additive, "parameter") or "",
-                    daily_change,
-                    row_get(additive, "unit") or "",
-                    row_get(additive, "name") or solution_name,
-                )
+                additive_name = row_get(additive, "name") or solution_name
+                additive_param = row_get(additive, "parameter") or ""
+                additive_unit = row_get(additive, "unit") or ""
+                add_consumption(additive_param, daily_change, additive_unit, additive_name)
+                name_key = str(additive_name or "").strip().lower()
+                if "all for reef" in name_key:
+                    ca_per_dkh = 7.14
+                    mg_per_dkh = 1.25
+                    add_consumption("Calcium", daily_change * ca_per_dkh, "ppm", f"{additive_name} (Ca est.)")
+                    add_consumption("Magnesium", daily_change * mg_per_dkh, "ppm", f"{additive_name} (Mg est.)")
+                if "kalkwasser" in name_key or key == "kalkwasser":
+                    ca_per_dkh = 7.14
+                    add_consumption("Calcium", daily_change * ca_per_dkh, "ppm", f"{additive_name} (Ca est.)")
             reactor_daily_ml = row_get(tank_view, "calcium_reactor_daily_ml")
             reactor_effluent_dkh = row_get(tank_view, "calcium_reactor_effluent_dkh")
             reactor_enabled = is_enabled(
