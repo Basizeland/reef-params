@@ -415,13 +415,16 @@
     <div style="height: 350px;">
       <canvas id="historyChart"></canvas>
     </div>
+    <div class="d-flex flex-wrap justify-content-center gap-3 text-muted small mt-3" id="historyStats" aria-live="polite">
+      <div class="d-flex align-items-center gap-2">
+        <span class="rounded-circle" style="width:10px; height:10px; background: var(--stat-color, #6c757d);"></span>
+        <span class="fw-semibold text-dark" data-stat="label">—</span>
+      </div>
+      <div><span class="fw-semibold text-dark">Min:</span> <span data-stat="min">—</span></div>
+      <div><span class="fw-semibold text-dark">Median:</span> <span data-stat="median">—</span></div>
+      <div><span class="fw-semibold text-dark">Max:</span> <span data-stat="max">—</span></div>
+    </div>
   </div>
-</div>
-
-<div class="d-flex flex-wrap gap-3 text-muted small mb-4" id="historyStats" aria-live="polite">
-  <div><span class="fw-semibold text-dark">Min:</span> <span data-stat="min">—</span></div>
-  <div><span class="fw-semibold text-dark">Median:</span> <span data-stat="median">—</span></div>
-  <div><span class="fw-semibold text-dark">Max:</span> <span data-stat="max">—</span></div>
 </div>
 
 <div class="card shadow-sm">
@@ -686,7 +689,8 @@
             const statValues = statsEl ? {
               min: statsEl.querySelector('[data-stat="min"]'),
               median: statsEl.querySelector('[data-stat="median"]'),
-              max: statsEl.querySelector('[data-stat="max"]')
+              max: statsEl.querySelector('[data-stat="max"]'),
+              label: statsEl.querySelector('[data-stat="label"]')
             } : null;
 
             if (!labels.length || datasets.length === 0) {
@@ -700,6 +704,8 @@
                 statValues.min.textContent = '—';
                 statValues.median.textContent = '—';
                 statValues.max.textContent = '—';
+                statValues.label.textContent = '—';
+                statsEl.style.setProperty('--stat-color', '#6c757d');
               }
               return;
             }
@@ -715,10 +721,14 @@
                 statValues.min.textContent = min.toFixed(2);
                 statValues.median.textContent = median.toFixed(2);
                 statValues.max.textContent = max.toFixed(2);
+                statValues.label.textContent = datasets[0].label || '—';
+                statsEl.style.setProperty('--stat-color', datasets[0].borderColor || '#6c757d');
               } else {
                 statValues.min.textContent = '—';
                 statValues.median.textContent = '—';
                 statValues.max.textContent = '—';
+                statValues.label.textContent = datasets[0].label || '—';
+                statsEl.style.setProperty('--stat-color', datasets[0].borderColor || '#6c757d');
               }
             }
 
