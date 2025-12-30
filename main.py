@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reef.bsizeland.com")
 
 app = FastAPI(title="Reef Tank Parameters")
 
@@ -986,7 +987,10 @@ def google_start(request: Request):
     if not client_id:
         return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})
     state = secrets.token_urlsafe(16)
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
+    if not redirect_uri:
+        base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+        redirect_uri = f"{base.rstrip('/')}/auth/google/callback"
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -1005,7 +1009,10 @@ def google_start(request: Request):
 def google_callback(request: Request, code: str | None = None, state: str | None = None):
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
+    if not redirect_uri:
+        base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+        redirect_uri = f"{base.rstrip('/')}/auth/google/callback"
     expected_state = request.cookies.get("oauth_state")
     if not client_id or not client_secret:
         return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})
