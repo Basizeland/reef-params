@@ -1095,7 +1095,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, min_value REAL, max_value REAL, notes TEXT, active INTEGER DEFAULT 1);
-        CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -1116,6 +1116,7 @@ def init_db() -> None:
     ensure_column(db, "users", "admin", "ALTER TABLE users ADD COLUMN admin INTEGER DEFAULT 0")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
     ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
+    ensure_column(db, "additives", "brand", "ALTER TABLE additives ADD COLUMN brand TEXT")
     ensure_column(db, "additives", "group_name", "ALTER TABLE additives ADD COLUMN group_name TEXT")
     ensure_column(db, "test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
     ensure_column(db, "targets", "target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
@@ -3376,13 +3377,30 @@ def additive_edit(request: Request, additive_id: int):
     return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": additive, "parameters": parameters})
 
 @app.post("/additives/save")
-def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), brand: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
-    data = (name.strip(), parameter.strip(), float(to_float(strength) or 0), unit.strip(), to_float(max_daily), (notes or "").strip() or None, is_active)
-    if additive_id and str(additive_id).strip().isdigit(): cur.execute("UPDATE additives SET name=?, parameter=?, strength=?, unit=?, max_daily=?, notes=?, active=? WHERE id=?", (*data, int(additive_id)))
-    else: cur.execute("INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?)", data)
+    data = (
+        name.strip(),
+        (brand or "").strip() or None,
+        parameter.strip(),
+        float(to_float(strength) or 0),
+        unit.strip(),
+        to_float(max_daily),
+        (notes or "").strip() or None,
+        is_active,
+    )
+    if additive_id and str(additive_id).strip().isdigit():
+        cur.execute(
+            "UPDATE additives SET name=?, brand=?, parameter=?, strength=?, unit=?, max_daily=?, notes=?, active=? WHERE id=?",
+            (*data, int(additive_id)),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            data,
+        )
     db.commit()
     db.close()
     return redirect("/additives")

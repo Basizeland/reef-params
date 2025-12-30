@@ -22,6 +22,11 @@
         </div>
 
         <div class="col-12 col-md-6">
+          <label class="form-label">Brand</label>
+          <input class="form-control" name="brand" value="{{ additive.brand if additive and additive.brand is not none else '' }}" placeholder="e.g. Tropic Marin" />
+        </div>
+
+        <div class="col-12 col-md-6">
           <label class="form-label">Parameter</label>
           <select class="form-select" name="parameter" required>
             {% for p in parameters %}
