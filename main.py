@@ -3049,8 +3049,13 @@ def additives(request: Request):
     db.close()
     grouped = []
     groups: Dict[str, List[sqlite3.Row]] = {}
+    all_in_one_names = {"all for reef", "kalkwasser (saturated)"}
     for r in rows:
-        key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        name = (r["name"] or "").strip()
+        if name.lower() in all_in_one_names:
+            key = "All-in-one solutions"
+        else:
+            key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
         groups.setdefault(key, []).append(r)
     for key in sorted(groups.keys(), key=lambda s: s.lower()):
         grouped.append({"parameter": key, "items": groups[key]})
