@@ -81,6 +81,8 @@
                 <option value="all_in_one">All-in-one (e.g. All For Reef)</option>
                 <option value="two_part">Two-part (Alk + Ca)</option>
                 <option value="three_part">Three-part (Alk + Ca + Mg)</option>
+                <option value="mixed">Mixed (All-in-one + Parts)</option>
+                <option value="calcium_reactor">Calcium Reactor</option>
               </select>
             </div>
             <div class="col-md-6">
@@ -90,7 +92,7 @@
           </div>
 
           <div class="row g-3">
-            <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+            <div class="col-12 col-md-6" data-dosing-modes="all_in_one mixed">
               <label class="form-label fw-bold">All-in-one Solution</label>
               <select class="form-select" name="all_in_one_solution">
                 <option value="">Select additive</option>
@@ -99,20 +101,20 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+            <div class="col-12 col-md-6" data-dosing-modes="all_in_one mixed">
               <label class="form-label fw-bold">All-in-one Daily (ml)</label>
               <input type="number" step="any" name="all_in_one_daily_ml" class="form-control" placeholder="e.g. 12">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+            <div class="col-12 col-md-6" data-dosing-modes="all_in_one mixed">
               <label class="form-label fw-bold">All-in-one Container Size (ml)</label>
               <input type="number" step="any" name="all_in_one_container_ml" class="form-control" placeholder="e.g. 2000">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="all_in_one">
+            <div class="col-12 col-md-6" data-dosing-modes="all_in_one mixed">
               <label class="form-label fw-bold">All-in-one Remaining (ml)</label>
               <input type="number" step="any" name="all_in_one_remaining_ml" class="form-control" placeholder="e.g. 1200">
             </div>
 
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Alkalinity Solution</label>
               <select class="form-select" name="alk_solution">
                 <option value="">Select additive</option>
@@ -121,20 +123,20 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Alkalinity Daily (ml)</label>
               <input type="number" step="any" name="alk_daily_ml" class="form-control" placeholder="e.g. 25">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Alkalinity Container Size (ml)</label>
               <input type="number" step="any" name="alk_container_ml" class="form-control" placeholder="e.g. 2000">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Alkalinity Remaining (ml)</label>
               <input type="number" step="any" name="alk_remaining_ml" class="form-control" placeholder="e.g. 1200">
             </div>
 
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Calcium Solution</label>
               <select class="form-select" name="ca_solution">
                 <option value="">Select additive</option>
@@ -143,20 +145,20 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Calcium Daily (ml)</label>
               <input type="number" step="any" name="ca_daily_ml" class="form-control" placeholder="e.g. 20">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Calcium Container Size (ml)</label>
               <input type="number" step="any" name="ca_container_ml" class="form-control" placeholder="e.g. 2000">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="two_part three_part mixed">
               <label class="form-label fw-bold">Calcium Remaining (ml)</label>
               <input type="number" step="any" name="ca_remaining_ml" class="form-control" placeholder="e.g. 1200">
             </div>
 
-            <div class="col-12 col-md-6" data-dosing-modes="three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="three_part mixed">
               <label class="form-label fw-bold">Magnesium Solution</label>
               <select class="form-select" name="mg_solution">
                 <option value="">Select additive</option>
@@ -165,17 +167,28 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="three_part mixed">
               <label class="form-label fw-bold">Magnesium Daily (ml)</label>
               <input type="number" step="any" name="mg_daily_ml" class="form-control" placeholder="e.g. 15">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="three_part mixed">
               <label class="form-label fw-bold">Magnesium Container Size (ml)</label>
               <input type="number" step="any" name="mg_container_ml" class="form-control" placeholder="e.g. 2000">
             </div>
-            <div class="col-12 col-md-6" data-dosing-modes="three_part">
+            <div class="col-12 col-md-6" data-dosing-modes="three_part mixed">
               <label class="form-label fw-bold">Magnesium Remaining (ml)</label>
               <input type="number" step="any" name="mg_remaining_ml" class="form-control" placeholder="e.g. 1200">
+            </div>
+
+            <div class="col-12 col-md-6" data-dosing-modes="calcium_reactor">
+              <label class="form-label fw-bold">Calcium Reactor Effluent (dKH)</label>
+              <input type="number" step="any" name="calcium_reactor_effluent_dkh" class="form-control" placeholder="e.g. 30">
+              <div class="form-text">Enter the tested dKH of the effluent.</div>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-modes="calcium_reactor">
+              <label class="form-label fw-bold">Calcium Reactor Effluent (ml/day)</label>
+              <input type="number" step="any" name="calcium_reactor_daily_ml" class="form-control" placeholder="e.g. 2000">
+              <div class="form-text">Used to estimate daily alkalinity addition.</div>
             </div>
 
             <div class="col-12 col-md-6">

@@ -68,7 +68,7 @@
   </div>
 {% endif %}
 
-{% set has_dosing = tank.dosing_mode or tank.all_in_one_solution or tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml %}
+{% set has_dosing = tank.dosing_mode or tank.all_in_one_solution or tank.alk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml or tank.calcium_reactor_daily_ml or tank.calcium_reactor_effluent_dkh %}
 {% if has_dosing %}
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0 h5 fw-bold">Daily Dosing</h4>
@@ -80,7 +80,7 @@
     Mode: {{ tank.dosing_mode|replace('_', ' ')|title if tank.dosing_mode else "Not specified" }}
   </div>
   <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
-        {% if (tank.dosing_mode == 'all_in_one' or not tank.dosing_mode) and (tank.all_in_one_solution or tank.all_in_one_daily_ml) %}
+        {% if tank.all_in_one_solution or tank.all_in_one_daily_ml %}
           {% set all_in_one_remaining = tank.all_in_one_remaining_ml if tank.all_in_one_remaining_ml is not none else tank.all_in_one_container_ml %}
           {% set all_in_one_pct = (all_in_one_remaining / tank.all_in_one_container_ml * 100) if tank.all_in_one_container_ml else none %}
           {% if all_in_one_pct is not none and all_in_one_pct > 100 %}{% set all_in_one_pct = 100 %}{% endif %}
@@ -116,7 +116,7 @@
             </div>
           </div>
         {% endif %}
-        {% if (tank.dosing_mode in ['two_part', 'three_part'] or not tank.dosing_mode) and (tank.alk_solution or tank.alk_daily_ml is not none) %}
+        {% if tank.alk_solution or tank.alk_daily_ml is not none %}
           {% set alk_remaining = tank.alk_remaining_ml if tank.alk_remaining_ml is not none else tank.alk_container_ml %}
           {% set alk_pct = (alk_remaining / tank.alk_container_ml * 100) if tank.alk_container_ml else none %}
           {% if alk_pct is not none and alk_pct > 100 %}{% set alk_pct = 100 %}{% endif %}
@@ -152,7 +152,7 @@
             </div>
           </div>
         {% endif %}
-        {% if (tank.dosing_mode in ['two_part', 'three_part'] or not tank.dosing_mode) and (tank.ca_solution or tank.ca_daily_ml is not none) %}
+        {% if tank.ca_solution or tank.ca_daily_ml is not none %}
           {% set ca_remaining = tank.ca_remaining_ml if tank.ca_remaining_ml is not none else tank.ca_container_ml %}
           {% set ca_pct = (ca_remaining / tank.ca_container_ml * 100) if tank.ca_container_ml else none %}
           {% if ca_pct is not none and ca_pct > 100 %}{% set ca_pct = 100 %}{% endif %}
@@ -188,7 +188,7 @@
             </div>
           </div>
         {% endif %}
-        {% if (tank.dosing_mode == 'three_part' or not tank.dosing_mode) and (tank.mg_solution or tank.mg_daily_ml is not none) %}
+        {% if tank.mg_solution or tank.mg_daily_ml is not none %}
           {% set mg_remaining = tank.mg_remaining_ml if tank.mg_remaining_ml is not none else tank.mg_container_ml %}
           {% set mg_pct = (mg_remaining / tank.mg_container_ml * 100) if tank.mg_container_ml else none %}
           {% if mg_pct is not none and mg_pct > 100 %}{% set mg_pct = 100 %}{% endif %}
@@ -337,14 +337,14 @@
   <div class="card border-0 bg-light mb-5">
     <div class="card-body py-3">
       <div class="text-muted text-uppercase small fw-semibold">Estimated Daily Consumption</div>
-      <div class="row g-2 mt-1">
-        {% for key, entry in daily_consumption.items() %}
-          <div class="col-12 col-md-6">
-            <div class="d-flex justify-content-between align-items-center">
-              <div class="fw-semibold">{{ entry.parameter or key|replace('_', ' ')|title }}</div>
-              <div class="text-muted small">{{ entry.value|round(4) }} {{ entry.unit }}/day</div>
-            </div>
-          </div>
+              <div class="row g-2 mt-1">
+                {% for key, entry in daily_consumption.items() %}
+                  <div class="col-12 col-md-6">
+                    <div class="d-flex justify-content-between align-items-center">
+                      <div class="fw-semibold">{{ entry.label or entry.parameter or key|replace('_', ' ')|title }}</div>
+                      <div class="text-muted small">{{ entry.value|round(4) }} {{ entry.unit }}/day</div>
+                    </div>
+                  </div>
         {% endfor %}
       </div>
     </div>
@@ -786,3 +786,15 @@
   });
 </script>
 {% endblock %}
+        {% if tank.calcium_reactor_daily_ml is not none or tank.calcium_reactor_effluent_dkh is not none %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Calcium Reactor</div>
+                <div class="fw-semibold">Effluent</div>
+                <div class="text-secondary small">{{ tank.calcium_reactor_daily_ml|fmt2 if tank.calcium_reactor_daily_ml is not none else "—" }} ml/day</div>
+                <div class="text-secondary small">{{ tank.calcium_reactor_effluent_dkh|fmt2 if tank.calcium_reactor_effluent_dkh is not none else "—" }} dKH effluent</div>
+              </div>
+            </div>
+          </div>
+        {% endif %}
