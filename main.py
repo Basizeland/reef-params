@@ -2341,6 +2341,48 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     use_nopox = 1 if form.get("use_nopox") else 0
     use_calcium_reactor = 1 if form.get("use_calcium_reactor") else 0
     use_kalkwasser = 1 if form.get("use_kalkwasser") else 0
+    if not use_all_in_one:
+        all_in_one_solution = None
+        all_in_one_daily_ml = None
+        all_in_one_container_ml = None
+        all_in_one_remaining_ml = None
+    if not use_alk:
+        alk_solution = None
+        alk_daily_ml = None
+        alk_container_ml = None
+        alk_remaining_ml = None
+    if not use_kalkwasser:
+        kalk_solution = None
+        kalk_daily_ml = None
+        kalk_container_ml = None
+        kalk_remaining_ml = None
+    if not use_ca:
+        ca_solution = None
+        ca_daily_ml = None
+        ca_container_ml = None
+        ca_remaining_ml = None
+    if not use_mg:
+        mg_solution = None
+        mg_daily_ml = None
+        mg_container_ml = None
+        mg_remaining_ml = None
+    if not use_nitrate:
+        nitrate_solution = None
+        nitrate_daily_ml = None
+        nitrate_container_ml = None
+        nitrate_remaining_ml = None
+    if not use_phosphate:
+        phosphate_solution = None
+        phosphate_daily_ml = None
+        phosphate_container_ml = None
+        phosphate_remaining_ml = None
+    if not use_nopox:
+        nopox_daily_ml = None
+        nopox_container_ml = None
+        nopox_remaining_ml = None
+    if not use_calcium_reactor:
+        calcium_reactor_daily_ml = None
+        calcium_reactor_effluent_dkh = None
     all_in_one_container_ml = to_float(form.get("all_in_one_container_ml"))
     all_in_one_remaining_ml = to_float(form.get("all_in_one_remaining_ml"))
     alk_container_ml = to_float(form.get("alk_container_ml"))
