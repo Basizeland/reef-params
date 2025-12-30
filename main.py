@@ -396,7 +396,39 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
             html_rows += f"<tr><td style='padding:2px 0; color:#b91c1c;'>Overdue test: {pname}</td></tr>"
     if not html_rows:
         html_rows = "<tr><td style='padding:8px 0;'>No alerts today.</td></tr>"
-    html_body = f\"\"\"\n<!DOCTYPE html>\n<html>\n  <body style=\"margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">\n      <tr>\n        <td align=\"center\" style=\"padding:32px 12px;\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"max-width:560px; background:#ffffff; border-radius:12px; border:1px solid #e5e7eb;\">\n            <tr>\n              <td style=\"padding:28px 28px 8px;\">\n                <div style=\"font-size:18px; letter-spacing:0.08em; text-transform:uppercase; color:#0ea5e9; font-weight:700;\">{app_name}</div>\n              </td>\n            </tr>\n            <tr>\n              <td style=\"padding:8px 28px 16px;\">\n                <h1 style=\"margin:0 0 12px; font-size:22px; color:#0f172a;\">Daily Summary</h1>\n                <p style=\"margin:0 0 16px; font-size:14px; color:#475569;\">{summary['date']}</p>\n                <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"font-size:14px; color:#334155;\">\n                  {html_rows}\n                </table>\n                <div style=\"margin-top:16px;\">\n                  <a href=\"{base_url}\" style=\"display:inline-block; padding:10px 18px; background:#0ea5e9; color:#ffffff; text-decoration:none; border-radius:8px; font-size:14px;\">Open {app_name}</a>\n                </div>\n              </td>\n            </tr>\n          </table>\n        </td>\n      </tr>\n    </table>\n  </body>\n</html>\n\"\"\"\n    return send_email(user["email"], subject, text_body, html_body)
+    html_body = f"""
+<!DOCTYPE html>
+<html>
+  <body style="margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding:32px 12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px; background:#ffffff; border-radius:12px; border:1px solid #e5e7eb;">
+            <tr>
+              <td style="padding:28px 28px 8px;">
+                <div style="font-size:18px; letter-spacing:0.08em; text-transform:uppercase; color:#0ea5e9; font-weight:700;">{app_name}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 28px 16px;">
+                <h1 style="margin:0 0 12px; font-size:22px; color:#0f172a;">Daily Summary</h1>
+                <p style="margin:0 0 16px; font-size:14px; color:#475569;">{summary['date']}</p>
+                <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="font-size:14px; color:#334155;">
+                  {html_rows}
+                </table>
+                <div style="margin-top:16px;">
+                  <a href="{base_url}" style="display:inline-block; padding:10px 18px; background:#0ea5e9; color:#ffffff; text-decoration:none; border-radius:8px; font-size:14px;">Open {app_name}</a>
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+    return send_email(user["email"], subject, text_body, html_body)
 
 def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     db = get_db()
