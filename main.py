@@ -15,7 +15,7 @@ import importlib.util
 import smtplib
 from email.message import EmailMessage
 from io import BytesIO
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
@@ -261,9 +261,26 @@ def fmt2(v: Any) -> str:
         s = s.rstrip("0").rstrip(".")
     return s
 
+def _tzinfo():
+    tz_name = os.environ.get("APP_TIMEZONE") or os.environ.get("TZ") or "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(tz_name)
+    except Exception:
+        return None
+
+def _to_local(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    tz = _tzinfo()
+    if tz is None:
+        return dt
+    return dt.astimezone(tz)
+
 def dtfmt(v: Any) -> str:
     dt = parse_dt_any(v) if not isinstance(v, datetime) else v
     if dt is None: return ""
+    dt = _to_local(dt)
     day = dt.day
     if 10 <= day % 100 <= 20:
         suffix = "th"
@@ -275,14 +292,15 @@ def dtfmt_time(v: Any) -> str:
     dt = parse_dt_any(v) if not isinstance(v, datetime) else v
     if dt is None:
         return ""
+    dt = _to_local(dt)
     return dt.strftime("%H:%M:%S")
 
 def time_ago(v: Any) -> str:
     """Returns a string like '2 days ago' or 'Today'."""
     dt = parse_dt_any(v)
     if not dt: return ""
-    now = datetime.now()
-    diff = now - dt
+    now = _to_local(datetime.utcnow())
+    diff = now - _to_local(dt)
     
     if diff.days == 0:
         return "Today"
