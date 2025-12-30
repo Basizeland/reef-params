@@ -2776,10 +2776,7 @@ def calculators(request: Request):
 def calculators_post(request: Request, tank_id: int = Form(...), additive_id: int = Form(...), desired_change: float = Form(...)):
     db = get_db()
     user = get_current_user(db, request)
-    if user and not row_get(user, "admin"):
     tank = get_tank_for_user(db, user, tank_id)
-    else:
-        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     tank_profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
     if not tank or not additive:
