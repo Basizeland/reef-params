@@ -1088,6 +1088,22 @@ def init_db() -> None:
             SET default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=? 
             WHERE name=? AND default_target_low IS NULL
         """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
+
+    # Seed common additives if missing (strength = change per 1 mL / 100 L)
+    default_additives = [
+        ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend."),
+        ("Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0, "Saturated kalkwasser solution."),
+    ]
+    for name, parameter, strength, unit, max_daily, notes in default_additives:
+        cur.execute("SELECT id, active FROM additives WHERE name=? AND parameter=?", (name, parameter))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("""
+                INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, active)
+                VALUES (?, ?, ?, ?, ?, ?, 1)
+            """, (name, parameter, strength, unit, max_daily, notes))
+        elif row[1] == 0:
+            cur.execute("UPDATE additives SET active=1 WHERE id=?", (row[0],))
         
     db.commit()
 

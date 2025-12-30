@@ -53,18 +53,18 @@ def insert_additives():
 
         # --- TROPIC MARIN ---
         # All For Reef: 1ml raises 100L by ~0.05 dKH (based on 10ml/100L -> 0.5 dKH)
-        ("Tropic Marin", "All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0),
+        ("", "All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0),
 
         # --- KALKWASSER ---
         # Saturated kalkwasser: ~112 dKH solution -> 1ml/100L raises ~0.00112 dKH
-        ("Generic", "Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0),
+        ("", "Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0),
     ]
 
     print(f"Connecting to {DB_PATH}...")
     
     count = 0
     for brand, name, param, strength, unit, max_daily in additives:
-        full_name = f"{brand} {name}"
+        full_name = f"{brand} {name}".strip()
         
         # Check if exists to avoid duplicates
         cur.execute("SELECT id FROM additives WHERE name=? AND parameter=?", (full_name, param))
