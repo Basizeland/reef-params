@@ -1163,6 +1163,58 @@ def logout(request: Request):
     response.delete_cookie("session_token")
     return response
 
+@app.get("/account", response_class=HTMLResponse)
+def account_settings(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    db.close()
+    return templates.TemplateResponse("account.html", {"request": request})
+
+@app.post("/account/password")
+async def account_change_password(request: Request):
+    form = await request.form()
+    current_password = form.get("current_password") or ""
+    new_password = form.get("new_password") or ""
+    confirm_password = form.get("confirm_password") or ""
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    if not current_password or not new_password:
+        db.close()
+        return templates.TemplateResponse(
+            "account.html",
+            {"request": request, "error": "Current and new password are required."},
+        )
+    if new_password != confirm_password:
+        db.close()
+        return templates.TemplateResponse(
+            "account.html",
+            {"request": request, "error": "New passwords do not match."},
+        )
+    if not verify_password(current_password, user["password_hash"], user["password_salt"]):
+        db.close()
+        return templates.TemplateResponse(
+            "account.html",
+            {"request": request, "error": "Current password is incorrect."},
+        )
+    password_hash, password_salt = hash_password(new_password)
+    db.execute(
+        "UPDATE users SET password_hash=?, password_salt=? WHERE id=?",
+        (password_hash, password_salt, user["id"]),
+    )
+    log_audit(db, user, "password-change", "self-service")
+    db.commit()
+    db.close()
+    return templates.TemplateResponse(
+        "account.html",
+        {"request": request, "success": "Password updated successfully."},
+    )
+
 @app.get("/auth/google/start")
 def google_start(request: Request):
     client_id = os.environ.get("GOOGLE_CLIENT_ID")

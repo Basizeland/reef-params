@@ -138,9 +138,12 @@
                 {% if request.state.user is defined and request.state.user %}
                     <div class="dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-person-circle"></i> {{ request.state.user.email }}
+                            <i class="bi bi-person-circle"></i> Account
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                            <li class="dropdown-header text-muted small">{{ request.state.user.email }}</li>
+                            <li><a class="dropdown-item" href="/account"><i class="bi bi-key"></i> Change Password</a></li>
+                            <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="/auth/logout"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
                         </ul>
                     </div>
