@@ -1793,6 +1793,36 @@ def tank_detail(request: Request, tank_id: int):
             "dosing_container_updated_at": row_get(profile, "dosing_container_updated_at"),
             "dosing_low_days": dosing_low_days,
         })
+
+    daily_consumption = {}
+    if profile:
+        volume_l = row_get(tank_view, "volume_l")
+        if volume_l:
+            additives = q(db, "SELECT name, parameter, strength, unit FROM additives WHERE active=1")
+            additive_by_name = {str(a["name"]).strip().lower(): a for a in additives}
+            dosing_entries = [
+                ("all_in_one", tank_view.get("all_in_one_solution"), tank_view.get("all_in_one_daily_ml")),
+                ("alk", tank_view.get("alk_solution"), tank_view.get("alk_daily_ml")),
+                ("ca", tank_view.get("ca_solution"), tank_view.get("ca_daily_ml")),
+                ("mg", tank_view.get("mg_solution"), tank_view.get("mg_daily_ml")),
+                ("nitrate", tank_view.get("nitrate_solution"), tank_view.get("nitrate_daily_ml")),
+                ("phosphate", tank_view.get("phosphate_solution"), tank_view.get("phosphate_daily_ml")),
+            ]
+            for key, solution_name, daily_ml in dosing_entries:
+                if not solution_name or daily_ml in (None, 0):
+                    continue
+                additive = additive_by_name.get(str(solution_name).strip().lower())
+                if not additive:
+                    continue
+                strength = row_get(additive, "strength")
+                if strength in (None, 0):
+                    continue
+                daily_change = float(daily_ml) * float(strength) * (100.0 / float(volume_l))
+                daily_consumption[key] = {
+                    "value": daily_change,
+                    "unit": row_get(additive, "unit") or "",
+                    "parameter": row_get(additive, "parameter") or "",
+                }
     
     low_container_alerts = []
     if profile:
@@ -1944,6 +1974,7 @@ def tank_detail(request: Request, tank_id: int):
         {
             "request": request,
             "tank": tank_view,
+            "daily_consumption": daily_consumption,
             "params": params,
             "recent_samples": recent_samples,
             "sample_values": sample_values,

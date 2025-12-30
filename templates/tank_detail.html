@@ -333,6 +333,23 @@
           </div>
         {% endif %}
   </div>
+  {% if daily_consumption %}
+  <div class="card border-0 bg-light mb-5">
+    <div class="card-body py-3">
+      <div class="text-muted text-uppercase small fw-semibold">Estimated Daily Consumption</div>
+      <div class="row g-2 mt-1">
+        {% for key, entry in daily_consumption.items() %}
+          <div class="col-12 col-md-6">
+            <div class="d-flex justify-content-between align-items-center">
+              <div class="fw-semibold">{{ entry.parameter or key|replace('_', ' ')|title }}</div>
+              <div class="text-muted small">{{ entry.value|round(4) }} {{ entry.unit }}/day</div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
 {% endif %}
 
 <h4 class="mb-3 h5 fw-bold">Latest Readings</h4>
