@@ -56,7 +56,7 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
     use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     smtp_username = os.environ.get("SMTP_USERNAME")
     smtp_password = os.environ.get("SMTP_PASSWORD")
-    app_name = os.environ.get("APP_NAME", "Reef Params")
+    app_name = os.environ.get("APP_NAME", "Reef Metrics")
     base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
 
     message = EmailMessage()
@@ -68,6 +68,45 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
         f"Welcome to {app_name}! Your account is ready.\n\n"
         f"Get started here: {base_url}\n\n"
         "Thanks for joining!"
+    )
+    message.add_alternative(
+        f\"\"\"\
+<!DOCTYPE html>
+<html>
+  <body style="margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding:32px 12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px; background:#ffffff; border-radius:12px; border:1px solid #e5e7eb;">
+            <tr>
+              <td style="padding:28px 28px 8px;">
+                <div style="font-size:18px; letter-spacing:0.08em; text-transform:uppercase; color:#0ea5e9; font-weight:700;">{app_name}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 28px 16px;">
+                <h1 style="margin:0 0 12px; font-size:24px; color:#0f172a;">Welcome to {app_name}</h1>
+                <p style="margin:0 0 16px; font-size:15px; color:#334155;">
+                  Hi {username or recipient}, your account is ready. You can start tracking your reef metrics right away.
+                </p>
+                <a href="{base_url}" style="display:inline-block; padding:10px 18px; background:#0ea5e9; color:#ffffff; text-decoration:none; border-radius:8px; font-size:14px;">
+                  Open {app_name}
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 28px 24px; font-size:12px; color:#94a3b8;">
+                If you did not create this account, you can ignore this email.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+\"\"\",
+        subtype="html",
     )
     try:
         if use_ssl:
