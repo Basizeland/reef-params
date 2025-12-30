@@ -10,7 +10,8 @@ import hashlib
 import urllib.parse
 import urllib.request
 import csv
-import pandas as pd
+import importlib
+import importlib.util
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,6 +27,20 @@ DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reef.bsizeland.com")
 
 app = FastAPI(title="Reef Tank Parameters")
+
+def get_pandas():
+    if importlib.util.find_spec("pandas") is None:
+        return None
+    return importlib.import_module("pandas")
+
+def require_pandas():
+    pandas = get_pandas()
+    if pandas is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Excel import/export requires pandas. Install pandas and restart the app.",
+        )
+    return pandas
 
 # --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
 RECOMMENDED_DEFAULTS = {
@@ -1586,6 +1601,7 @@ def tank_journal_delete(tank_id: int, entry_id: int):
 
 @app.get("/tanks/{tank_id}/export")
 def tank_export(request: Request, tank_id: int):
+    pd = require_pandas()
     db = get_db()
     tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
@@ -2928,6 +2944,7 @@ async def assign_tank(request: Request, tank_id: int):
 
 @app.get("/admin/download-template")
 def download_template(request: Request):
+    pd = require_pandas()
     db = get_db()
     require_admin(get_current_user(db, request))
     # 1. Get your actual parameters for column headers
@@ -2984,6 +3001,7 @@ def download_template(request: Request):
 
 @app.get("/admin/export-all")
 def export_all(request: Request):
+    pd = require_pandas()
     db = get_db()
     require_admin(get_current_user(db, request))
     tanks = get_visible_tanks(db, request)
@@ -3103,6 +3121,15 @@ def api_samples(request: Request, tank_id: int, limit: int = 50):
     
 @app.post("/admin/upload-excel")
 async def upload_excel(request: Request, file: UploadFile = File(...)):
+    pd = get_pandas()
+    if pd is None:
+        return templates.TemplateResponse(
+            "import_manager.html",
+            {
+                "request": request,
+                "error": "Excel import requires pandas. Install pandas and restart the app.",
+            },
+        )
     if not file.filename.endswith(('.xlsx', '.xls')):
         return templates.TemplateResponse("import_manager.html", {"request": request, "error": "Invalid format. Please upload an Excel file."})
     
