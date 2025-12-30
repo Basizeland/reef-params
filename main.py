@@ -1102,6 +1102,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         username = (email.split("@")[0] if email else "") or email
         first_user = not users_exist(db)
         role = "admin" if first_user else "user"
+        oauth_password_hash, oauth_password_salt = hash_password(secrets.token_urlsafe(24))
         db.execute(
             "INSERT INTO users (email, username, role, password_hash, password_salt, google_sub, created_at, admin) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1109,8 +1110,8 @@ def google_callback(request: Request, code: str | None = None, state: str | None
                 email,
                 username,
                 role,
-                "",
-                "",
+                oauth_password_hash,
+                oauth_password_salt,
                 sub,
                 datetime.utcnow().isoformat(),
                 1 if first_user else 0,
