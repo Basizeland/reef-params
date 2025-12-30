@@ -2303,14 +2303,68 @@ async def tank_samples_dedupe(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     rows = q(db, "SELECT id, taken_at FROM samples WHERE tank_id=? ORDER BY taken_at ASC, id ASC", (tank_id,))
-    seen = {}
-    duplicates = []
+    sample_ids = [row["id"] for row in rows]
+    samples_by_id: Dict[int, datetime.date] = {}
     for row in rows:
-        key = row_get(row, "taken_at") or ""
-        if key in seen:
-            duplicates.append(row["id"])
+        dt = parse_dt_any(row_get(row, "taken_at"))
+        if dt is None:
+            continue
+        samples_by_id[row["id"]] = dt.date()
+    sample_values: Dict[int, Dict[str, Any]] = {}
+    if sample_ids:
+        placeholders = ",".join(["?"] * len(sample_ids))
+        mode = values_mode(db)
+        if mode == "sample_values":
+            rows = q(
+                db,
+                f"SELECT pd.name AS name, sv.value AS value, s.id AS sample_id "
+                f"FROM sample_values sv "
+                f"JOIN parameter_defs pd ON pd.id = sv.parameter_id "
+                f"JOIN samples s ON s.id = sv.sample_id "
+                f"WHERE sv.sample_id IN ({placeholders})",
+                tuple(sample_ids),
+            )
         else:
-            seen[key] = row["id"]
+            rows = q(
+                db,
+                f"SELECT p.name AS name, p.value AS value, s.id AS sample_id "
+                f"FROM parameters p "
+                f"JOIN samples s ON s.id = p.sample_id "
+                f"WHERE p.sample_id IN ({placeholders})",
+                tuple(sample_ids),
+            )
+        for row in rows:
+            name = row_get(row, "name")
+            if not name:
+                continue
+            sid = int(row["sample_id"])
+            sample_values.setdefault(sid, {})[name] = row_get(row, "value")
+
+    duplicates = []
+    grouped_by_date: Dict[datetime.date, List[int]] = {}
+    for sample_id, sample_date in samples_by_id.items():
+        grouped_by_date.setdefault(sample_date, []).append(sample_id)
+
+    for sample_date, ids in grouped_by_date.items():
+        if len(ids) < 2:
+            continue
+        kept: List[int] = []
+        for sid in ids:
+            values = sample_values.get(sid, {})
+            matched = False
+            for kept_id in kept:
+                kept_values = sample_values.get(kept_id, {})
+                if any(
+                    name in kept_values and kept_values[name] == value
+                    for name, value in values.items()
+                ):
+                    matched = True
+                    break
+            if matched:
+                duplicates.append(sid)
+            else:
+                kept.append(sid)
+
     removed = 0
     if duplicates:
         cur = db.cursor()
