@@ -12,6 +12,8 @@ import urllib.request
 import csv
 import importlib
 import importlib.util
+import smtplib
+from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -41,6 +43,38 @@ def require_pandas():
             detail="Excel import/export requires pandas. Install pandas and restart the app.",
         )
     return pandas
+
+def send_welcome_email(recipient: str, username: str):
+    host = os.environ.get("SMTP_HOST")
+    sender = os.environ.get("SMTP_FROM")
+    if not host or not sender or not recipient:
+        return
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+    smtp_username = os.environ.get("SMTP_USERNAME")
+    smtp_password = os.environ.get("SMTP_PASSWORD")
+    app_name = os.environ.get("APP_NAME", "Reef Params")
+    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
+
+    message = EmailMessage()
+    message["Subject"] = f"Welcome to {app_name}"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        f"Hi {username or recipient},\n\n"
+        f"Welcome to {app_name}! Your account is ready.\n\n"
+        f"Get started here: {base_url}\n\n"
+        "Thanks for joining!"
+    )
+    try:
+        with smtplib.SMTP(host, port, timeout=10) as server:
+            if use_tls:
+                server.starttls()
+            if smtp_username and smtp_password:
+                server.login(smtp_username, smtp_password)
+            server.send_message(message)
+    except Exception as exc:
+        print(f"Welcome email failed: {exc}")
 
 # --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
 RECOMMENDED_DEFAULTS = {
@@ -978,6 +1012,7 @@ async def register_submit(request: Request):
         (email, username, role, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
     )
     user = one(db, "SELECT id FROM users WHERE email=?", (email,))
+    send_welcome_email(email, username)
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
@@ -1069,6 +1104,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
             "INSERT INTO users (email, username, role, google_sub, created_at) VALUES (?, ?, ?, ?, ?)",
             (email, username, "user", sub, datetime.utcnow().isoformat()),
         )
+        send_welcome_email(email, username)
         user = one(db, "SELECT * FROM users WHERE email=?", (email,))
     token = create_session(db, user["id"])
     db.close()
