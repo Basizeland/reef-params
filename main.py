@@ -126,8 +126,7 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
     </table>
   </body>
 </html>
-""",
-    )
+"""
     return send_email(recipient, subject, text_body, html_body)
 
 # --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
