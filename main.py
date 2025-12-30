@@ -3339,6 +3339,8 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
             # Resolve readings for all parameters
             for p in pdefs:
                 val = to_float(row.get(p["name"]))
+                if isinstance(val, float) and math.isnan(val):
+                    continue
                 if val is not None:
                     insert_sample_reading(db, sid, p["name"], val)
         
