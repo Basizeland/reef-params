@@ -44,12 +44,13 @@ def require_pandas():
         )
     return pandas
 
-def send_welcome_email(recipient: str, username: str):
+def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
     host = os.environ.get("SMTP_HOST")
     sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME")
     if not host or not sender or not recipient:
-        print("Welcome email skipped: missing SMTP_HOST/SMTP_FROM or recipient")
-        return
+        msg = "missing SMTP_HOST/SMTP_FROM or recipient"
+        print(f"Welcome email skipped: {msg}")
+        return False, msg
     port = int(os.environ.get("SMTP_PORT", "587"))
     use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
@@ -79,8 +80,11 @@ def send_welcome_email(recipient: str, username: str):
             if smtp_username and smtp_password:
                 server.login(smtp_username, smtp_password)
             server.send_message(message)
+        return True, ""
     except Exception as exc:
-        print(f"Welcome email failed: {exc}")
+        msg = str(exc)
+        print(f"Welcome email failed: {msg}")
+        return False, msg
 
 # --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
 RECOMMENDED_DEFAULTS = {
@@ -1077,7 +1081,13 @@ async def register_submit(request: Request):
         (email, username, role, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
     )
     user = one(db, "SELECT id FROM users WHERE email=?", (email,))
-    send_welcome_email(email, username)
+    sent, reason = send_welcome_email(email, username)
+    log_audit(
+        db,
+        user,
+        "welcome-email",
+        f"email={email} sent={sent} reason={reason}" if reason else f"email={email} sent={sent}",
+    )
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
@@ -1182,8 +1192,14 @@ def google_callback(request: Request, code: str | None = None, state: str | None
                 1 if first_user else 0,
             ),
         )
-        send_welcome_email(email, username)
         user = one(db, "SELECT * FROM users WHERE email=?", (email,))
+        sent, reason = send_welcome_email(email, username)
+        log_audit(
+            db,
+            user,
+            "welcome-email",
+            f"email={email} sent={sent} reason={reason}" if reason else f"email={email} sent={sent}",
+        )
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
