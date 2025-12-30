@@ -1413,10 +1413,7 @@ async def sample_delete(sample_id: int):
 def tank_detail(request: Request, tank_id: int):
     db = get_db()
     user = get_current_user(db, request)
-    if user and not row_get(user, "admin"):
     tank = get_tank_for_user(db, user, tank_id)
-    else:
-        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
         db.close()
         return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": None, "params": [], "recent_samples": [], "sample_values": {}, "latest_vals": {}, "status_by_param_id": {}, "targets": [], "series": [], "chart_targets": [], "selected_parameter_id": "", "format_value": format_value, "target_map": {}})
