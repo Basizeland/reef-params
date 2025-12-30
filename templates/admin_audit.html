@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Admin: Audit Log</h1>
+    <div class="text-muted small">Track changes made by users.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/admin/users">
+    <i class="bi bi-arrow-left"></i> Back to Users
+  </a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">When</th>
+          <th>User</th>
+          <th>Action</th>
+          <th class="text-end pe-3">Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+          <tr>
+            <td class="ps-3">{{ log.created_at|dtfmt }}</td>
+            <td>{{ log.actor_email }}</td>
+            <td>{{ log.action }}</td>
+            <td class="text-end pe-3 text-muted small">{{ log.details }}</td>
+          </tr>
+        {% endfor %}
+        {% if logs|length == 0 %}
+          <tr>
+            <td colspan="4" class="text-center text-muted py-3">No audit entries yet.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

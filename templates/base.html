@@ -90,6 +90,7 @@
                             </li>
                             {% if request.state.user is defined and request.state.user and request.state.user.admin %}
                                 <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people"></i> Users</a></li>
+                                <li><a class="dropdown-item" href="/admin/audit"><i class="bi bi-journal-text"></i> Audit Log</a></li>
                             {% endif %}
                         </ul>
                     </li>

@@ -178,13 +178,14 @@ def collect_dosing_notifications(
         where_clause = "WHERE p.tank_id=?"
         params.append(tank_id)
     elif owner_user_id is not None:
-        where_clause = "WHERE t.owner_user_id=?"
-        params.append(owner_user_id)
+        where_clause = "WHERE t.owner_user_id=? OR ut.user_id=?"
+        params.extend([owner_user_id, owner_user_id])
     rows = q(
         db,
         f"""SELECT t.id AS tank_id, t.name AS tank_name, p.*
             FROM tank_profiles p
             JOIN tanks t ON t.id = p.tank_id
+            LEFT JOIN user_tanks ut ON ut.tank_id = t.id
             {where_clause}""",
         tuple(params),
     )
@@ -282,10 +283,50 @@ def get_current_user(db: sqlite3.Connection, request: Request) -> Optional[sqlit
 def get_visible_tanks(db: sqlite3.Connection, request: Request) -> List[sqlite3.Row]:
     user = get_current_user(db, request)
     if user and row_get(user, "admin"):
-        return q(db, "SELECT * FROM tanks ORDER BY name")
+        return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
     if user:
-        return q(db, "SELECT * FROM tanks WHERE owner_user_id=? ORDER BY name", (user["id"],))
-    return q(db, "SELECT * FROM tanks ORDER BY name")
+        return q(
+            db,
+            """SELECT DISTINCT t.*
+               FROM tanks t
+               LEFT JOIN user_tanks ut ON ut.tank_id = t.id
+               WHERE t.owner_user_id=? OR ut.user_id=?
+               ORDER BY COALESCE(t.sort_order, 0), t.name""",
+            (user["id"], user["id"]),
+        )
+    return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+
+def get_visible_tank_ids(db: sqlite3.Connection, user: Optional[sqlite3.Row]) -> List[int]:
+    if user and row_get(user, "admin"):
+        rows = q(db, "SELECT id FROM tanks ORDER BY id")
+        return [row["id"] for row in rows]
+    if user:
+        rows = q(
+            db,
+            """SELECT DISTINCT t.id
+               FROM tanks t
+               LEFT JOIN user_tanks ut ON ut.tank_id = t.id
+               WHERE t.owner_user_id=? OR ut.user_id=?
+               ORDER BY t.id""",
+            (user["id"], user["id"]),
+        )
+        return [row["id"] for row in rows]
+    rows = q(db, "SELECT id FROM tanks ORDER BY id")
+    return [row["id"] for row in rows]
+
+def get_tank_for_user(db: sqlite3.Connection, user: Optional[sqlite3.Row], tank_id: int) -> Optional[sqlite3.Row]:
+    if user and row_get(user, "admin"):
+        return one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    if user:
+        return one(
+            db,
+            """SELECT DISTINCT t.*
+               FROM tanks t
+               LEFT JOIN user_tanks ut ON ut.tank_id = t.id
+               WHERE t.id=? AND (t.owner_user_id=? OR ut.user_id=?)""",
+            (tank_id, user["id"], user["id"]),
+        )
+    return one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
 
 def require_admin(user: Optional[sqlite3.Row]) -> None:
     if not user or (row_get(user, "admin") not in (1, True) and row_get(user, "role") != "admin"):
@@ -339,6 +380,18 @@ def row_get(row: Any, key: str, default: Any = None) -> Any:
 def table_exists(db: sqlite3.Connection, name: str) -> bool:
     r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
     return r is not None
+
+def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, details: str = "") -> None:
+    if not user:
+        return
+    try:
+        db.execute(
+            "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+            (user["id"], action, details, datetime.utcnow().isoformat()),
+        )
+        db.commit()
+    except Exception:
+        pass
 
 def ensure_column(db: sqlite3.Connection, table: str, col: str, ddl: str) -> None:
     cur = db.execute(f"PRAGMA table_info({table})")
@@ -741,6 +794,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, username TEXT, role TEXT, password_hash TEXT, password_salt TEXT, google_sub TEXT, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, session_token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS user_tanks (user_id INTEGER NOT NULL, tank_id INTEGER NOT NULL, PRIMARY KEY (user_id, tank_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
@@ -752,6 +806,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL, FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
@@ -776,6 +831,12 @@ def init_db() -> None:
     ensure_column(db, "parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
     ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
     ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
+
+    if table_exists(db, "user_tanks"):
+        db.execute(
+            "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) "
+            "SELECT owner_user_id, id FROM tanks WHERE owner_user_id IS NOT NULL"
+        )
     
     # NEW: Add default target columns
     ensure_column(db, "parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
@@ -850,25 +911,23 @@ async def auth_middleware(request: Request, call_next):
     if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
         return await call_next(request)
     db = get_db()
+    user = None
     try:
         user = get_current_user(db, request)
         request.state.user = user
         if users_exist(db) and user is None:
             return redirect("/auth/login")
+        response = await call_next(request)
+        if user and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            log_audit(db, user, f"{request.method} {path}", f"status={response.status_code}")
+        return response
     finally:
         db.close()
-    return await call_next(request)
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db()
-    user = get_current_user(db, request)
-    if user and row_get(user, "admin"):
-        tanks = q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
-    elif user:
-        tanks = q(db, "SELECT * FROM tanks WHERE owner_user_id=? ORDER BY COALESCE(sort_order, 0), name", (user["id"],))
-    else:
-        tanks = q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    tanks = get_visible_tanks(db, request)
     tank_cards = []
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
@@ -1129,13 +1188,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
 @app.get("/tanks/reorder", response_class=HTMLResponse)
 def tank_reorder(request: Request):
     db = get_db()
-    user = get_current_user(db, request)
-    if user and row_get(user, "admin"):
-        tanks = q(db, "SELECT id, name, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
-    elif user:
-        tanks = q(db, "SELECT id, name, sort_order FROM tanks WHERE owner_user_id=? ORDER BY COALESCE(sort_order, 0), name", (user["id"],))
-    else:
-        tanks = q(db, "SELECT id, name, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+    tanks = get_visible_tanks(db, request)
     db.close()
     return templates.TemplateResponse("tank_reorder.html", {"request": request, "tanks": tanks})
 
@@ -1147,11 +1200,7 @@ async def tank_order_save(request: Request):
         return {"ok": False}
     db = get_db()
     user = get_current_user(db, request)
-    allowed_ids = set()
-    if user and row_get(user, "admin"):
-        allowed_ids = {row["id"] for row in q(db, "SELECT id FROM tanks")}
-    elif user:
-        allowed_ids = {row["id"] for row in q(db, "SELECT id FROM tanks WHERE owner_user_id=?", (user["id"],))}
+    allowed_ids = set(get_visible_tank_ids(db, user))
     cur = db.cursor()
     for idx, tank_id in enumerate(order, start=1):
         tank_id = int(tank_id)
@@ -1222,6 +1271,11 @@ async def tank_new(request: Request):
         (name, volume_l, next_order, user["id"] if user else None),
     )
     tank_id = cur.lastrowid
+    if user:
+        cur.execute(
+            "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
+            (user["id"], tank_id),
+        )
     profile_fields = {
         "tank_id": tank_id,
         "volume_l": volume_l,
@@ -1360,7 +1414,7 @@ def tank_detail(request: Request, tank_id: int):
     db = get_db()
     user = get_current_user(db, request)
     if user and not row_get(user, "admin"):
-        tank = one(db, "SELECT * FROM tanks WHERE id=? AND owner_user_id=?", (tank_id, user["id"]))
+    tank = get_tank_for_user(db, user, tank_id)
     else:
         tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
@@ -2726,7 +2780,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
     db = get_db()
     user = get_current_user(db, request)
     if user and not row_get(user, "admin"):
-        tank = one(db, "SELECT * FROM tanks WHERE id=? AND owner_user_id=?", (tank_id, user["id"]))
+    tank = get_tank_for_user(db, user, tank_id)
     else:
         tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     tank_profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
@@ -2972,24 +3026,91 @@ def admin_users(request: Request):
     db = get_db()
     user = get_current_user(db, request)
     require_admin(user)
-    users = q(db, "SELECT id, email, admin, created_at FROM users ORDER BY created_at DESC")
+    users = q(db, "SELECT id, email, admin, role, created_at FROM users ORDER BY created_at DESC")
     tanks = q(db, "SELECT id, name, owner_user_id FROM tanks ORDER BY name")
+    assignments = q(db, "SELECT user_id, tank_id FROM user_tanks")
+    user_tanks_map: Dict[int, List[int]] = {}
+    for row in assignments:
+        user_tanks_map.setdefault(row["user_id"], []).append(row["tank_id"])
     db.close()
-    return templates.TemplateResponse("admin_users.html", {"request": request, "users": users, "tanks": tanks})
+    return templates.TemplateResponse(
+        "admin_users.html",
+        {
+            "request": request,
+            "users": users,
+            "tanks": tanks,
+            "user_tanks_map": user_tanks_map,
+        },
+    )
+
+@app.post("/admin/users/{user_id}/role")
+async def admin_user_role(request: Request, user_id: int):
+    form = await request.form()
+    make_admin = (form.get("admin") or "").lower() in {"1", "true", "on", "yes"}
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    role = "admin" if make_admin else "user"
+    db.execute("UPDATE users SET admin=?, role=? WHERE id=?", (1 if make_admin else 0, role, user_id))
+    log_audit(db, current_user, "user-role-update", f"user_id={user_id} admin={make_admin}")
+    db.commit()
+    db.close()
+    return redirect("/admin/users")
+
+@app.post("/admin/users/{user_id}/tanks")
+async def admin_user_tanks(request: Request, user_id: int):
+    form = await request.form()
+    tank_ids = form.getlist("tank_ids")
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
+    for tank_id in tank_ids:
+        try:
+            tid = int(tank_id)
+        except Exception:
+            continue
+        db.execute("INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)", (user_id, tid))
+    log_audit(db, current_user, "user-tanks-update", f"user_id={user_id} tanks={','.join(tank_ids)}")
+    db.commit()
+    db.close()
+    return redirect("/admin/users")
 
 @app.post("/admin/tanks/{tank_id}/assign")
 async def assign_tank(request: Request, tank_id: int):
     form = await request.form()
     user_id = to_float(form.get("user_id"))
     db = get_db()
-    require_admin(get_current_user(db, request))
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
     if user_id is None:
         db.execute("UPDATE tanks SET owner_user_id=NULL WHERE id=?", (tank_id,))
     else:
         db.execute("UPDATE tanks SET owner_user_id=? WHERE id=?", (int(user_id), tank_id))
+        db.execute(
+            "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
+            (int(user_id), tank_id),
+        )
+    log_audit(db, current_user, "tank-owner-update", f"tank_id={tank_id} owner_id={user_id}")
     db.commit()
     db.close()
     return redirect("/admin/users")
+
+@app.get("/admin/audit", response_class=HTMLResponse)
+def admin_audit(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    logs = q(
+        db,
+        """SELECT a.*, u.email AS actor_email
+           FROM audit_logs a
+           JOIN users u ON u.id = a.actor_user_id
+           ORDER BY a.created_at DESC
+           LIMIT 500""",
+    )
+    db.close()
+    return templates.TemplateResponse("admin_audit.html", {"request": request, "logs": logs})
 
 @app.get("/admin/download-template")
 def download_template(request: Request):
@@ -3148,10 +3269,7 @@ def api_tanks(request: Request):
 def api_samples(request: Request, tank_id: int, limit: int = 50):
     db = get_db()
     user = get_current_user(db, request)
-    if user and not row_get(user, "admin"):
-        tank = one(db, "SELECT * FROM tanks WHERE id=? AND owner_user_id=?", (tank_id, user["id"]))
-    else:
-        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -3205,6 +3323,11 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
                     (t_name, vol, current_user["id"] if current_user else None),
                 )
                 tid = cur.lastrowid
+                if current_user:
+                    cur.execute(
+                        "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
+                        (current_user["id"], tid),
+                    )
                 cur.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?,?,100)", (tid, vol))
                 stats["tanks"] += 1
             else:
