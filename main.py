@@ -238,6 +238,11 @@ def collect_dosing_notifications(
             {where_clause}""",
         tuple(params),
     )
+    dismissed_rows = q(
+        db,
+        "SELECT tank_id, container_key FROM dosing_notifications WHERE dismissed_at IS NOT NULL",
+    )
+    dismissed_keys = {(row["tank_id"], row["container_key"]) for row in dismissed_rows}
     notifications: List[Dict[str, Any]] = []
     dosing_containers = [
         ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "all_in_one_solution", "All-in-one"),
@@ -268,6 +273,8 @@ def collect_dosing_notifications(
                 continue
             days_remaining = remaining_ml / float(daily_ml)
             if days_remaining <= threshold_days:
+                if (row_get(row, "tank_id"), key) in dismissed_keys:
+                    continue
                 notifications.append(
                     {
                         "tank_id": row_get(row, "tank_id"),
@@ -275,11 +282,12 @@ def collect_dosing_notifications(
                         "label": label,
                         "days": days_remaining,
                         "threshold": threshold_days,
+                        "container_key": key,
                     }
                 )
                 exists = one(
                     db,
-                    "SELECT 1 FROM dosing_notifications WHERE tank_id=? AND container_key=? AND notified_on=?",
+                    "SELECT 1 FROM dosing_notifications WHERE tank_id=? AND container_key=? AND notified_on=? AND dismissed_at IS NULL",
                     (row_get(row, "tank_id"), key, today),
                 )
                 if not exists:
@@ -880,6 +888,7 @@ def init_db() -> None:
     ensure_column(db, "parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
     ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
     ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
+    ensure_column(db, "dosing_notifications", "dismissed_at", "ALTER TABLE dosing_notifications ADD COLUMN dismissed_at TEXT")
 
     if table_exists(db, "user_tanks"):
         db.execute(
@@ -2162,6 +2171,28 @@ async def dosing_container_action(request: Request, tank_id: int):
         db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
+
+@app.post("/notifications/dismiss")
+async def dismiss_notification(request: Request):
+    form = await request.form()
+    tank_id = to_float(form.get("tank_id"))
+    container_key = (form.get("container_key") or "").strip()
+    if tank_id is None or not container_key:
+        return redirect("/")
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, int(tank_id))
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    db.execute(
+        "UPDATE dosing_notifications SET dismissed_at=? WHERE tank_id=? AND container_key=?",
+        (datetime.utcnow().isoformat(), int(tank_id), container_key),
+    )
+    log_audit(db, user, "notification-dismiss", f"tank_id={tank_id} container_key={container_key}")
+    db.commit()
+    db.close()
+    return redirect(request.headers.get("referer") or "/")
 
 @app.get("/tanks/{tank_id}/add", response_class=HTMLResponse)
 def add_sample_form(request: Request, tank_id: int):

@@ -110,13 +110,24 @@
                     <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 320px;">
                         <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
                         {% if global_notifications %}
-                            {% for alert in global_notifications %}
-                                <li>
-                                    <a class="dropdown-item text-wrap" href="/tanks/{{ alert.tank_id }}">
-                                        <div class="fw-semibold">{{ alert.tank_name }}</div>
-                                        <div class="small text-muted">{{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})</div>
-                                    </a>
+                            {% for group in global_notifications|groupby('tank_id') %}
+                                {% set alerts = group.list %}
+                                <li class="dropdown-item text-wrap">
+                                    <div class="fw-semibold">{{ alerts[0].tank_name }}</div>
+                                    {% for alert in alerts %}
+                                        <div class="d-flex align-items-start justify-content-between gap-2 mt-2">
+                                            <a class="text-decoration-none text-reset small" href="/tanks/{{ alert.tank_id }}">
+                                                {{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})
+                                            </a>
+                                            <form method="post" action="/notifications/dismiss" class="ms-2">
+                                                <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
+                                                <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                                                <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
+                                            </form>
+                                        </div>
+                                    {% endfor %}
                                 </li>
+                                <li><hr class="dropdown-divider"></li>
                             {% endfor %}
                         {% else %}
                             <li class="dropdown-item text-muted small">No dosing alerts right now.</li>
