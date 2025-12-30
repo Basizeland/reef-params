@@ -67,7 +67,32 @@
           <tr>
             <td class="ps-3">{{ log.created_at|dtfmt }} {{ log.created_at|dtfmt_time }}</td>
             <td>{{ log.actor_email }}</td>
-            <td>{{ log.action }}</td>
+            <td>
+              {% set action_label = log.action %}
+              {% if log.action.startswith('GET /') %}
+                {% if log.action == 'GET /' %}
+                  {% set action_label = 'Viewed dashboard' %}
+                {% elif log.action == 'GET /admin/audit' %}
+                  {% set action_label = 'Viewed audit log' %}
+                {% elif log.action == 'GET /admin/users' %}
+                  {% set action_label = 'Viewed users' %}
+                {% elif log.action.startswith('GET /tanks/') %}
+                  {% set action_label = 'Viewed tank details' %}
+                {% elif log.action.startswith('GET /tools/dose-plan') %}
+                  {% set action_label = 'Viewed dose plan' %}
+                {% else %}
+                  {% set action_label = 'Viewed page' %}
+                {% endif %}
+              {% elif log.action.startswith('POST /tools/dose-plan/check') %}
+                {% set action_label = 'Updated dose plan check' %}
+              {% elif log.action.startswith('POST /admin/send-daily-summaries') %}
+                {% set action_label = 'Sent daily summaries' %}
+              {% elif log.action.startswith('POST /notifications/dismiss') %}
+                {% set action_label = 'Dismissed notification' %}
+              {% endif %}
+              <div class="fw-semibold">{{ action_label }}</div>
+              <div class="text-muted small">{{ log.action }}</div>
+            </td>
             <td class="text-end pe-3 text-muted small">{{ log.details }}</td>
           </tr>
         {% endfor %}
