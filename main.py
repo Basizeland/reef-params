@@ -217,6 +217,14 @@ def get_current_user(db: sqlite3.Connection, request: Request) -> Optional[sqlit
     """, (token, datetime.utcnow().isoformat()))
     return row
 
+def get_visible_tanks(db: sqlite3.Connection, request: Request) -> List[sqlite3.Row]:
+    user = get_current_user(db, request)
+    if user and row_get(user, "admin"):
+        return q(db, "SELECT * FROM tanks ORDER BY name")
+    if user:
+        return q(db, "SELECT * FROM tanks WHERE owner_user_id=? ORDER BY name", (user["id"],))
+    return q(db, "SELECT * FROM tanks ORDER BY name")
+
 def require_admin(user: Optional[sqlite3.Row]) -> None:
     if not user or (row_get(user, "admin") not in (1, True) and row_get(user, "role") != "admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1074,7 +1082,7 @@ async def tank_order_save(request: Request):
 @app.get("/add", response_class=HTMLResponse)
 def add_reading_selector(request: Request):
     db = get_db()
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    tanks = get_visible_tanks(db, request)
     db.close()
     html = """<html><head><title>Add Reading</title></head><body style="font-family: sans-serif; max-width: 720px; margin: 40px auto;"><h2>Add Reading</h2><form method="get" action="/tanks/0/add" onsubmit="event.preventDefault(); window.location = '/tanks/' + document.getElementById('tank').value + '/add';"><label>Select tank</label><br/><select id="tank" name="tank" style="width:100%; padding:10px; margin:10px 0;" required>{options}</select><button type="submit" style="padding:10px 16px;">Continue</button></form><p><a href="/">Back to dashboard</a></p></body></html>"""
     options = "\n".join([f'<option value="{t["id"]}">{t["name"]}</option>' for t in tanks])
@@ -2618,7 +2626,7 @@ def merge_parameters_run(request: Request):
 @app.get("/tools/calculators/", response_class=HTMLResponse, include_in_schema=False)
 def calculators(request: Request):
     db = get_db()
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    tanks = get_visible_tanks(db, request)
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
     grouped_additives: Dict[str, List[sqlite3.Row]] = {}
     for a in additives_rows:
@@ -2632,7 +2640,11 @@ def calculators(request: Request):
 @app.post("/tools/calculators", response_class=HTMLResponse)
 def calculators_post(request: Request, tank_id: int = Form(...), additive_id: int = Form(...), desired_change: float = Form(...)):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    if user and not row_get(user, "admin"):
+        tank = one(db, "SELECT * FROM tanks WHERE id=? AND owner_user_id=?", (tank_id, user["id"]))
+    else:
+        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     tank_profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
     if not tank or not additive:
@@ -2663,7 +2675,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
                 daily_change = float(desired_change) / float(days)
                 daily_ml = (daily_change / float(strength)) * (volume / 100.0)
         except Exception: pass
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    tanks = get_visible_tanks(db, request)
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
     grouped_additives: Dict[str, List[sqlite3.Row]] = {}
     for a in additives_rows:
@@ -2683,7 +2695,7 @@ def dose_plan(request: Request):
         chk_rows = q(db, "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?", (today.isoformat(), (today + timedelta(days=60)).isoformat()))
         check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
     except Exception: check_map = {}
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    tanks = get_visible_tanks(db, request)
     pdefs = q(db, "SELECT name, unit, max_daily_change FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
     plans = []
@@ -2955,7 +2967,7 @@ def download_template(request: Request):
 def export_all(request: Request):
     db = get_db()
     require_admin(get_current_user(db, request))
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    tanks = get_visible_tanks(db, request)
     params = list_parameters(db)
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -3021,9 +3033,9 @@ async def backup_restore(request: Request, file: UploadFile = File(...)):
     )
 
 @app.get("/api/tanks")
-def api_tanks():
+def api_tanks(request: Request):
     db = get_db()
-    tanks = q(db, "SELECT * FROM tanks ORDER BY name")
+    tanks = get_visible_tanks(db, request)
     data = []
     for t in tanks:
         latest_map = get_latest_per_parameter(db, t["id"])
@@ -3047,9 +3059,13 @@ def api_tanks():
     return {"tanks": data}
 
 @app.get("/api/tanks/{tank_id}/samples")
-def api_samples(tank_id: int, limit: int = 50):
+def api_samples(request: Request, tank_id: int, limit: int = 50):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    if user and not row_get(user, "admin"):
+        tank = one(db, "SELECT * FROM tanks WHERE id=? AND owner_user_id=?", (tank_id, user["id"]))
+    else:
+        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
