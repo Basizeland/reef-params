@@ -1011,6 +1011,7 @@ def init_db() -> None:
     ensure_column(db, "users", "admin", "ALTER TABLE users ADD COLUMN admin INTEGER DEFAULT 0")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
     ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
+    ensure_column(db, "additives", "group_name", "ALTER TABLE additives ADD COLUMN group_name TEXT")
     ensure_column(db, "test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
     ensure_column(db, "targets", "target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
     ensure_column(db, "targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
@@ -1091,19 +1092,22 @@ def init_db() -> None:
 
     # Seed common additives if missing (strength = change per 1 mL / 100 L)
     default_additives = [
-        ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend."),
-        ("Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0, "Saturated kalkwasser solution."),
+        ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend.", "All-in-one solutions"),
+        ("Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0, "Saturated kalkwasser solution.", "All-in-one solutions"),
     ]
-    for name, parameter, strength, unit, max_daily, notes in default_additives:
-        cur.execute("SELECT id, active FROM additives WHERE name=? AND parameter=?", (name, parameter))
+    for name, parameter, strength, unit, max_daily, notes, group_name in default_additives:
+        cur.execute("SELECT id, active, group_name FROM additives WHERE name=? AND parameter=?", (name, parameter))
         row = cur.fetchone()
         if row is None:
             cur.execute("""
-                INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, active)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
-            """, (name, parameter, strength, unit, max_daily, notes))
-        elif row[1] == 0:
-            cur.execute("UPDATE additives SET active=1 WHERE id=?", (row[0],))
+                INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, group_name, active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            """, (name, parameter, strength, unit, max_daily, notes, group_name))
+        else:
+            if row[1] == 0:
+                cur.execute("UPDATE additives SET active=1 WHERE id=?", (row[0],))
+            if not row[2]:
+                cur.execute("UPDATE additives SET group_name=? WHERE id=?", (group_name, row[0]))
         
     db.commit()
 
@@ -3049,11 +3053,10 @@ def additives(request: Request):
     db.close()
     grouped = []
     groups: Dict[str, List[sqlite3.Row]] = {}
-    all_in_one_names = {"all for reef", "kalkwasser (saturated)"}
     for r in rows:
-        name = (r["name"] or "").strip()
-        if name.lower() in all_in_one_names:
-            key = "All-in-one solutions"
+        group_name = (r["group_name"] or "").strip()
+        if group_name:
+            key = group_name
         else:
             key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
         groups.setdefault(key, []).append(r)
