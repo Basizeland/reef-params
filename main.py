@@ -70,7 +70,7 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
         "Thanks for joining!"
     )
     message.add_alternative(
-        f\"\"\"\
+        f"""
 <!DOCTYPE html>
 <html>
   <body style="margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
@@ -105,7 +105,7 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
     </table>
   </body>
 </html>
-\"\"\",
+""",
         subtype="html",
     )
     try:
