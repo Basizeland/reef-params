@@ -219,6 +219,7 @@ def collect_dosing_notifications(
     db: sqlite3.Connection,
     tank_id: int | None = None,
     owner_user_id: int | None = None,
+    actor_user: Optional[sqlite3.Row] = None,
 ) -> List[Dict[str, Any]]:
     today = date.today().isoformat()
     params: List[Any] = []
@@ -240,9 +241,9 @@ def collect_dosing_notifications(
     )
     dismissed_rows = q(
         db,
-        "SELECT tank_id, container_key FROM dosing_notifications WHERE dismissed_at IS NOT NULL",
+        "SELECT tank_id, container_key, notified_on FROM dosing_notifications WHERE dismissed_at IS NOT NULL",
     )
-    dismissed_keys = {(row["tank_id"], row["container_key"]) for row in dismissed_rows}
+    dismissed_keys = {(row["tank_id"], row["container_key"], row["notified_on"]) for row in dismissed_rows}
     notifications: List[Dict[str, Any]] = []
     dosing_containers = [
         ("all_in_one", "all_in_one_container_ml", "all_in_one_remaining_ml", "all_in_one_daily_ml", "all_in_one_solution", "All-in-one"),
@@ -273,7 +274,7 @@ def collect_dosing_notifications(
                 continue
             days_remaining = remaining_ml / float(daily_ml)
             if days_remaining <= threshold_days:
-                if (row_get(row, "tank_id"), key) in dismissed_keys:
+                if (row_get(row, "tank_id"), key, today) in dismissed_keys:
                     continue
                 notifications.append(
                     {
@@ -296,6 +297,12 @@ def collect_dosing_notifications(
                         "INSERT INTO dosing_notifications (tank_id, container_key, notified_on) VALUES (?, ?, ?)",
                         (row_get(row, "tank_id"), key, today),
                     )
+                    log_audit(
+                        db,
+                        actor_user,
+                        "notification-sent",
+                        f"tank_id={row_get(row, 'tank_id')} container_key={key} notified_on={today}",
+                    )
                     db.commit()
     return notifications
 
@@ -304,9 +311,9 @@ def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     try:
         user = get_current_user(db, request)
         if user and row_get(user, "admin"):
-            return collect_dosing_notifications(db)
+            return collect_dosing_notifications(db, actor_user=user)
         if user:
-            return collect_dosing_notifications(db, owner_user_id=user["id"])
+            return collect_dosing_notifications(db, owner_user_id=user["id"], actor_user=user)
         return []
     finally:
         db.close()
@@ -1526,6 +1533,12 @@ def tank_detail(request: Request, tank_id: int):
                 (*container_updates.values(), tank_id),
             )
             profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+            log_audit(
+                db,
+                user,
+                "dosing-volume-update",
+                f"tank_id={tank_id} updates={json.dumps(container_updates)}",
+            )
         dosing_low_days = row_get(profile, "dosing_low_days")
         if dosing_low_days is None:
             dosing_low_days = 5
