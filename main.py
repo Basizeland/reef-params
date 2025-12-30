@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "reef.db"))
+DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "my_reef.db"))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reef.bsizeland.com")
 
 app = FastAPI(title="Reef Tank Parameters")
