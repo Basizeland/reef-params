@@ -326,12 +326,45 @@ def time_ago(v: Any) -> str:
 def tojson_filter(v: Any) -> str:
     return json.dumps(v, default=str)
 
+def audit_details(details: Any) -> List[Dict[str, Any]]:
+    if details is None:
+        return []
+    text = str(details).strip()
+    if not text:
+        return []
+    parsed_items: List[Dict[str, Any]] = []
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
+        try:
+            payload = json.loads(text)
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                parsed_items.append({"label": key.replace("_", " ").title(), "value": value})
+            return parsed_items
+        if isinstance(payload, list):
+            for entry in payload:
+                parsed_items.append({"label": "Item", "value": entry})
+            return parsed_items
+    for part in re.split(r"[;,]\s*", text):
+        if not part:
+            continue
+        if "=" in part:
+            key, value = part.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            parsed_items.append({"label": key.replace("_", " ").title(), "value": value})
+        else:
+            parsed_items.append({"label": "Detail", "value": part})
+    return parsed_items
+
 templates.env.filters["fmt2"] = fmt2
 templates.env.filters["dtfmt"] = dtfmt
 templates.env.filters["dtfmt_time"] = dtfmt_time
 templates.env.filters["time_ago"] = time_ago
 templates.env.filters["tojson"] = tojson_filter
 templates.env.filters["additive_label"] = additive_label
+templates.env.filters["audit_details"] = audit_details
 
 def _finalize(v: Any) -> Any:
     try:
