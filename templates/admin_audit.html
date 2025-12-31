@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Admin: Audit Log</h1>
+    <div class="text-muted small">Track changes made by users.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/admin/users">
+    <i class="bi bi-arrow-left"></i> Back to Users
+  </a>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small text-muted">User</label>
+        <select class="form-select" name="user_id">
+          <option value="">All users</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if filters.user_id == u.id|string %}selected{% endif %}>
+              {{ u.email }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted">Action contains</label>
+        <input class="form-control" type="text" name="action" value="{{ filters.action }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted">From</label>
+        <input class="form-control" type="datetime-local" name="from" value="{{ filters.from }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted">To</label>
+        <input class="form-control" type="datetime-local" name="to" value="{{ filters.to }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted">Search</label>
+        <input class="form-control" type="text" name="q" value="{{ filters.q }}" placeholder="details/email">
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-outline-primary" type="submit">Apply filters</button>
+        <a class="btn btn-outline-secondary" href="/admin/audit">Clear</a>
+      </div>
+    </form>
+    <form method="post" action="/admin/send-daily-summaries" class="mt-3">
+      <button class="btn btn-outline-success" type="submit">Send Daily Summaries</button>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">When</th>
+          <th>User</th>
+          <th>Action</th>
+          <th class="text-end pe-3">Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+          <tr>
+            <td class="ps-3">{{ log.created_at|dtfmt }} {{ log.created_at|dtfmt_time }}</td>
+            <td>{{ log.actor_email }}</td>
+            <td>
+              {% set action_label = log.action %}
+              {% if log.action.startswith('GET /') %}
+                {% if log.action == 'GET /' %}
+                  {% set action_label = 'Viewed dashboard' %}
+                {% elif log.action == 'GET /admin/audit' %}
+                  {% set action_label = 'Viewed audit log' %}
+                {% elif log.action == 'GET /admin/users' %}
+                  {% set action_label = 'Viewed users' %}
+                {% elif log.action.startswith('GET /tanks/') %}
+                  {% set action_label = 'Viewed tank details' %}
+                {% elif log.action.startswith('GET /tools/dose-plan') %}
+                  {% set action_label = 'Viewed dose plan' %}
+                {% else %}
+                  {% set action_label = 'Viewed page' %}
+                {% endif %}
+              {% elif log.action.startswith('POST /tools/dose-plan/check') %}
+                {% set action_label = 'Updated dose plan check' %}
+              {% elif log.action.startswith('POST /admin/send-daily-summaries') %}
+                {% set action_label = 'Sent daily summaries' %}
+              {% elif log.action.startswith('POST /notifications/dismiss') %}
+                {% set action_label = 'Dismissed notification' %}
+              {% endif %}
+              <div class="fw-semibold">{{ action_label }}</div>
+              <div class="text-muted small">{{ log.action }}</div>
+            </td>
+            <td class="text-end pe-3 text-muted small">{{ log.details }}</td>
+          </tr>
+        {% endfor %}
+        {% if logs|length == 0 %}
+          <tr>
+            <td colspan="4" class="text-center text-muted py-3">No audit entries yet.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
