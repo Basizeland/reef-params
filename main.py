@@ -18,6 +18,8 @@ from io import BytesIO
 from datetime import datetime, date, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from test_kit_utils import build_test_kit_payload
+
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -313,7 +315,8 @@ def time_ago(v: Any) -> str:
     if not dt: return ""
     now = _to_local(datetime.utcnow())
     diff = now - _to_local(dt)
-    
+    if diff.total_seconds() < 0:
+        return "Today"
     if diff.days == 0:
         return "Today"
     if diff.days == 1:
@@ -849,26 +852,6 @@ def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
             WHERE p.sample_id=?
         """, (sample_id,))
     return {r["name"]: r["test_kit_id"] for r in rows if r["test_kit_id"]}
-
-def parse_conversion_table(text: str) -> List[Dict[str, float]]:
-    rows: List[Dict[str, float]] = []
-    if not text:
-        return rows
-    cleaned = text.replace("\t", " ")
-    if "\n" not in cleaned and "," in cleaned:
-        cleaned = cleaned.replace(" ", "\n")
-    for line in cleaned.splitlines():
-        if not line.strip():
-            continue
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) != 2:
-            continue
-        remaining = to_float(parts[0])
-        value = to_float(parts[1])
-        if remaining is None or value is None:
-            continue
-        rows.append({"remaining": float(remaining), "value": float(value)})
-    return rows
 
 def compute_conversion_value(remaining: float, table: List[Dict[str, float]]) -> Optional[float]:
     if not table:
@@ -3358,21 +3341,31 @@ def test_kit_edit(request: Request, kit_id: int):
 def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
-    is_active = 1 if (active in ("1", "on", "true", "True")) else 0
-    conv_type = (conversion_type or "").strip() or None
-    conversion_rows = parse_conversion_table(conversion_table or "") if conv_type else []
-    conversion_json = json.dumps(conversion_rows) if conversion_rows else None
+    selected_parameter = (parameter or "").strip() or (parameter_id or "").strip()
+    payload = build_test_kit_payload(
+        parameter=selected_parameter,
+        name=name,
+        unit=unit,
+        resolution=resolution,
+        min_value=min_value,
+        max_value=max_value,
+        notes=notes,
+        conversion_type=conversion_type,
+        conversion_table=conversion_table,
+        active=active,
+        to_float=to_float,
+    )
     data = (
-        parameter.strip(),
-        name.strip(),
-        (unit or "").strip() or None,
-        to_float(resolution),
-        to_float(min_value),
-        to_float(max_value),
-        (notes or "").strip() or None,
-        conv_type,
-        conversion_json,
-        is_active,
+        payload["parameter"],
+        payload["name"],
+        payload["unit"],
+        payload["resolution"],
+        payload["min_value"],
+        payload["max_value"],
+        payload["notes"],
+        payload["conversion_type"],
+        payload["conversion_data"],
+        payload["active"],
     )
     if kit_id and str(kit_id).strip().isdigit():
         cur.execute(

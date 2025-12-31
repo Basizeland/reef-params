@@ -3,9 +3,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from typing import Optional
+import json
 import os
 from database import get_db
 from models import ParameterDef, TestKit, Additive, Preset, PresetItem
+from test_kit_utils import build_test_kit_payload
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -52,16 +54,48 @@ def test_kit_new(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/settings/test-kits/{kit_id}/edit", response_class=HTMLResponse)
 def test_kit_edit(request: Request, kit_id: int, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": db.query(TestKit).filter(TestKit.id==kit_id).first(), "parameters": db.query(ParameterDef).all()})
+    kit = db.query(TestKit).filter(TestKit.id == kit_id).first()
+    if kit and kit.conversion_data:
+        try:
+            rows = json.loads(kit.conversion_data)
+        except Exception:
+            rows = []
+        kit.conversion_table = "\n".join(
+            f"{r.get('remaining')},{r.get('value')}" for r in rows if "remaining" in r and "value" in r
+        )
+    return templates.TemplateResponse(
+        "test_kit_edit.html",
+        {"request": request, "kit": kit, "parameters": db.query(ParameterDef).all()},
+    )
 
 @router.post("/settings/test-kits/save")
-def test_kit_save(kit_id: Optional[str] = Form(None), name: str = Form(...), parameter: str = Form(...), unit: str = Form(None), active: str=Form(None), db: Session = Depends(get_db)):
-    act = 1 if active else 0
+def test_kit_save(kit_id: Optional[str] = Form(None), name: str = Form(...), parameter: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None), db: Session = Depends(get_db)):
+    payload = build_test_kit_payload(
+        parameter=parameter,
+        name=name,
+        unit=unit,
+        resolution=resolution,
+        min_value=min_value,
+        max_value=max_value,
+        notes=notes,
+        conversion_type=conversion_type,
+        conversion_table=conversion_table,
+        active=active,
+    )
     if kit_id and kit_id.isdigit():
-        k = db.query(TestKit).filter(TestKit.id==int(kit_id)).first()
-        k.name=name; k.parameter=parameter; k.unit=unit; k.active=act
+        k = db.query(TestKit).filter(TestKit.id == int(kit_id)).first()
+        k.name = payload["name"]
+        k.parameter = payload["parameter"]
+        k.unit = payload["unit"]
+        k.resolution = payload["resolution"]
+        k.min_value = payload["min_value"]
+        k.max_value = payload["max_value"]
+        k.notes = payload["notes"]
+        k.conversion_type = payload["conversion_type"]
+        k.conversion_data = payload["conversion_data"]
+        k.active = payload["active"]
     else:
-        db.add(TestKit(name=name, parameter=parameter, unit=unit, active=act))
+        db.add(TestKit(**payload))
     db.commit()
     return RedirectResponse("/settings/test-kits", status_code=303)
 
