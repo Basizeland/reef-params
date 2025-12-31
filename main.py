@@ -3,7 +3,7 @@ import sqlite3
 import re
 import math
 import json
-import time
+import time as time_module
 import shutil
 import secrets
 import hashlib
@@ -661,7 +661,7 @@ def execute_with_retry(cur: sqlite3.Cursor, sql: str, params: Tuple[Any, ...] = 
         except sqlite3.OperationalError as exc:
             if "locked" not in str(exc).lower() or idx == attempts - 1:
                 raise
-            time.sleep(0.2 * (idx + 1))
+            time_module.sleep(0.2 * (idx + 1))
 
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30)
