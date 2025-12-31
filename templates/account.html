@@ -40,4 +40,64 @@
     </form>
   </div>
 </div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+      <div>
+        <h5 class="mb-0">API Tokens</h5>
+        <div class="text-muted small">Generate a token for API access (shown once).</div>
+      </div>
+    </div>
+    {% if api_token %}
+      <div class="alert alert-warning">
+        <div class="fw-semibold">Your new token:</div>
+        <code>{{ api_token }}</code>
+      </div>
+    {% endif %}
+    <form method="post" action="/account/api-tokens" class="row g-3 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label">Label (optional)</label>
+        <input class="form-control" type="text" name="label" placeholder="e.g. Mobile App">
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-outline-primary w-100" type="submit">
+          <i class="bi bi-key"></i> Create Token
+        </button>
+      </div>
+    </form>
+    <div class="table-responsive mt-3">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Prefix</th>
+            <th>Label</th>
+            <th>Created</th>
+            <th>Last Used</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for token in tokens or [] %}
+            <tr>
+              <td><code>{{ token.token_prefix }}</code></td>
+              <td>{{ token.label or '—' }}</td>
+              <td class="small text-muted">{{ token.created_at|dtfmt }}</td>
+              <td class="small text-muted">{{ token.last_used_at|dtfmt if token.last_used_at else '—' }}</td>
+              <td class="text-end">
+                <form method="post" action="/account/api-tokens/{{ token.id }}/revoke" onsubmit="return confirm('Revoke this token?');">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Revoke</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="5" class="text-center text-muted small">No API tokens created yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
 {% endblock %}

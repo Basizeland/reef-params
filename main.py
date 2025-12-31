@@ -13,6 +13,7 @@ import csv
 import importlib
 import importlib.util
 import smtplib
+import threading
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time, timedelta, timezone
@@ -718,8 +719,38 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
     </table>
   </body>
 </html>
-"""
+    """
     return send_email(user["email"], subject, text_body, html_body)
+
+def send_summaries_if_due() -> None:
+    auto_send = os.environ.get("AUTO_SEND_DAILY_SUMMARIES", "false").lower() in {"1", "true", "yes"}
+    if not auto_send:
+        return
+    db = get_db()
+    try:
+        now_local = _to_local(datetime.utcnow())
+        today = now_local.date().isoformat()
+        last_sent = get_setting(db, "daily_summary_last_sent")
+        send_hour = int(os.environ.get("DAILY_SUMMARY_HOUR", "7"))
+        if last_sent == today or now_local.hour < send_hour:
+            return
+        users = q(db, "SELECT id, email FROM users ORDER BY email")
+        for u in users:
+            send_daily_summary_email(db, u)
+        set_setting(db, "daily_summary_last_sent", today)
+    finally:
+        db.close()
+
+def start_daily_summary_scheduler() -> None:
+    def _loop() -> None:
+        while True:
+            try:
+                send_summaries_if_due()
+            except Exception:
+                pass
+            time.sleep(3600)
+    thread = threading.Thread(target=_loop, daemon=True)
+    thread.start()
 
 def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     db = get_db()
@@ -822,6 +853,67 @@ def create_session(db: sqlite3.Connection, user_id: int) -> str:
     db.commit()
     return token
 
+def hash_api_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+def create_api_token(db: sqlite3.Connection, user_id: int, label: str | None = None) -> str:
+    token = secrets.token_urlsafe(32)
+    token_hash = hash_api_token(token)
+    token_prefix = token[:8]
+    db.execute(
+        "INSERT INTO api_tokens (user_id, token_hash, token_prefix, label, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, token_hash, token_prefix, (label or "").strip() or None, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+    return token
+
+def get_api_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "", 1).strip()
+        if token:
+            token_hash = hash_api_token(token)
+            row = one(
+                db,
+                """SELECT u.*
+                   FROM api_tokens t
+                   JOIN users u ON u.id = t.user_id
+                   WHERE t.token_hash=?""",
+                (token_hash,),
+            )
+            if row:
+                db.execute(
+                    "UPDATE api_tokens SET last_used_at=? WHERE token_hash=?",
+                    (datetime.utcnow().isoformat(), token_hash),
+                )
+                db.commit()
+                return row
+    return None
+
+def get_authenticated_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+    user = get_api_user(db, request)
+    if user:
+        return user
+    return get_current_user(db, request)
+
+def list_api_tokens(db: sqlite3.Connection, user_id: int) -> List[sqlite3.Row]:
+    return q(
+        db,
+        "SELECT id, token_prefix, label, created_at, last_used_at FROM api_tokens WHERE user_id=? ORDER BY created_at DESC",
+        (user_id,),
+    )
+
+def get_setting(db: sqlite3.Connection, key: str) -> Optional[str]:
+    row = one(db, "SELECT value FROM app_settings WHERE key=?", (key,))
+    return row["value"] if row else None
+
+def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
+    db.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    db.commit()
+
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
     return bool(row and row["count"] > 0)
@@ -861,9 +953,11 @@ def table_exists(db: sqlite3.Connection, name: str) -> bool:
     r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
     return r is not None
 
-def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, details: str = "") -> None:
+def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, details: Any = "") -> None:
     if not user:
         return
+    if isinstance(details, (dict, list)):
+        details = json.dumps(details, default=str)
     try:
         db.execute(
             "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
@@ -1287,6 +1381,8 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL, FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
@@ -1435,6 +1531,10 @@ def init_db() -> None:
     db.close()
 
 init_db()
+
+@app.on_event("startup")
+def start_background_jobs() -> None:
+    start_daily_summary_scheduler()
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -1634,8 +1734,9 @@ def account_settings(request: Request):
     if not user:
         db.close()
         return redirect("/auth/login")
+    tokens = list_api_tokens(db, user["id"])
     db.close()
-    return templates.TemplateResponse("account.html", {"request": request})
+    return templates.TemplateResponse("account.html", {"request": request, "tokens": tokens})
 
 @app.post("/account/password")
 async def account_change_password(request: Request):
@@ -1652,19 +1753,19 @@ async def account_change_password(request: Request):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current and new password are required."},
+            {"request": request, "error": "Current and new password are required.", "tokens": list_api_tokens(db, user["id"])},
         )
     if new_password != confirm_password:
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "New passwords do not match."},
+            {"request": request, "error": "New passwords do not match.", "tokens": list_api_tokens(db, user["id"])},
         )
     if not verify_password(current_password, user["password_hash"], user["password_salt"]):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current password is incorrect."},
+            {"request": request, "error": "Current password is incorrect.", "tokens": list_api_tokens(db, user["id"])},
         )
     password_hash, password_salt = hash_password(new_password)
     db.execute(
@@ -1673,10 +1774,46 @@ async def account_change_password(request: Request):
     )
     log_audit(db, user, "password-change", "self-service")
     db.commit()
+    tokens = list_api_tokens(db, user["id"])
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "Password updated successfully."},
+        {"request": request, "success": "Password updated successfully.", "tokens": tokens},
+    )
+
+@app.post("/account/api-tokens")
+async def account_create_api_token(request: Request):
+    form = await request.form()
+    label = (form.get("label") or "").strip() or None
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    token = create_api_token(db, user["id"], label)
+    log_audit(db, user, "api-token-create", {"label": label or "API Token"})
+    tokens = list_api_tokens(db, user["id"])
+    db.close()
+    return templates.TemplateResponse(
+        "account.html",
+        {"request": request, "success": "API token created. Copy it now; it won’t be shown again.", "api_token": token, "tokens": tokens},
+    )
+
+@app.post("/account/api-tokens/{token_id}/revoke")
+async def account_revoke_api_token(request: Request, token_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    db.execute("DELETE FROM api_tokens WHERE id=? AND user_id=?", (token_id, user["id"]))
+    log_audit(db, user, "api-token-revoke", {"token_id": token_id})
+    db.commit()
+    tokens = list_api_tokens(db, user["id"])
+    db.close()
+    return templates.TemplateResponse(
+        "account.html",
+        {"request": request, "success": "API token revoked.", "tokens": tokens},
     )
 
 @app.post("/admin/send-daily-summaries")
@@ -2401,7 +2538,8 @@ def tank_detail(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/journal", response_class=HTMLResponse)
 def tank_journal(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2450,6 +2588,11 @@ async def tank_journal_add(request: Request, tank_id: int):
     title = (form.get("title") or "").strip() or None
     notes = (form.get("notes") or "").strip() or None
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     db.execute(
         "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
         (tank_id, entry_iso, entry_type, title, notes),
@@ -2478,6 +2621,11 @@ async def maintenance_task_add(request: Request, tank_id: int):
     else:
         next_due = datetime.utcnow() + timedelta(days=interval_days)
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     db.execute(
         """INSERT INTO tank_maintenance_tasks
            (tank_id, title, interval_days, next_due_at, last_completed_at, notes, active, created_at)
@@ -2497,8 +2645,13 @@ async def maintenance_task_add(request: Request, tank_id: int):
     return redirect(f"/tanks/{tank_id}/journal")
 
 @app.post("/tanks/{tank_id}/maintenance/{task_id}/complete")
-def maintenance_task_complete(tank_id: int, task_id: int):
+def maintenance_task_complete(request: Request, tank_id: int, task_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     task = one(db, "SELECT * FROM tank_maintenance_tasks WHERE id=? AND tank_id=?", (task_id, tank_id))
     if task:
         try:
@@ -2526,16 +2679,26 @@ def maintenance_task_complete(tank_id: int, task_id: int):
     return redirect(f"/tanks/{tank_id}/journal")
 
 @app.post("/tanks/{tank_id}/maintenance/{task_id}/delete")
-def maintenance_task_delete(tank_id: int, task_id: int):
+def maintenance_task_delete(request: Request, tank_id: int, task_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     db.execute("DELETE FROM tank_maintenance_tasks WHERE id=? AND tank_id=?", (task_id, tank_id))
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/journal")
 
 @app.post("/tanks/{tank_id}/journal/{entry_id}/delete")
-def tank_journal_delete(tank_id: int, entry_id: int):
+def tank_journal_delete(request: Request, tank_id: int, entry_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     db.execute("DELETE FROM tank_journal WHERE id=? AND tank_id=?", (entry_id, tank_id))
     db.commit()
     db.close()
@@ -2545,7 +2708,8 @@ def tank_journal_delete(tank_id: int, entry_id: int):
 def tank_export(request: Request, tank_id: int):
     pd = require_pandas()
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2577,7 +2741,7 @@ def tank_export(request: Request, tank_id: int):
 @app.get("/api/tanks")
 def api_tanks(request: Request):
     db = get_db()
-    user = get_current_user(db, request)
+    user = get_authenticated_user(db, request)
     if not user:
         db.close()
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -2596,7 +2760,7 @@ def api_tanks(request: Request):
 @app.get("/api/samples")
 def api_samples(request: Request, tank_id: Optional[int] = None):
     db = get_db()
-    user = get_current_user(db, request)
+    user = get_authenticated_user(db, request)
     if not user:
         db.close()
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -2646,7 +2810,7 @@ def api_samples(request: Request, tank_id: Optional[int] = None):
 @app.get("/api/targets")
 def api_targets(request: Request, tank_id: Optional[int] = None):
     db = get_db()
-    user = get_current_user(db, request)
+    user = get_authenticated_user(db, request)
     if not user:
         db.close()
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -2690,7 +2854,8 @@ def api_targets(request: Request, tank_id: Optional[int] = None):
 @app.get("/tanks/{tank_id}/edit", response_class=HTMLResponse, include_in_schema=False)
 def tank_profile(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2743,7 +2908,8 @@ def tank_profile(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/dosing-settings", response_class=HTMLResponse)
 def tank_dosing_settings(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2991,6 +3157,11 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     ):
         container_updated_at = datetime.utcnow().isoformat()
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
         db.close()
@@ -3196,7 +3367,8 @@ async def tank_profile_save(request: Request, tank_id: int):
     net_percent = to_float(form.get("net_percent"))
     if net_percent is None: net_percent = 100
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -3236,6 +3408,11 @@ async def dosing_container_action(request: Request, tank_id: int):
         return redirect(f"/tanks/{tank_id}")
     capacity_col, remaining_col = mapping[container_key]
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
         db.close()
@@ -3610,7 +3787,8 @@ async def tank_samples_dedupe(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
 def edit_targets(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -4014,7 +4192,8 @@ def additive_delete(request: Request, additive_id: int):
 @app.get("/tank/{tank_id}/dosing-log", response_class=HTMLResponse, include_in_schema=False)
 def dosing_log(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -4042,6 +4221,11 @@ async def dosing_log_add(request: Request, tank_id: int):
     reason = (form.get("reason") or "").strip() or None
     if amount_ml is None: return redirect(f"/tanks/{tank_id}/dosing-log")
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     cur = db.cursor()
     when_dt = None
     if logged_at:
@@ -4090,8 +4274,13 @@ async def dosing_log_add(request: Request, tank_id: int):
     return redirect(f"/tanks/{tank_id}/dosing-log")
 
 @app.post("/dose-logs/{log_id}/delete")
-async def dosing_log_delete(log_id: int, tank_id: int = Form(...)):
+async def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(...)):
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     log_row = one(db, "SELECT additive_id, amount_ml FROM dose_logs WHERE id=? AND tank_id=?", (log_id, tank_id))
     if log_row:
         aid = row_get(log_row, "additive_id")
