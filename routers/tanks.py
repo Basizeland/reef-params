@@ -4,11 +4,12 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional, List
 from datetime import datetime
+import json
 import os
 import re
 
 from database import get_db
-from models import Tank, TankProfile, Sample, SampleValue, ParameterDef, Target, DoseLog, Additive, TestKit
+from models import Tank, TankProfile, Sample, SampleValue, ParameterDef, Target, DoseLog, Additive, TestKit, SampleValueKit
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -34,6 +35,46 @@ def dtfmt(v):
 def slug_key(name: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "_", (name or "").strip().lower()).strip("_")
     return s or "x"
+
+def parse_conversion_table(text: str) -> List[dict]:
+    rows: List[dict] = []
+    if not text:
+        return rows
+    cleaned = text.replace("\t", " ")
+    if "\n" not in cleaned and "," in cleaned:
+        cleaned = cleaned.replace(" ", "\n")
+    for line in cleaned.splitlines():
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) != 2:
+            continue
+        try:
+            remaining = float(parts[0])
+            value = float(parts[1])
+        except Exception:
+            continue
+        rows.append({"remaining": remaining, "value": value})
+    return rows
+
+def compute_conversion_value(remaining: float, table: List[dict]) -> Optional[float]:
+    if not table:
+        return None
+    sorted_rows = sorted(table, key=lambda r: r["remaining"])
+    if remaining <= sorted_rows[0]["remaining"]:
+        return sorted_rows[0]["value"]
+    if remaining >= sorted_rows[-1]["remaining"]:
+        return sorted_rows[-1]["value"]
+    for idx in range(1, len(sorted_rows)):
+        low = sorted_rows[idx - 1]
+        high = sorted_rows[idx]
+        if low["remaining"] <= remaining <= high["remaining"]:
+            span = high["remaining"] - low["remaining"]
+            if span == 0:
+                return low["value"]
+            ratio = (remaining - low["remaining"]) / span
+            return low["value"] + ratio * (high["value"] - low["value"])
+    return None
 
 templates.env.filters["fmt2"] = fmt2
 templates.env.filters["dtfmt"] = dtfmt
@@ -131,7 +172,11 @@ def tank_profile_save(tank_id: int, volume_l: Optional[float] = Form(None), net_
 def add_sample_form(request: Request, tank_id: int, db: Session = Depends(get_db)):
     tank = db.query(Tank).filter(Tank.id == tank_id).first()
     params = db.query(ParameterDef).filter(ParameterDef.active == 1).order_by(ParameterDef.sort_order).all()
-    return templates.TemplateResponse("add_sample.html", {"request": request, "tank": tank, "parameters": params, "kits_by_param": {}, "kits": []})
+    kits = db.query(TestKit).filter(TestKit.active == 1).order_by(TestKit.parameter, TestKit.name).all()
+    kits_by_param: Dict[str, List[TestKit]] = {}
+    for kit in kits:
+        kits_by_param.setdefault(kit.parameter, []).append(kit)
+    return templates.TemplateResponse("add_sample.html", {"request": request, "tank": tank, "parameters": params, "kits_by_param": kits_by_param, "kits": kits})
 
 @router.post("/tanks/{tank_id}/add")
 async def add_sample(request: Request, tank_id: int, db: Session = Depends(get_db)):
@@ -143,8 +188,29 @@ async def add_sample(request: Request, tank_id: int, db: Session = Depends(get_d
     db.refresh(s)
     for p in db.query(ParameterDef).filter(ParameterDef.active == 1).all():
         v = form.get(f"value_{p.id}")
-        if v and v.strip():
-            db.add(SampleValue(sample_id=s.id, parameter_id=p.id, value=float(v)))
+        kit_id_raw = form.get(f"kit_{p.id}")
+        remaining_raw = form.get(f"remaining_{p.id}")
+        val = float(v) if v and v.strip() else None
+        kit_id = int(kit_id_raw) if kit_id_raw and str(kit_id_raw).isdigit() else None
+        if val is None and remaining_raw and kit_id:
+            kit = db.query(TestKit).filter(TestKit.id == kit_id).first()
+            if kit and kit.conversion_type == "syringe_remaining_ml" and kit.conversion_data:
+                try:
+                    table = json.loads(kit.conversion_data)
+                    if not isinstance(table, list):
+                        table = parse_conversion_table(str(kit.conversion_data))
+                except Exception:
+                    table = parse_conversion_table(str(kit.conversion_data))
+                try:
+                    remaining_val = float(remaining_raw)
+                except Exception:
+                    remaining_val = None
+                if remaining_val is not None:
+                    val = compute_conversion_value(remaining_val, table)
+        if val is not None:
+            db.add(SampleValue(sample_id=s.id, parameter_id=p.id, value=float(val)))
+            if kit_id:
+                db.add(SampleValueKit(sample_id=s.id, parameter_id=p.id, test_kit_id=kit_id))
     db.commit()
     return RedirectResponse(f"/tanks/{tank_id}", status_code=303)
 
