@@ -609,6 +609,7 @@
       try {
           const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets_map|tojson|safe }};
+          const paramsMeta = {{ params|tojson|safe }};
           const doseLogEvents = {{ dose_log_events|tojson|safe }};
           const ctx = document.getElementById('historyChart');
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
@@ -637,6 +638,12 @@
           Object.keys(seriesMap).forEach((key) => {
             normalizedSeriesMap[normalizeKey(key)] = { key, series: seriesMap[key] || [] };
           });
+          const unitsByKey = {};
+          if (Array.isArray(paramsMeta)) {
+            paramsMeta.forEach((param) => {
+              unitsByKey[normalizeKey(param.name)] = param.unit || '';
+            });
+          }
 
           function cleanDate(dStr) {
               if (!dStr) return new Date();
@@ -677,12 +684,40 @@
             return sorted.map((entry) => formatLabel(entry[1]));
           }
 
-          function buildDatasets(selectedParams, labels) {
+          function axisAssignments(selectedParams) {
+            const unitToAxis = {};
+            const axisOrder = [];
+            selectedParams.forEach((key) => {
+              const unit = unitsByKey[key] || (targets && targets[key] ? (targets[key].unit || '') : '');
+              if (!Object.prototype.hasOwnProperty.call(unitToAxis, unit)) {
+                unitToAxis[unit] = `y${axisOrder.length}`;
+                axisOrder.push(unit);
+              }
+            });
+            return { unitToAxis, axisOrder };
+          }
+
+          function buildAxes(axisOrder) {
+            const axes = {};
+            axisOrder.forEach((unit, index) => {
+              axes[`y${index}`] = {
+                type: 'linear',
+                position: index === 0 ? 'left' : 'right',
+                grid: index === 0 ? { borderDash: [2, 4], color: '#e9ecef' } : { drawOnChartArea: false },
+                title: unit ? { display: true, text: unit } : { display: false }
+              };
+            });
+            return axes;
+          }
+
+          function buildDatasets(selectedParams, labels, unitToAxis) {
             const datasets = [];
             selectedParams.forEach((key, index) => {
               const entry = normalizedSeriesMap[key];
               const series = entry ? entry.series : [];
               const label = entry?.key || key;
+              const unit = unitsByKey[key] || (targets && targets[key] ? (targets[key].unit || '') : '');
+              const yAxisID = unitToAxis[unit] || 'y0';
               const labelIndex = new Map();
               labels.forEach((label, idx) => labelIndex.set(label, idx));
               const dataPoints = Array(labels.length).fill(null);
@@ -697,6 +732,7 @@
               datasets.push({
                 label: label,
                 data: dataPoints,
+                yAxisID: yAxisID,
                 borderColor: palette[index % palette.length],
                 backgroundColor: 'rgba(0, 210, 211, 0.1)',
                 borderWidth: 2,
@@ -815,7 +851,8 @@
           function renderChart() {
             const selected = selectedParams();
             const labels = buildLabels(selected);
-            const datasets = buildDatasets(selected, labels);
+            const { unitToAxis, axisOrder } = axisAssignments(selected);
+            const datasets = buildDatasets(selected, labels, unitToAxis);
             const annotations = buildAnnotations(selected);
             const statsEl = document.getElementById('historyStats');
             const statValues = statsEl ? {
@@ -884,7 +921,7 @@
                   annotation: { annotations }
                 },
                 scales: {
-                  y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
+                  ...buildAxes(axisOrder),
                   x: { display: false }
                 }
               }
