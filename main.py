@@ -452,6 +452,9 @@ def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, 
     for alert in dosing_alerts:
         dosing_by_tank.setdefault(alert["tank_id"], []).append(alert)
     overdue_by_tank: Dict[int, List[str]] = {}
+    parameter_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
+    trend_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
+    maintenance_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -470,11 +473,105 @@ def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, 
                 overdue.append(pname)
         if overdue:
             overdue_by_tank[t["id"]] = overdue
+        targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))
+        alert_rows = []
+        for target in targets:
+            pname = target["parameter"]
+            if not pname:
+                continue
+            latest = latest_map.get(pname, {}).get("latest")
+            val = latest.get("value") if latest else None
+            if val is None:
+                continue
+            try:
+                val_f = float(val)
+            except Exception:
+                continue
+            al = row_get(target, "alert_low")
+            ah = row_get(target, "alert_high")
+            tl = row_get(target, "target_low")
+            th = row_get(target, "target_high")
+            if tl is None:
+                tl = row_get(target, "low")
+            if th is None:
+                th = row_get(target, "high")
+            severity = None
+            label = None
+            if al is not None and val_f < float(al):
+                severity = "alert"
+                label = "below alert"
+            elif ah is not None and val_f > float(ah):
+                severity = "alert"
+                label = "above alert"
+            elif tl is not None and val_f < float(tl):
+                severity = "warn"
+                label = "below target"
+            elif th is not None and val_f > float(th):
+                severity = "warn"
+                label = "above target"
+            if severity:
+                alert_rows.append(
+                    {
+                        "parameter": pname,
+                        "value": val_f,
+                        "unit": row_get(target, "unit") or row_get(pdefs.get(pname), "unit") or "",
+                        "severity": severity,
+                        "label": label,
+                    }
+                )
+        if alert_rows:
+            parameter_alerts_by_tank[t["id"]] = alert_rows
+        trend_rows = []
+        for pname, pdef in pdefs.items():
+            max_change = row_get(pdef, "max_daily_change")
+            if max_change is None:
+                continue
+            latest_pair = latest_map.get(pname, {})
+            latest = latest_pair.get("latest")
+            previous = latest_pair.get("previous")
+            if not latest or not previous:
+                continue
+            try:
+                delta = float(latest["value"]) - float(previous["value"])
+                days = max((latest["taken_at"] - previous["taken_at"]).total_seconds() / 86400.0, 1e-6)
+                delta_per_day = abs(delta / days)
+                if delta_per_day > float(max_change):
+                    trend_rows.append(
+                        {
+                            "parameter": pname,
+                            "delta_per_day": delta_per_day,
+                            "unit": row_get(pdef, "unit") or "",
+                        }
+                    )
+            except Exception:
+                continue
+        if trend_rows:
+            trend_alerts_by_tank[t["id"]] = trend_rows
+        tasks = q(db, "SELECT * FROM tank_maintenance_tasks WHERE tank_id=? AND active=1", (t["id"],))
+        due_rows = []
+        for task in tasks:
+            due_at = parse_dt_any(task["next_due_at"])
+            if not due_at:
+                continue
+            days_until = (due_at.date() - datetime.utcnow().date()).days
+            if days_until <= 3:
+                due_rows.append(
+                    {
+                        "title": task["title"],
+                        "days_until": days_until,
+                        "next_due_at": due_at,
+                    }
+                )
+        if due_rows:
+            maintenance_by_tank[t["id"]] = due_rows
     return {
         "date": today,
         "tanks": tanks,
         "dosing_by_tank": dosing_by_tank,
         "overdue_by_tank": overdue_by_tank,
+        "parameter_alerts_by_tank": parameter_alerts_by_tank,
+        "trend_alerts_by_tank": trend_alerts_by_tank,
+        "maintenance_by_tank": maintenance_by_tank,
     }
 
 def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple[bool, str]:
@@ -486,7 +583,10 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
     for t in summary["tanks"]:
         alerts = summary["dosing_by_tank"].get(t["id"], [])
         overdue = summary["overdue_by_tank"].get(t["id"], [])
-        if not alerts and not overdue:
+        param_alerts = summary["parameter_alerts_by_tank"].get(t["id"], [])
+        trend_alerts = summary["trend_alerts_by_tank"].get(t["id"], [])
+        maintenance = summary["maintenance_by_tank"].get(t["id"], [])
+        if not alerts and not overdue and not param_alerts and not trend_alerts and not maintenance:
             continue
         lines.append(f"- {t['name']}")
         for alert in alerts:
@@ -495,6 +595,19 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
             )
         for pname in overdue:
             lines.append(f"  • Overdue test: {pname}")
+        for alert in param_alerts:
+            lines.append(
+                f"  • {alert['parameter']} {alert['label']}: {alert['value']:.2f} {alert['unit']}"
+            )
+        for trend in trend_alerts:
+            lines.append(
+                f"  • Trend alert: {trend['parameter']} changed {trend['delta_per_day']:.2f} {trend['unit']}/day"
+            )
+        for task in maintenance:
+            if task["days_until"] < 0:
+                lines.append(f"  • Maintenance overdue: {task['title']} ({abs(task['days_until'])} days late)")
+            else:
+                lines.append(f"  • Maintenance due soon: {task['title']} ({task['days_until']} days)")
     if len(lines) == 1:
         lines.append("No alerts today.")
     text_body = "\n".join(lines)
@@ -502,7 +615,10 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
     for t in summary["tanks"]:
         alerts = summary["dosing_by_tank"].get(t["id"], [])
         overdue = summary["overdue_by_tank"].get(t["id"], [])
-        if not alerts and not overdue:
+        param_alerts = summary["parameter_alerts_by_tank"].get(t["id"], [])
+        trend_alerts = summary["trend_alerts_by_tank"].get(t["id"], [])
+        maintenance = summary["maintenance_by_tank"].get(t["id"], [])
+        if not alerts and not overdue and not param_alerts and not trend_alerts and not maintenance:
             continue
         html_rows += f"<tr><td style='padding:8px 0; font-weight:600;'>{t['name']}</td></tr>"
         for alert in alerts:
@@ -512,6 +628,28 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
             )
         for pname in overdue:
             html_rows += f"<tr><td style='padding:2px 0; color:#b91c1c;'>Overdue test: {pname}</td></tr>"
+        for alert in param_alerts:
+            color = "#b91c1c" if alert["severity"] == "alert" else "#b45309"
+            html_rows += (
+                f"<tr><td style='padding:2px 0; color:{color};'>{alert['parameter']} {alert['label']}: "
+                f"{alert['value']:.2f} {alert['unit']}</td></tr>"
+            )
+        for trend in trend_alerts:
+            html_rows += (
+                f"<tr><td style='padding:2px 0; color:#b45309;'>Trend alert: {trend['parameter']} "
+                f"changed {trend['delta_per_day']:.2f} {trend['unit']}/day</td></tr>"
+            )
+        for task in maintenance:
+            if task["days_until"] < 0:
+                html_rows += (
+                    f"<tr><td style='padding:2px 0; color:#b91c1c;'>Maintenance overdue: "
+                    f"{task['title']} ({abs(task['days_until'])} days late)</td></tr>"
+                )
+            else:
+                html_rows += (
+                    f"<tr><td style='padding:2px 0; color:#b45309;'>Maintenance due soon: "
+                    f"{task['title']} ({task['days_until']} days)</td></tr>"
+                )
     if not html_rows:
         html_rows = "<tr><td style='padding:8px 0;'>No alerts today.</td></tr>"
     html_body = f"""
@@ -1209,6 +1347,20 @@ def init_db() -> None:
             FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
         );
     ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS tank_maintenance_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tank_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            interval_days INTEGER NOT NULL,
+            next_due_at TEXT NOT NULL,
+            last_completed_at TEXT,
+            notes TEXT,
+            active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
+        );
+    ''')
 
     cur.execute("SELECT COUNT(1) FROM parameter_defs")
     cnt = cur.fetchone()[0]
@@ -1860,7 +2012,27 @@ def tank_detail(request: Request, tank_id: int):
     tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
-        return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": None, "params": [], "recent_samples": [], "sample_values": {}, "latest_vals": {}, "status_by_param_id": {}, "targets": [], "series": [], "chart_targets": [], "selected_parameter_id": "", "format_value": format_value, "target_map": {}})
+        return templates.TemplateResponse(
+            "tank_detail.html",
+            {
+                "request": request,
+                "tank": None,
+                "params": [],
+                "recent_samples": [],
+                "sample_values": {},
+                "latest_vals": {},
+                "status_by_param_id": {},
+                "targets": [],
+                "series": [],
+                "series_map": {},
+                "chart_targets_map": {},
+                "chart_targets": [],
+                "selected_parameter_id": "",
+                "format_value": format_value,
+                "target_map": {},
+                "dose_log_events": [],
+            },
+        )
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     tank_view = dict(tank)
     if profile:
@@ -2062,6 +2234,34 @@ def tank_detail(request: Request, tank_id: int):
             "target_high": row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high"),
             "unit": row_get(t, "unit") or unit_by_name.get(param_name, "")
         }
+
+    dose_log_rows = q(
+        db,
+        """SELECT dl.logged_at, dl.amount_ml, dl.reason, a.name AS additive_name, a.parameter AS parameter
+           FROM dose_logs dl
+           LEFT JOIN additives a ON a.id = dl.additive_id
+           WHERE dl.tank_id=?
+           ORDER BY dl.logged_at DESC
+           LIMIT 50""",
+        (tank_id,),
+    )
+    dose_log_events = []
+    for row in dose_log_rows:
+        param_name = row_get(row, "parameter") or ""
+        if not param_name:
+            continue
+        logged_at = parse_dt_any(row_get(row, "logged_at"))
+        if not logged_at:
+            continue
+        dose_log_events.append(
+            {
+                "parameter": param_name,
+                "key": normalize_param_key(param_name),
+                "logged_at": logged_at.isoformat(),
+                "label": row_get(row, "additive_name") or row_get(row, "reason") or "Dose",
+                "amount_ml": row_get(row, "amount_ml"),
+            }
+        )
             
     params = [
         {
@@ -2156,6 +2356,7 @@ def tank_detail(request: Request, tank_id: int):
             "series": series,
             "series_map": series_map,
             "chart_targets_map": chart_targets_map,
+            "dose_log_events": dose_log_events,
             "selected_parameter_id": selected_parameter_id,
             "format_value": format_value,
             "low_container_alerts": low_container_alerts,
@@ -2170,8 +2371,34 @@ def tank_journal(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     entries = q(db, "SELECT * FROM tank_journal WHERE tank_id=? ORDER BY entry_date DESC, id DESC", (tank_id,))
+    tasks = q(db, "SELECT * FROM tank_maintenance_tasks WHERE tank_id=? AND active=1 ORDER BY next_due_at ASC", (tank_id,))
+    task_views = []
+    today = datetime.utcnow().date()
+    for task in tasks:
+        due_at = parse_dt_any(task["next_due_at"])
+        days_until = None
+        if due_at:
+            days_until = (due_at.date() - today).days
+        status = "ok"
+        if days_until is not None:
+            if days_until < 0:
+                status = "overdue"
+            elif days_until <= 3:
+                status = "due_soon"
+        task_views.append(
+            {
+                **dict(task),
+                "due_at": due_at,
+                "days_until": days_until,
+                "status": status,
+            }
+        )
+    error = (request.query_params.get("error") or "").strip()
     db.close()
-    return templates.TemplateResponse("tank_journal.html", {"request": request, "tank": tank, "entries": entries})
+    return templates.TemplateResponse(
+        "tank_journal.html",
+        {"request": request, "tank": tank, "entries": entries, "tasks": task_views, "error": error},
+    )
 
 @app.post("/tanks/{tank_id}/journal")
 async def tank_journal_add(request: Request, tank_id: int):
@@ -2192,6 +2419,81 @@ async def tank_journal_add(request: Request, tank_id: int):
         "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
         (tank_id, entry_iso, entry_type, title, notes),
     )
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/maintenance")
+async def maintenance_task_add(request: Request, tank_id: int):
+    form = await request.form()
+    title = (form.get("title") or "").strip()
+    notes = (form.get("notes") or "").strip() or None
+    first_due = (form.get("first_due_date") or "").strip()
+    try:
+        interval_days = int(form.get("interval_days") or 0)
+    except Exception:
+        interval_days = 0
+    if not title or interval_days <= 0:
+        return redirect(f"/tanks/{tank_id}/journal?error=maintenance")
+    if first_due:
+        try:
+            next_due = datetime.fromisoformat(first_due)
+        except ValueError:
+            next_due = datetime.utcnow() + timedelta(days=interval_days)
+    else:
+        next_due = datetime.utcnow() + timedelta(days=interval_days)
+    db = get_db()
+    db.execute(
+        """INSERT INTO tank_maintenance_tasks
+           (tank_id, title, interval_days, next_due_at, last_completed_at, notes, active, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+        (
+            tank_id,
+            title,
+            interval_days,
+            next_due.isoformat(),
+            None,
+            notes,
+            datetime.utcnow().isoformat(),
+        ),
+    )
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/maintenance/{task_id}/complete")
+def maintenance_task_complete(tank_id: int, task_id: int):
+    db = get_db()
+    task = one(db, "SELECT * FROM tank_maintenance_tasks WHERE id=? AND tank_id=?", (task_id, tank_id))
+    if task:
+        try:
+            interval_days = int(task["interval_days"] or 0)
+        except Exception:
+            interval_days = 0
+        now = datetime.utcnow()
+        next_due = now + timedelta(days=interval_days) if interval_days > 0 else now
+        db.execute(
+            "UPDATE tank_maintenance_tasks SET last_completed_at=?, next_due_at=? WHERE id=? AND tank_id=?",
+            (now.isoformat(), next_due.isoformat(), task_id, tank_id),
+        )
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (
+                tank_id,
+                now.isoformat(),
+                "maintenance",
+                f"Completed: {task['title']}",
+                "Scheduled maintenance task completed.",
+            ),
+        )
+        db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/maintenance/{task_id}/delete")
+def maintenance_task_delete(tank_id: int, task_id: int):
+    db = get_db()
+    db.execute("DELETE FROM tank_maintenance_tasks WHERE id=? AND tank_id=?", (task_id, tank_id))
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/journal")

@@ -489,11 +489,16 @@
         {% for p in params %}
           {% set param_key = p.key %}
           <div class="form-check form-check-inline mb-0">
-            <input class="form-check-input" type="radio" name="trend-param" data-param-radio data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
+            <input class="form-check-input" type="checkbox" name="trend-param" data-param-toggle data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
             <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
           </div>
         {% endfor %}
       </div>
+      <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="toggle-dose-events" checked>
+        <label class="form-check-label small" for="toggle-dose-events">Show dosing events</label>
+      </div>
+      <div class="text-muted small">Compare up to 3 parameters at once.</div>
     </div>
   </div>
   <div class="card-body">
@@ -604,8 +609,10 @@
       try {
           const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets_map|tojson|safe }};
+          const doseLogEvents = {{ dose_log_events|tojson|safe }};
           const ctx = document.getElementById('historyChart');
-          const paramRadios = Array.from(document.querySelectorAll('[data-param-radio]'));
+          const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
+          const showDoseToggle = document.getElementById('toggle-dose-events');
           
           if (!ctx) return;
 
@@ -657,6 +664,15 @@
                 labelMap.set(date.getTime(), date);
               });
             });
+            if (doseLogEvents && doseLogEvents.length) {
+              doseLogEvents.forEach((event) => {
+                if (!selectedParams.includes(normalizeKey(event.parameter))) {
+                  return;
+                }
+                const date = cleanDate(event.logged_at);
+                labelMap.set(date.getTime(), date);
+              });
+            }
             const sorted = Array.from(labelMap.entries()).sort((a, b) => a[0] - b[0]);
             return sorted.map((entry) => formatLabel(entry[1]));
           }
@@ -694,11 +710,11 @@
 
           function buildAnnotations(selectedParams) {
             if (selectedParams.length !== 1 || !targets || Object.keys(targets).length === 0) {
-              return {};
+              return buildDoseAnnotations(selectedParams);
             }
             const t = targets[selectedParams[0]];
             if (!t) {
-              return {};
+              return buildDoseAnnotations(selectedParams);
             }
             const annotations = {};
             if (t.target_low !== null && t.target_high !== null) {
@@ -753,16 +769,47 @@
                 }
               };
             }
+            return buildDoseAnnotations(selectedParams, annotations);
+          }
+
+          function buildDoseAnnotations(selectedParams, annotations = {}) {
+            if (!showDoseToggle || !showDoseToggle.checked || !doseLogEvents || !doseLogEvents.length) {
+              return annotations;
+            }
+            let index = 0;
+            const matching = doseLogEvents.filter((event) => selectedParams.includes(normalizeKey(event.parameter)));
+            const showLabels = matching.length <= 5;
+            matching.forEach((event) => {
+              const date = cleanDate(event.logged_at);
+              const label = formatLabel(date);
+              annotations[`dose-${index}`] = {
+                type: 'line',
+                xMin: label,
+                xMax: label,
+                borderColor: '#6366f1',
+                borderWidth: 1,
+                borderDash: [4, 4],
+                label: {
+                  display: showLabels,
+                  content: `${event.label || 'Dose'} (${Number(event.amount_ml || 0).toFixed(1)} ml)`,
+                  position: 'start',
+                  backgroundColor: '#6366f1',
+                  color: 'white',
+                  font: { size: 9 }
+                }
+              };
+              index += 1;
+            });
             return annotations;
           }
 
           function selectedParams() {
-            let checked = paramRadios.filter((box) => box.checked).map((box) => box.value);
-            if (checked.length === 0 && paramRadios.length > 0) {
-              paramRadios[0].checked = true;
-              checked = [paramRadios[0].value];
+            let checked = paramToggles.filter((box) => box.checked).map((box) => box.value);
+            if (checked.length === 0 && paramToggles.length > 0) {
+              paramToggles[0].checked = true;
+              checked = [paramToggles[0].value];
             }
-            return checked.slice(0, 1);
+            return checked.slice(0, 3);
           }
 
           function renderChart() {
@@ -796,7 +843,8 @@
             }
 
             if (statValues) {
-              const values = (datasets[0].data || []).filter((v) => v !== null && typeof v !== 'undefined');
+              const primaryDataset = datasets[0];
+              const values = (primaryDataset?.data || []).filter((v) => v !== null && typeof v !== 'undefined');
               if (values.length) {
                 const sorted = [...values].sort((a, b) => a - b);
                 const min = sorted[0];
@@ -806,14 +854,14 @@
                 statValues.min.textContent = min.toFixed(2);
                 statValues.median.textContent = median.toFixed(2);
                 statValues.max.textContent = max.toFixed(2);
-                statValues.label.textContent = datasets[0].label || '—';
-                statsEl.style.setProperty('--stat-color', datasets[0].borderColor || '#6c757d');
+                statValues.label.textContent = primaryDataset?.label || '—';
+                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
               } else {
                 statValues.min.textContent = '—';
                 statValues.median.textContent = '—';
                 statValues.max.textContent = '—';
-                statValues.label.textContent = datasets[0].label || '—';
-                statsEl.style.setProperty('--stat-color', datasets[0].borderColor || '#6c757d');
+                statValues.label.textContent = primaryDataset?.label || '—';
+                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
               }
             }
 
@@ -843,9 +891,18 @@
             });
           }
 
-          paramRadios.forEach((box) => {
-            box.addEventListener('change', renderChart);
+          paramToggles.forEach((box) => {
+            box.addEventListener('change', (event) => {
+              const checked = paramToggles.filter((item) => item.checked);
+              if (checked.length > 3 && event && event.target) {
+                event.target.checked = false;
+              }
+              renderChart();
+            });
           });
+          if (showDoseToggle) {
+            showDoseToggle.addEventListener('change', renderChart);
+          }
 
           renderChart();
       } catch (err) {

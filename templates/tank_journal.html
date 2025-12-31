@@ -10,8 +10,39 @@
   </a>
 </div>
 
+{% if error == "maintenance" %}
+  <div class="alert alert-danger">Please provide a task title and a valid interval in days.</div>
+{% endif %}
+
 <div class="row g-4">
   <div class="col-lg-4">
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white py-3">
+        <h5 class="card-title mb-0 fw-bold">Schedule Maintenance</h5>
+      </div>
+      <div class="card-body">
+        <form method="post" action="/tanks/{{ tank.id }}/maintenance">
+          <div class="mb-3">
+            <label class="form-label">Task</label>
+            <input class="form-control" name="title" placeholder="e.g. Replace filter sock" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Interval (days)</label>
+            <input class="form-control" type="number" name="interval_days" min="1" placeholder="e.g. 7" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">First due date</label>
+            <input class="form-control" type="date" name="first_due_date">
+            <div class="form-text">Leave blank to start after the interval.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Notes</label>
+            <textarea class="form-control" name="notes" rows="2" placeholder="Optional notes"></textarea>
+          </div>
+          <button class="btn btn-outline-primary w-100" type="submit">Add Task</button>
+        </form>
+      </div>
+    </div>
     <div class="card shadow-sm">
       <div class="card-header bg-white py-3">
         <h5 class="card-title mb-0 fw-bold">Log Maintenance</h5>
@@ -47,6 +78,60 @@
     </div>
   </div>
   <div class="col-lg-8">
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0 fw-bold">Maintenance Schedule</h5>
+        <span class="text-muted small">{{ tasks|length }} tasks</span>
+      </div>
+      <div class="list-group list-group-flush">
+        {% if tasks and tasks|length %}
+          {% for task in tasks %}
+            <div class="list-group-item">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <div class="fw-semibold">{{ task.title }}</div>
+                  <div class="text-muted small">
+                    Every {{ task.interval_days }} days
+                    {% if task.due_at %}
+                      • Next due {{ task.due_at|dtfmt }}
+                    {% endif %}
+                  </div>
+                  {% if task.notes %}
+                    <div class="text-secondary small mt-1">{{ task.notes }}</div>
+                  {% endif %}
+                  {% if task.days_until is not none %}
+                    {% if task.status == "overdue" %}
+                      <span class="badge text-bg-danger mt-2">Overdue by {{ task.days_until|abs }} days</span>
+                    {% elif task.status == "due_soon" %}
+                      <span class="badge text-bg-warning mt-2">Due in {{ task.days_until }} days</span>
+                    {% else %}
+                      <span class="badge text-bg-success mt-2">On track</span>
+                    {% endif %}
+                  {% endif %}
+                </div>
+                <div class="d-flex gap-2">
+                  <form method="post" action="/tanks/{{ tank.id }}/maintenance/{{ task.id }}/complete">
+                    <button class="btn btn-sm btn-outline-success" type="submit">
+                      <i class="bi bi-check2-circle"></i>
+                    </button>
+                  </form>
+                  <form method="post" action="/tanks/{{ tank.id }}/maintenance/{{ task.id }}/delete" onsubmit="return confirm('Delete this task?');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </form>
+                </div>
+              </div>
+              {% if task.last_completed_at %}
+                <div class="text-muted small mt-2">Last completed {{ task.last_completed_at|dtfmt }}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="list-group-item text-muted">No scheduled tasks yet.</div>
+        {% endif %}
+      </div>
+    </div>
     <div class="card shadow-sm">
       <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
         <h5 class="card-title mb-0 fw-bold">Recent Entries</h5>
