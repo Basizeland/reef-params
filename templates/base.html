@@ -51,6 +51,12 @@
         /* Responsive logo scaling */
         @media (max-width: 576px) {
             .brand-logo-img { height: 40px; }
+            .notification-menu {
+                width: calc(100vw - 1.5rem);
+                min-width: auto;
+                right: 0;
+                left: auto;
+            }
         }
     </style>
 </head>
@@ -113,7 +119,7 @@
                             </span>
                         {% endif %}
                     </a>
-                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 320px;">
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm notification-menu" style="min-width: 320px;">
                         <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
                         {% if global_notifications %}
                             {% for group in global_notifications|groupby('tank_id') %}
