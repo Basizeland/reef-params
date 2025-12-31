@@ -18,6 +18,7 @@
             <th>Name</th>
             <th>Unit</th>
             <th class="text-end">Resolution</th>
+            <th class="text-end">Accuracy</th>
             <th>Active</th>
             <th class="text-end">Actions</th>
           </tr>
@@ -29,6 +30,7 @@
             <td>{{ k.name }}</td>
             <td class="text-muted">{{ k.unit or "" }}</td>
             <td class="text-end">{{ k.resolution if k.resolution is not none else "—" }}</td>
+            <td class="text-end">{{ k.manufacturer_accuracy if k.manufacturer_accuracy is not none else "—" }}</td>
             <td>{% if k.active %}Yes{% else %}No{% endif %}</td>
             <td class="text-end">
               <a class="btn btn-sm btn-outline-secondary" href="/settings/test-kits/{{ k.id }}/edit">Edit</a>

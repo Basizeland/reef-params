@@ -64,14 +64,14 @@ def test_kit_edit(request: Request, kit_id: int, db: Session = Depends(get_db)):
     return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": db.query(TestKit).filter(TestKit.id==kit_id).first(), "parameters": db.query(ParameterDef).all()})
 
 @router.post("/settings/test-kits/save")
-def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), name: str = Form(...), parameter: str = Form(...), unit: str = Form(None), active: str=Form(None), db: Session = Depends(get_db)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), name: str = Form(...), parameter: str = Form(...), unit: str = Form(None), manufacturer_accuracy: Optional[float] = Form(None), active: str=Form(None), db: Session = Depends(get_db)):
     app_main.require_admin(request.state.user if hasattr(request, "state") else None)
     act = 1 if active else 0
     if kit_id and kit_id.isdigit():
         k = db.query(TestKit).filter(TestKit.id==int(kit_id)).first()
-        k.name=name; k.parameter=parameter; k.unit=unit; k.active=act
+        k.name=name; k.parameter=parameter; k.unit=unit; k.manufacturer_accuracy=manufacturer_accuracy; k.active=act
     else:
-        db.add(TestKit(name=name, parameter=parameter, unit=unit, active=act))
+        db.add(TestKit(name=name, parameter=parameter, unit=unit, manufacturer_accuracy=manufacturer_accuracy, active=act))
     db.commit()
     return RedirectResponse("/settings/test-kits", status_code=303)
 

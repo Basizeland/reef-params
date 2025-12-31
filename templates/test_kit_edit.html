@@ -41,6 +41,11 @@
         </div>
 
         <div class="col-12 col-md-4">
+          <label class="form-label">Manufacturer accuracy (optional)</label>
+          <input class="form-control" name="manufacturer_accuracy" type="number" step="any" value="{{ kit.manufacturer_accuracy if kit and kit.manufacturer_accuracy is not none else '' }}" />
+        </div>
+
+        <div class="col-12 col-md-4">
           <label class="form-label">Active</label>
           <div class="form-check mt-2">
             <input class="form-check-input" type="checkbox" name="active" id="active" {% if not kit or kit.active %}checked{% endif %}>

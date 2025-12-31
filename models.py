@@ -92,6 +92,7 @@ class TestKit(Base, DictMixin):
     name = Column(String)
     unit = Column(String)
     resolution = Column(Float)
+    manufacturer_accuracy = Column(Float)
     min_value = Column(Float)
     max_value = Column(Float)
     notes = Column(String)

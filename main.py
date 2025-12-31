@@ -1326,6 +1326,7 @@ class TestKit(Base, DictMixin):
     name = Column(String)
     unit = Column(String)
     resolution = Column(Float)
+    manufacturer_accuracy = Column(Float)
     min_value = Column(Float)
     max_value = Column(Float)
     notes = Column(String)
@@ -1378,7 +1379,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, min_value REAL, max_value REAL, notes TEXT, active INTEGER DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, manufacturer_accuracy REAL, min_value REAL, max_value REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
@@ -1413,6 +1414,7 @@ def init_db() -> None:
     ensure_column(db, "parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
     ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
     ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
+    ensure_column(db, "test_kits", "manufacturer_accuracy", "ALTER TABLE test_kits ADD COLUMN manufacturer_accuracy REAL")
     ensure_column(db, "dosing_notifications", "dismissed_at", "ALTER TABLE dosing_notifications ADD COLUMN dismissed_at TEXT")
 
     if table_exists(db, "user_tanks"):
@@ -4082,7 +4084,7 @@ def test_kit_edit(request: Request, kit_id: int):
     return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": kit, "parameters": parameters})
 
 @app.post("/settings/test-kits/save")
-def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), manufacturer_accuracy: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -4094,6 +4096,7 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
         name.strip(),
         (unit or "").strip() or None,
         to_float(resolution),
+        to_float(manufacturer_accuracy),
         to_float(min_value),
         to_float(max_value),
         (notes or "").strip() or None,
@@ -4103,12 +4106,12 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
     )
     if kit_id and str(kit_id).strip().isdigit():
         cur.execute(
-            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
+            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, manufacturer_accuracy=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
             (*data, int(kit_id)),
         )
     else:
         cur.execute(
-            "INSERT INTO test_kits (parameter, name, unit, resolution, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO test_kits (parameter, name, unit, resolution, manufacturer_accuracy, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             data,
         )
     db.commit()
