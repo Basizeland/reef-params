@@ -17,6 +17,35 @@
       margin-left: 0.25rem;
     }
   }
+  .dose-container {
+    position: relative;
+    width: 54px;
+    height: 74px;
+    border: 2px solid #4a67a1;
+    border-radius: 10px 10px 8px 8px;
+    background: rgba(74, 103, 161, 0.08);
+    overflow: hidden;
+  }
+  .dose-liquid {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    opacity: 0.35;
+  }
+  .dose-markings {
+    position: absolute;
+    top: 12px;
+    bottom: 8px;
+    right: 6px;
+    width: 12px;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(74, 103, 161, 0.7) 0 2px,
+      transparent 2px 9px
+    );
+    pointer-events: none;
+  }
 </style>
 <div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
   <div>
@@ -106,8 +135,9 @@
                 <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.all_in_one_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ all_in_one_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ all_in_one_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ all_in_one_pct }}%; background: {{ all_in_one_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ all_in_one_remaining|fmt2 }} / {{ tank.all_in_one_container_ml|fmt2 }} ml</div>
@@ -142,8 +172,9 @@
                 <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.alk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ alk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ alk_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ alk_pct }}%; background: {{ alk_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ alk_remaining|fmt2 }} / {{ tank.alk_container_ml|fmt2 }} ml</div>
@@ -178,8 +209,9 @@
                 <div class="text-secondary small">{{ tank.kalk_daily_ml|fmt2 if tank.kalk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.kalk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ kalk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ kalk_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ kalk_pct }}%; background: {{ kalk_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ kalk_remaining|fmt2 }} / {{ tank.kalk_container_ml|fmt2 }} ml</div>
@@ -214,8 +246,9 @@
                 <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.ca_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ ca_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ ca_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ ca_pct }}%; background: {{ ca_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ ca_remaining|fmt2 }} / {{ tank.ca_container_ml|fmt2 }} ml</div>
@@ -250,8 +283,9 @@
                 <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.mg_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ mg_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ mg_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ mg_pct }}%; background: {{ mg_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ mg_remaining|fmt2 }} / {{ tank.mg_container_ml|fmt2 }} ml</div>
@@ -286,8 +320,9 @@
                 <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.nitrate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ nitrate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nitrate_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ nitrate_pct }}%; background: {{ nitrate_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ nitrate_remaining|fmt2 }} / {{ tank.nitrate_container_ml|fmt2 }} ml</div>
@@ -322,8 +357,9 @@
                 <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.phosphate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ phosphate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ phosphate_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ phosphate_pct }}%; background: {{ phosphate_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ phosphate_remaining|fmt2 }} / {{ tank.phosphate_container_ml|fmt2 }} ml</div>
@@ -358,8 +394,9 @@
                 <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
                 {% if tank.nopox_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ nopox_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nopox_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ nopox_pct }}%; background: {{ nopox_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ nopox_remaining|fmt2 }} / {{ tank.nopox_container_ml|fmt2 }} ml</div>
@@ -489,11 +526,16 @@
         {% for p in params %}
           {% set param_key = p.key %}
           <div class="form-check form-check-inline mb-0">
-            <input class="form-check-input" type="radio" name="trend-param" data-param-radio data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
+            <input class="form-check-input" type="checkbox" name="trend-param" data-param-toggle data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
             <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
           </div>
         {% endfor %}
       </div>
+      <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="toggle-dose-events" checked>
+        <label class="form-check-label small" for="toggle-dose-events">Show dosing events</label>
+      </div>
+      <div class="text-muted small">Compare up to 3 parameters at once.</div>
     </div>
   </div>
   <div class="card-body">
@@ -604,8 +646,11 @@
       try {
           const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets_map|tojson|safe }};
+          const paramsMeta = {{ params|tojson|safe }};
+          const doseLogEvents = {{ dose_log_events|tojson|safe }};
           const ctx = document.getElementById('historyChart');
-          const paramRadios = Array.from(document.querySelectorAll('[data-param-radio]'));
+          const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
+          const showDoseToggle = document.getElementById('toggle-dose-events');
           
           if (!ctx) return;
 
@@ -630,6 +675,12 @@
           Object.keys(seriesMap).forEach((key) => {
             normalizedSeriesMap[normalizeKey(key)] = { key, series: seriesMap[key] || [] };
           });
+          const unitsByKey = {};
+          if (Array.isArray(paramsMeta)) {
+            paramsMeta.forEach((param) => {
+              unitsByKey[normalizeKey(param.name)] = param.unit || '';
+            });
+          }
 
           function cleanDate(dStr) {
               if (!dStr) return new Date();
@@ -657,16 +708,53 @@
                 labelMap.set(date.getTime(), date);
               });
             });
+            if (doseLogEvents && doseLogEvents.length) {
+              doseLogEvents.forEach((event) => {
+                if (!selectedParams.includes(normalizeKey(event.parameter))) {
+                  return;
+                }
+                const date = cleanDate(event.logged_at);
+                labelMap.set(date.getTime(), date);
+              });
+            }
             const sorted = Array.from(labelMap.entries()).sort((a, b) => a[0] - b[0]);
             return sorted.map((entry) => formatLabel(entry[1]));
           }
 
-          function buildDatasets(selectedParams, labels) {
+          function axisAssignments(selectedParams) {
+            const unitToAxis = {};
+            const axisOrder = [];
+            selectedParams.forEach((key) => {
+              const unit = unitsByKey[key] || (targets && targets[key] ? (targets[key].unit || '') : '');
+              if (!Object.prototype.hasOwnProperty.call(unitToAxis, unit)) {
+                unitToAxis[unit] = `y${axisOrder.length}`;
+                axisOrder.push(unit);
+              }
+            });
+            return { unitToAxis, axisOrder };
+          }
+
+          function buildAxes(axisOrder) {
+            const axes = {};
+            axisOrder.forEach((unit, index) => {
+              axes[`y${index}`] = {
+                type: 'linear',
+                position: index === 0 ? 'left' : 'right',
+                grid: index === 0 ? { borderDash: [2, 4], color: '#e9ecef' } : { drawOnChartArea: false },
+                title: unit ? { display: true, text: unit } : { display: false }
+              };
+            });
+            return axes;
+          }
+
+          function buildDatasets(selectedParams, labels, unitToAxis) {
             const datasets = [];
             selectedParams.forEach((key, index) => {
               const entry = normalizedSeriesMap[key];
               const series = entry ? entry.series : [];
               const label = entry?.key || key;
+              const unit = unitsByKey[key] || (targets && targets[key] ? (targets[key].unit || '') : '');
+              const yAxisID = unitToAxis[unit] || 'y0';
               const labelIndex = new Map();
               labels.forEach((label, idx) => labelIndex.set(label, idx));
               const dataPoints = Array(labels.length).fill(null);
@@ -681,11 +769,13 @@
               datasets.push({
                 label: label,
                 data: dataPoints,
+                yAxisID: yAxisID,
                 borderColor: palette[index % palette.length],
                 backgroundColor: 'rgba(0, 210, 211, 0.1)',
                 borderWidth: 2,
                 tension: 0.3,
                 fill: false,
+                spanGaps: true,
                 pointRadius: 3
               });
             });
@@ -694,11 +784,11 @@
 
           function buildAnnotations(selectedParams) {
             if (selectedParams.length !== 1 || !targets || Object.keys(targets).length === 0) {
-              return {};
+              return buildDoseAnnotations(selectedParams);
             }
             const t = targets[selectedParams[0]];
             if (!t) {
-              return {};
+              return buildDoseAnnotations(selectedParams);
             }
             const annotations = {};
             if (t.target_low !== null && t.target_high !== null) {
@@ -753,22 +843,54 @@
                 }
               };
             }
+            return buildDoseAnnotations(selectedParams, annotations);
+          }
+
+          function buildDoseAnnotations(selectedParams, annotations = {}) {
+            if (!showDoseToggle || !showDoseToggle.checked || !doseLogEvents || !doseLogEvents.length) {
+              return annotations;
+            }
+            let index = 0;
+            const matching = doseLogEvents.filter((event) => selectedParams.includes(normalizeKey(event.parameter)));
+            const showLabels = matching.length <= 5;
+            matching.forEach((event) => {
+              const date = cleanDate(event.logged_at);
+              const label = formatLabel(date);
+              annotations[`dose-${index}`] = {
+                type: 'line',
+                xMin: label,
+                xMax: label,
+                borderColor: '#6366f1',
+                borderWidth: 1,
+                borderDash: [4, 4],
+                label: {
+                  display: showLabels,
+                  content: `${event.label || 'Dose'} (${Number(event.amount_ml || 0).toFixed(1)} ml)`,
+                  position: 'start',
+                  backgroundColor: '#6366f1',
+                  color: 'white',
+                  font: { size: 9 }
+                }
+              };
+              index += 1;
+            });
             return annotations;
           }
 
           function selectedParams() {
-            let checked = paramRadios.filter((box) => box.checked).map((box) => box.value);
-            if (checked.length === 0 && paramRadios.length > 0) {
-              paramRadios[0].checked = true;
-              checked = [paramRadios[0].value];
+            let checked = paramToggles.filter((box) => box.checked).map((box) => box.value);
+            if (checked.length === 0 && paramToggles.length > 0) {
+              paramToggles[0].checked = true;
+              checked = [paramToggles[0].value];
             }
-            return checked.slice(0, 1);
+            return checked.slice(0, 3);
           }
 
           function renderChart() {
             const selected = selectedParams();
             const labels = buildLabels(selected);
-            const datasets = buildDatasets(selected, labels);
+            const { unitToAxis, axisOrder } = axisAssignments(selected);
+            const datasets = buildDatasets(selected, labels, unitToAxis);
             const annotations = buildAnnotations(selected);
             const statsEl = document.getElementById('historyStats');
             const statValues = statsEl ? {
@@ -796,7 +918,8 @@
             }
 
             if (statValues) {
-              const values = (datasets[0].data || []).filter((v) => v !== null && typeof v !== 'undefined');
+              const primaryDataset = datasets[0];
+              const values = (primaryDataset?.data || []).filter((v) => v !== null && typeof v !== 'undefined');
               if (values.length) {
                 const sorted = [...values].sort((a, b) => a - b);
                 const min = sorted[0];
@@ -806,14 +929,14 @@
                 statValues.min.textContent = min.toFixed(2);
                 statValues.median.textContent = median.toFixed(2);
                 statValues.max.textContent = max.toFixed(2);
-                statValues.label.textContent = datasets[0].label || '—';
-                statsEl.style.setProperty('--stat-color', datasets[0].borderColor || '#6c757d');
+                statValues.label.textContent = primaryDataset?.label || '—';
+                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
               } else {
                 statValues.min.textContent = '—';
                 statValues.median.textContent = '—';
                 statValues.max.textContent = '—';
-                statValues.label.textContent = datasets[0].label || '—';
-                statsEl.style.setProperty('--stat-color', datasets[0].borderColor || '#6c757d');
+                statValues.label.textContent = primaryDataset?.label || '—';
+                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
               }
             }
 
@@ -836,16 +959,25 @@
                   annotation: { annotations }
                 },
                 scales: {
-                  y: { grid: { borderDash: [2, 4], color: '#e9ecef' } },
+                  ...buildAxes(axisOrder),
                   x: { display: false }
                 }
               }
             });
           }
 
-          paramRadios.forEach((box) => {
-            box.addEventListener('change', renderChart);
+          paramToggles.forEach((box) => {
+            box.addEventListener('change', (event) => {
+              const checked = paramToggles.filter((item) => item.checked);
+              if (checked.length > 3 && event && event.target) {
+                event.target.checked = false;
+              }
+              renderChart();
+            });
           });
+          if (showDoseToggle) {
+            showDoseToggle.addEventListener('change', renderChart);
+          }
 
           renderChart();
       } catch (err) {

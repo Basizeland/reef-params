@@ -138,9 +138,28 @@ async def dose_plan_check(request: Request, db: Session = Depends(get_db)):
     chk.checked = checked
     
     # Log logic
+    try:
+        planned_dt = datetime.fromisoformat(d)
+    except ValueError:
+        planned_dt = datetime.utcnow()
+    logged_at = datetime.combine(planned_dt.date(), datetime.utcnow().time()).isoformat()
+    reason = f"Dose plan: {param} ({d})"
     if checked:
-        # If logging enabled in frontend, we would insert DoseLog here
-        pass 
+        existing = db.query(DoseLog).filter(
+            DoseLog.tank_id == tid,
+            DoseLog.additive_id == aid,
+            DoseLog.logged_at.like(f"{d}%"),
+            DoseLog.reason == reason,
+        ).first()
+        if not existing:
+            db.add(DoseLog(tank_id=tid, additive_id=aid, amount_ml=float(form.get("amount_ml") or 0), reason=reason, logged_at=logged_at))
+    else:
+        db.query(DoseLog).filter(
+            DoseLog.tank_id == tid,
+            DoseLog.additive_id == aid,
+            DoseLog.logged_at.like(f"{d}%"),
+            DoseLog.reason == reason,
+        ).delete()
         
     db.commit()
     return {"ok": True}
