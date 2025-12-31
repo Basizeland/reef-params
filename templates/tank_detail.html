@@ -17,6 +17,56 @@
       margin-left: 0.25rem;
     }
   }
+  .dose-container {
+    position: relative;
+    width: 54px;
+    height: 74px;
+    border: 2px solid #4a67a1;
+    border-radius: 10px 10px 8px 8px;
+    background: rgba(74, 103, 161, 0.08);
+    overflow: hidden;
+  }
+  .dose-container::before {
+    content: "";
+    position: absolute;
+    top: -7px;
+    left: 5px;
+    right: 5px;
+    height: 14px;
+    border: 2px solid #4a67a1;
+    border-bottom: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.8);
+  }
+  .dose-liquid {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+  .dose-liquid::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    left: 4px;
+    right: 4px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(74, 103, 161, 0.35);
+  }
+  .dose-markings {
+    position: absolute;
+    top: 12px;
+    bottom: 8px;
+    right: 6px;
+    width: 12px;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(74, 103, 161, 0.7) 0 2px,
+      transparent 2px 9px
+    );
+    pointer-events: none;
+  }
 </style>
 <div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
   <div>
@@ -106,8 +156,9 @@
                 <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.all_in_one_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ all_in_one_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ all_in_one_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ all_in_one_pct }}%; background: {{ all_in_one_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ all_in_one_remaining|fmt2 }} / {{ tank.all_in_one_container_ml|fmt2 }} ml</div>
@@ -142,8 +193,9 @@
                 <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.alk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ alk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ alk_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ alk_pct }}%; background: {{ alk_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ alk_remaining|fmt2 }} / {{ tank.alk_container_ml|fmt2 }} ml</div>
@@ -178,8 +230,9 @@
                 <div class="text-secondary small">{{ tank.kalk_daily_ml|fmt2 if tank.kalk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.kalk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ kalk_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ kalk_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ kalk_pct }}%; background: {{ kalk_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ kalk_remaining|fmt2 }} / {{ tank.kalk_container_ml|fmt2 }} ml</div>
@@ -214,8 +267,9 @@
                 <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.ca_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ ca_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ ca_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ ca_pct }}%; background: {{ ca_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ ca_remaining|fmt2 }} / {{ tank.ca_container_ml|fmt2 }} ml</div>
@@ -250,8 +304,9 @@
                 <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.mg_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ mg_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ mg_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ mg_pct }}%; background: {{ mg_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ mg_remaining|fmt2 }} / {{ tank.mg_container_ml|fmt2 }} ml</div>
@@ -286,8 +341,9 @@
                 <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.nitrate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ nitrate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nitrate_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ nitrate_pct }}%; background: {{ nitrate_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ nitrate_remaining|fmt2 }} / {{ tank.nitrate_container_ml|fmt2 }} ml</div>
@@ -322,8 +378,9 @@
                 <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.phosphate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ phosphate_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ phosphate_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ phosphate_pct }}%; background: {{ phosphate_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ phosphate_remaining|fmt2 }} / {{ tank.phosphate_container_ml|fmt2 }} ml</div>
@@ -358,8 +415,9 @@
                 <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
                 {% if tank.nopox_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
-                    <div class="rounded border bg-light" style="width: 44px; height: 70px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: repeating-linear-gradient(to top, rgba(0, 0, 0, 0.08) 0 2px, rgba(0, 0, 0, 0) 2px 10px);">
-                      <div style="width: 100%; height: {{ nopox_pct }}%; background: repeating-linear-gradient(to top, rgba(255, 255, 255, 0.35) 0 2px, rgba(255, 255, 255, 0) 2px 10px), {{ nopox_color }};"></div>
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ nopox_pct }}%; background: {{ nopox_color }};"></div>
+                      <div class="dose-markings"></div>
                     </div>
                     <div>
                       <div class="text-muted small">{{ nopox_remaining|fmt2 }} / {{ tank.nopox_container_ml|fmt2 }} ml</div>
