@@ -314,6 +314,8 @@ def time_ago(v: Any) -> str:
     now = _to_local(datetime.utcnow())
     diff = now - _to_local(dt)
     
+    if diff.total_seconds() < 0:
+        return "Today"
     if diff.days == 0:
         return "Today"
     if diff.days == 1:
