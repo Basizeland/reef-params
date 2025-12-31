@@ -19,7 +19,7 @@ from datetime import datetime, date, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
@@ -2539,6 +2539,118 @@ def tank_export(request: Request, tank_id: int):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+@app.get("/api/tanks")
+def api_tanks(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Authentication required")
+    tanks = get_visible_tanks(db, request)
+    payload = [
+        {
+            "id": t["id"],
+            "name": t["name"],
+            "volume_l": row_get(t, "volume_l"),
+        }
+        for t in tanks
+    ]
+    db.close()
+    return JSONResponse(payload)
+
+@app.get("/api/samples")
+def api_samples(request: Request, tank_id: Optional[int] = None):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Authentication required")
+    tank_ids: List[int] = []
+    if tank_id is not None:
+        tank = get_tank_for_user(db, user, tank_id)
+        if not tank:
+            db.close()
+            raise HTTPException(status_code=404, detail="Tank not found")
+        tank_ids = [tank_id]
+    else:
+        tank_ids = get_visible_tank_ids(db, user)
+    if not tank_ids:
+        db.close()
+        return JSONResponse([])
+    placeholders = ",".join(["?"] * len(tank_ids))
+    samples = q(
+        db,
+        f"SELECT * FROM samples WHERE tank_id IN ({placeholders}) ORDER BY taken_at DESC",
+        tuple(tank_ids),
+    )
+    payload = []
+    for sample in samples:
+        readings = []
+        for r in get_sample_readings(db, sample["id"]):
+            readings.append(
+                {
+                    "name": r["name"],
+                    "value": r["value"],
+                    "unit": r["unit"] or "",
+                    "test_kit_id": row_get(r, "test_kit_id"),
+                    "test_kit_name": row_get(r, "test_kit_name"),
+                }
+            )
+        payload.append(
+            {
+                "id": sample["id"],
+                "tank_id": sample["tank_id"],
+                "taken_at": sample["taken_at"],
+                "notes": sample["notes"],
+                "readings": readings,
+            }
+        )
+    db.close()
+    return JSONResponse(payload)
+
+@app.get("/api/targets")
+def api_targets(request: Request, tank_id: Optional[int] = None):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Authentication required")
+    tank_ids: List[int] = []
+    if tank_id is not None:
+        tank = get_tank_for_user(db, user, tank_id)
+        if not tank:
+            db.close()
+            raise HTTPException(status_code=404, detail="Tank not found")
+        tank_ids = [tank_id]
+    else:
+        tank_ids = get_visible_tank_ids(db, user)
+    if not tank_ids:
+        db.close()
+        return JSONResponse([])
+    placeholders = ",".join(["?"] * len(tank_ids))
+    targets = q(
+        db,
+        f"SELECT * FROM targets WHERE tank_id IN ({placeholders}) ORDER BY tank_id, parameter",
+        tuple(tank_ids),
+    )
+    payload = []
+    for target in targets:
+        payload.append(
+            {
+                "id": target["id"],
+                "tank_id": target["tank_id"],
+                "parameter": target["parameter"],
+                "target_low": row_get(target, "target_low") if "target_low" in target.keys() else row_get(target, "low"),
+                "target_high": row_get(target, "target_high") if "target_high" in target.keys() else row_get(target, "high"),
+                "alert_low": row_get(target, "alert_low"),
+                "alert_high": row_get(target, "alert_high"),
+                "unit": row_get(target, "unit") or "",
+                "enabled": row_get(target, "enabled"),
+            }
+        )
+    db.close()
+    return JSONResponse(payload)
+
 @app.get("/tanks/{tank_id}/profile", response_class=HTMLResponse)
 @app.get("/tanks/{tank_id}/edit", response_class=HTMLResponse, include_in_schema=False)
 def tank_profile(request: Request, tank_id: int):
@@ -3159,7 +3271,11 @@ async def dismiss_notification(request: Request):
 @app.get("/tanks/{tank_id}/add", response_class=HTMLResponse)
 def add_sample_form(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     params_rows = get_active_param_defs(db)
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
@@ -3174,6 +3290,11 @@ async def add_sample(request: Request, tank_id: int):
     taken_at = (form.get("taken_at") or "").strip()
     db = get_db()
     cur = db.cursor()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     if taken_at:
         try: when_iso = datetime.fromisoformat(taken_at).isoformat()
         except ValueError: when_iso = datetime.utcnow().isoformat()
@@ -3206,7 +3327,11 @@ async def add_sample(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/samples/{sample_id}", response_class=HTMLResponse)
 def sample_detail(request: Request, tank_id: int, sample_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     sample = one(db, "SELECT * FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
     if not tank or not sample:
         db.close()
@@ -3223,7 +3348,11 @@ def sample_detail(request: Request, tank_id: int, sample_id: int):
 @app.get("/tanks/{tank_id}/samples/{sample_id}/edit", response_class=HTMLResponse)
 def sample_edit(request: Request, tank_id: int, sample_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     sample = one(db, "SELECT * FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
     if not tank or not sample:
         db.close()
@@ -3247,7 +3376,11 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     taken_at = (form.get("taken_at") or "").strip()
     db = get_db()
     cur = db.cursor()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     sample = one(db, "SELECT * FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
     if not tank or not sample:
         db.close()
