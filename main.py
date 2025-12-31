@@ -13,13 +13,14 @@ import csv
 import importlib
 import importlib.util
 import smtplib
+import threading
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
@@ -314,6 +315,8 @@ def time_ago(v: Any) -> str:
     now = _to_local(datetime.utcnow())
     diff = now - _to_local(dt)
     
+    if diff.total_seconds() < 0:
+        return "Today"
     if diff.days == 0:
         return "Today"
     if diff.days == 1:
@@ -326,12 +329,45 @@ def time_ago(v: Any) -> str:
 def tojson_filter(v: Any) -> str:
     return json.dumps(v, default=str)
 
+def audit_details(details: Any) -> List[Dict[str, Any]]:
+    if details is None:
+        return []
+    text = str(details).strip()
+    if not text:
+        return []
+    parsed_items: List[Dict[str, Any]] = []
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
+        try:
+            payload = json.loads(text)
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                parsed_items.append({"label": key.replace("_", " ").title(), "value": value})
+            return parsed_items
+        if isinstance(payload, list):
+            for entry in payload:
+                parsed_items.append({"label": "Item", "value": entry})
+            return parsed_items
+    for part in re.split(r"[;,]\s*", text):
+        if not part:
+            continue
+        if "=" in part:
+            key, value = part.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            parsed_items.append({"label": key.replace("_", " ").title(), "value": value})
+        else:
+            parsed_items.append({"label": "Detail", "value": part})
+    return parsed_items
+
 templates.env.filters["fmt2"] = fmt2
 templates.env.filters["dtfmt"] = dtfmt
 templates.env.filters["dtfmt_time"] = dtfmt_time
 templates.env.filters["time_ago"] = time_ago
 templates.env.filters["tojson"] = tojson_filter
 templates.env.filters["additive_label"] = additive_label
+templates.env.filters["audit_details"] = audit_details
 
 def _finalize(v: Any) -> Any:
     try:
@@ -431,7 +467,11 @@ def collect_dosing_notifications(
                         db,
                         actor_user,
                         "notification-sent",
-                        f"tank_id={row_get(row, 'tank_id')} container_key={key} notified_on={today}",
+                        {
+                            "tank_id": row_get(row, "tank_id"),
+                            "container_key": key,
+                            "notified_on": today,
+                        },
                     )
                     db.commit()
     return notifications
@@ -452,6 +492,9 @@ def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, 
     for alert in dosing_alerts:
         dosing_by_tank.setdefault(alert["tank_id"], []).append(alert)
     overdue_by_tank: Dict[int, List[str]] = {}
+    parameter_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
+    trend_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
+    maintenance_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -470,11 +513,105 @@ def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, 
                 overdue.append(pname)
         if overdue:
             overdue_by_tank[t["id"]] = overdue
+        targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))
+        alert_rows = []
+        for target in targets:
+            pname = target["parameter"]
+            if not pname:
+                continue
+            latest = latest_map.get(pname, {}).get("latest")
+            val = latest.get("value") if latest else None
+            if val is None:
+                continue
+            try:
+                val_f = float(val)
+            except Exception:
+                continue
+            al = row_get(target, "alert_low")
+            ah = row_get(target, "alert_high")
+            tl = row_get(target, "target_low")
+            th = row_get(target, "target_high")
+            if tl is None:
+                tl = row_get(target, "low")
+            if th is None:
+                th = row_get(target, "high")
+            severity = None
+            label = None
+            if al is not None and val_f < float(al):
+                severity = "alert"
+                label = "below alert"
+            elif ah is not None and val_f > float(ah):
+                severity = "alert"
+                label = "above alert"
+            elif tl is not None and val_f < float(tl):
+                severity = "warn"
+                label = "below target"
+            elif th is not None and val_f > float(th):
+                severity = "warn"
+                label = "above target"
+            if severity:
+                alert_rows.append(
+                    {
+                        "parameter": pname,
+                        "value": val_f,
+                        "unit": row_get(target, "unit") or row_get(pdefs.get(pname), "unit") or "",
+                        "severity": severity,
+                        "label": label,
+                    }
+                )
+        if alert_rows:
+            parameter_alerts_by_tank[t["id"]] = alert_rows
+        trend_rows = []
+        for pname, pdef in pdefs.items():
+            max_change = row_get(pdef, "max_daily_change")
+            if max_change is None:
+                continue
+            latest_pair = latest_map.get(pname, {})
+            latest = latest_pair.get("latest")
+            previous = latest_pair.get("previous")
+            if not latest or not previous:
+                continue
+            try:
+                delta = float(latest["value"]) - float(previous["value"])
+                days = max((latest["taken_at"] - previous["taken_at"]).total_seconds() / 86400.0, 1e-6)
+                delta_per_day = abs(delta / days)
+                if delta_per_day > float(max_change):
+                    trend_rows.append(
+                        {
+                            "parameter": pname,
+                            "delta_per_day": delta_per_day,
+                            "unit": row_get(pdef, "unit") or "",
+                        }
+                    )
+            except Exception:
+                continue
+        if trend_rows:
+            trend_alerts_by_tank[t["id"]] = trend_rows
+        tasks = q(db, "SELECT * FROM tank_maintenance_tasks WHERE tank_id=? AND active=1", (t["id"],))
+        due_rows = []
+        for task in tasks:
+            due_at = parse_dt_any(task["next_due_at"])
+            if not due_at:
+                continue
+            days_until = (due_at.date() - datetime.utcnow().date()).days
+            if days_until <= 3:
+                due_rows.append(
+                    {
+                        "title": task["title"],
+                        "days_until": days_until,
+                        "next_due_at": due_at,
+                    }
+                )
+        if due_rows:
+            maintenance_by_tank[t["id"]] = due_rows
     return {
         "date": today,
         "tanks": tanks,
         "dosing_by_tank": dosing_by_tank,
         "overdue_by_tank": overdue_by_tank,
+        "parameter_alerts_by_tank": parameter_alerts_by_tank,
+        "trend_alerts_by_tank": trend_alerts_by_tank,
+        "maintenance_by_tank": maintenance_by_tank,
     }
 
 def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple[bool, str]:
@@ -486,7 +623,10 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
     for t in summary["tanks"]:
         alerts = summary["dosing_by_tank"].get(t["id"], [])
         overdue = summary["overdue_by_tank"].get(t["id"], [])
-        if not alerts and not overdue:
+        param_alerts = summary["parameter_alerts_by_tank"].get(t["id"], [])
+        trend_alerts = summary["trend_alerts_by_tank"].get(t["id"], [])
+        maintenance = summary["maintenance_by_tank"].get(t["id"], [])
+        if not alerts and not overdue and not param_alerts and not trend_alerts and not maintenance:
             continue
         lines.append(f"- {t['name']}")
         for alert in alerts:
@@ -495,6 +635,19 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
             )
         for pname in overdue:
             lines.append(f"  • Overdue test: {pname}")
+        for alert in param_alerts:
+            lines.append(
+                f"  • {alert['parameter']} {alert['label']}: {alert['value']:.2f} {alert['unit']}"
+            )
+        for trend in trend_alerts:
+            lines.append(
+                f"  • Trend alert: {trend['parameter']} changed {trend['delta_per_day']:.2f} {trend['unit']}/day"
+            )
+        for task in maintenance:
+            if task["days_until"] < 0:
+                lines.append(f"  • Maintenance overdue: {task['title']} ({abs(task['days_until'])} days late)")
+            else:
+                lines.append(f"  • Maintenance due soon: {task['title']} ({task['days_until']} days)")
     if len(lines) == 1:
         lines.append("No alerts today.")
     text_body = "\n".join(lines)
@@ -502,7 +655,10 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
     for t in summary["tanks"]:
         alerts = summary["dosing_by_tank"].get(t["id"], [])
         overdue = summary["overdue_by_tank"].get(t["id"], [])
-        if not alerts and not overdue:
+        param_alerts = summary["parameter_alerts_by_tank"].get(t["id"], [])
+        trend_alerts = summary["trend_alerts_by_tank"].get(t["id"], [])
+        maintenance = summary["maintenance_by_tank"].get(t["id"], [])
+        if not alerts and not overdue and not param_alerts and not trend_alerts and not maintenance:
             continue
         html_rows += f"<tr><td style='padding:8px 0; font-weight:600;'>{t['name']}</td></tr>"
         for alert in alerts:
@@ -512,6 +668,28 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
             )
         for pname in overdue:
             html_rows += f"<tr><td style='padding:2px 0; color:#b91c1c;'>Overdue test: {pname}</td></tr>"
+        for alert in param_alerts:
+            color = "#b91c1c" if alert["severity"] == "alert" else "#b45309"
+            html_rows += (
+                f"<tr><td style='padding:2px 0; color:{color};'>{alert['parameter']} {alert['label']}: "
+                f"{alert['value']:.2f} {alert['unit']}</td></tr>"
+            )
+        for trend in trend_alerts:
+            html_rows += (
+                f"<tr><td style='padding:2px 0; color:#b45309;'>Trend alert: {trend['parameter']} "
+                f"changed {trend['delta_per_day']:.2f} {trend['unit']}/day</td></tr>"
+            )
+        for task in maintenance:
+            if task["days_until"] < 0:
+                html_rows += (
+                    f"<tr><td style='padding:2px 0; color:#b91c1c;'>Maintenance overdue: "
+                    f"{task['title']} ({abs(task['days_until'])} days late)</td></tr>"
+                )
+            else:
+                html_rows += (
+                    f"<tr><td style='padding:2px 0; color:#b45309;'>Maintenance due soon: "
+                    f"{task['title']} ({task['days_until']} days)</td></tr>"
+                )
     if not html_rows:
         html_rows = "<tr><td style='padding:8px 0;'>No alerts today.</td></tr>"
     html_body = f"""
@@ -545,8 +723,38 @@ def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple
     </table>
   </body>
 </html>
-"""
+    """
     return send_email(user["email"], subject, text_body, html_body)
+
+def send_summaries_if_due() -> None:
+    auto_send = os.environ.get("AUTO_SEND_DAILY_SUMMARIES", "false").lower() in {"1", "true", "yes"}
+    if not auto_send:
+        return
+    db = get_db()
+    try:
+        now_local = _to_local(datetime.utcnow())
+        today = now_local.date().isoformat()
+        last_sent = get_setting(db, "daily_summary_last_sent")
+        send_hour = int(os.environ.get("DAILY_SUMMARY_HOUR", "7"))
+        if last_sent == today or now_local.hour < send_hour:
+            return
+        users = q(db, "SELECT id, email FROM users ORDER BY email")
+        for u in users:
+            send_daily_summary_email(db, u)
+        set_setting(db, "daily_summary_last_sent", today)
+    finally:
+        db.close()
+
+def start_daily_summary_scheduler() -> None:
+    def _loop() -> None:
+        while True:
+            try:
+                send_summaries_if_due()
+            except Exception:
+                pass
+            time.sleep(3600)
+    thread = threading.Thread(target=_loop, daemon=True)
+    thread.start()
 
 def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     db = get_db()
@@ -649,6 +857,67 @@ def create_session(db: sqlite3.Connection, user_id: int) -> str:
     db.commit()
     return token
 
+def hash_api_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+def create_api_token(db: sqlite3.Connection, user_id: int, label: str | None = None) -> str:
+    token = secrets.token_urlsafe(32)
+    token_hash = hash_api_token(token)
+    token_prefix = token[:8]
+    db.execute(
+        "INSERT INTO api_tokens (user_id, token_hash, token_prefix, label, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, token_hash, token_prefix, (label or "").strip() or None, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+    return token
+
+def get_api_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "", 1).strip()
+        if token:
+            token_hash = hash_api_token(token)
+            row = one(
+                db,
+                """SELECT u.*
+                   FROM api_tokens t
+                   JOIN users u ON u.id = t.user_id
+                   WHERE t.token_hash=?""",
+                (token_hash,),
+            )
+            if row:
+                db.execute(
+                    "UPDATE api_tokens SET last_used_at=? WHERE token_hash=?",
+                    (datetime.utcnow().isoformat(), token_hash),
+                )
+                db.commit()
+                return row
+    return None
+
+def get_authenticated_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+    user = get_api_user(db, request)
+    if user:
+        return user
+    return get_current_user(db, request)
+
+def list_api_tokens(db: sqlite3.Connection, user_id: int) -> List[sqlite3.Row]:
+    return q(
+        db,
+        "SELECT id, token_prefix, label, created_at, last_used_at FROM api_tokens WHERE user_id=? ORDER BY created_at DESC",
+        (user_id,),
+    )
+
+def get_setting(db: sqlite3.Connection, key: str) -> Optional[str]:
+    row = one(db, "SELECT value FROM app_settings WHERE key=?", (key,))
+    return row["value"] if row else None
+
+def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
+    db.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    db.commit()
+
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
     return bool(row and row["count"] > 0)
@@ -688,9 +957,11 @@ def table_exists(db: sqlite3.Connection, name: str) -> bool:
     r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
     return r is not None
 
-def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, details: str = "") -> None:
+def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, details: Any = "") -> None:
     if not user:
         return
+    if isinstance(details, (dict, list)):
+        details = json.dumps(details, default=str)
     try:
         db.execute(
             "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
@@ -1055,6 +1326,7 @@ class TestKit(Base, DictMixin):
     name = Column(String)
     unit = Column(String)
     resolution = Column(Float)
+    manufacturer_accuracy = Column(Float)
     min_value = Column(Float)
     max_value = Column(Float)
     notes = Column(String)
@@ -1107,13 +1379,15 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, min_value REAL, max_value REAL, notes TEXT, active INTEGER DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, manufacturer_accuracy REAL, min_value REAL, max_value REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL, FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
@@ -1140,6 +1414,7 @@ def init_db() -> None:
     ensure_column(db, "parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
     ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
     ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
+    ensure_column(db, "test_kits", "manufacturer_accuracy", "ALTER TABLE test_kits ADD COLUMN manufacturer_accuracy REAL")
     ensure_column(db, "dosing_notifications", "dismissed_at", "ALTER TABLE dosing_notifications ADD COLUMN dismissed_at TEXT")
 
     if table_exists(db, "user_tanks"):
@@ -1209,6 +1484,20 @@ def init_db() -> None:
             FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
         );
     ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS tank_maintenance_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tank_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            interval_days INTEGER NOT NULL,
+            next_due_at TEXT NOT NULL,
+            last_completed_at TEXT,
+            notes TEXT,
+            active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
+        );
+    ''')
 
     cur.execute("SELECT COUNT(1) FROM parameter_defs")
     cnt = cur.fetchone()[0]
@@ -1249,6 +1538,10 @@ def init_db() -> None:
 
 init_db()
 
+@app.on_event("startup")
+def start_background_jobs() -> None:
+    start_daily_summary_scheduler()
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -1263,7 +1556,12 @@ async def auth_middleware(request: Request, call_next):
             return redirect("/auth/login")
         response = await call_next(request)
         if user:
-            log_audit(db, user, f"{request.method} {path}", f"status={response.status_code}")
+            log_audit(
+                db,
+                user,
+                f"{request.method} {path}",
+                {"status": response.status_code},
+            )
         return response
     finally:
         db.close()
@@ -1420,7 +1718,7 @@ async def register_submit(request: Request):
         db,
         user,
         "welcome-email",
-        f"email={email} sent={sent} reason={reason}" if reason else f"email={email} sent={sent}",
+        {"email": email, "sent": sent, "reason": reason} if reason else {"email": email, "sent": sent},
     )
     token = create_session(db, user["id"])
     db.close()
@@ -1447,8 +1745,9 @@ def account_settings(request: Request):
     if not user:
         db.close()
         return redirect("/auth/login")
+    tokens = list_api_tokens(db, user["id"])
     db.close()
-    return templates.TemplateResponse("account.html", {"request": request})
+    return templates.TemplateResponse("account.html", {"request": request, "tokens": tokens})
 
 @app.post("/account/password")
 async def account_change_password(request: Request):
@@ -1465,31 +1764,67 @@ async def account_change_password(request: Request):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current and new password are required."},
+            {"request": request, "error": "Current and new password are required.", "tokens": list_api_tokens(db, user["id"])},
         )
     if new_password != confirm_password:
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "New passwords do not match."},
+            {"request": request, "error": "New passwords do not match.", "tokens": list_api_tokens(db, user["id"])},
         )
     if not verify_password(current_password, user["password_hash"], user["password_salt"]):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current password is incorrect."},
+            {"request": request, "error": "Current password is incorrect.", "tokens": list_api_tokens(db, user["id"])},
         )
     password_hash, password_salt = hash_password(new_password)
     db.execute(
         "UPDATE users SET password_hash=?, password_salt=? WHERE id=?",
         (password_hash, password_salt, user["id"]),
     )
-    log_audit(db, user, "password-change", "self-service")
+    log_audit(db, user, "password-change", {"mode": "self-service"})
     db.commit()
+    tokens = list_api_tokens(db, user["id"])
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "Password updated successfully."},
+        {"request": request, "success": "Password updated successfully.", "tokens": tokens},
+    )
+
+@app.post("/account/api-tokens")
+async def account_create_api_token(request: Request):
+    form = await request.form()
+    label = (form.get("label") or "").strip() or None
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    token = create_api_token(db, user["id"], label)
+    log_audit(db, user, "api-token-create", {"label": label or "API Token"})
+    tokens = list_api_tokens(db, user["id"])
+    db.close()
+    return templates.TemplateResponse(
+        "account.html",
+        {"request": request, "success": "API token created. Copy it now; it won’t be shown again.", "api_token": token, "tokens": tokens},
+    )
+
+@app.post("/account/api-tokens/{token_id}/revoke")
+async def account_revoke_api_token(request: Request, token_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    db.execute("DELETE FROM api_tokens WHERE id=? AND user_id=?", (token_id, user["id"]))
+    log_audit(db, user, "api-token-revoke", {"token_id": token_id})
+    db.commit()
+    tokens = list_api_tokens(db, user["id"])
+    db.close()
+    return templates.TemplateResponse(
+        "account.html",
+        {"request": request, "success": "API token revoked.", "tokens": tokens},
     )
 
 @app.post("/admin/send-daily-summaries")
@@ -1505,7 +1840,9 @@ async def admin_send_daily_summaries(request: Request):
             db,
             current_user,
             "daily-summary-send",
-            f"user_id={u['id']} email={u['email']} sent={success} reason={reason}" if reason else f"user_id={u['id']} email={u['email']} sent={success}",
+            {"user_id": u["id"], "email": u["email"], "sent": success, "reason": reason}
+            if reason
+            else {"user_id": u["id"], "email": u["email"], "sent": success},
         )
         if success:
             sent_count += 1
@@ -1605,7 +1942,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
             db,
             user,
             "welcome-email",
-            f"email={email} sent={sent} reason={reason}" if reason else f"email={email} sent={sent}",
+            {"email": email, "sent": sent, "reason": reason} if reason else {"email": email, "sent": sent},
         )
     token = create_session(db, user["id"])
     db.close()
@@ -1860,7 +2197,27 @@ def tank_detail(request: Request, tank_id: int):
     tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
-        return templates.TemplateResponse("tank_detail.html", {"request": request, "tank": None, "params": [], "recent_samples": [], "sample_values": {}, "latest_vals": {}, "status_by_param_id": {}, "targets": [], "series": [], "chart_targets": [], "selected_parameter_id": "", "format_value": format_value, "target_map": {}})
+        return templates.TemplateResponse(
+            "tank_detail.html",
+            {
+                "request": request,
+                "tank": None,
+                "params": [],
+                "recent_samples": [],
+                "sample_values": {},
+                "latest_vals": {},
+                "status_by_param_id": {},
+                "targets": [],
+                "series": [],
+                "series_map": {},
+                "chart_targets_map": {},
+                "chart_targets": [],
+                "selected_parameter_id": "",
+                "format_value": format_value,
+                "target_map": {},
+                "dose_log_events": [],
+            },
+        )
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     tank_view = dict(tank)
     if profile:
@@ -1904,7 +2261,7 @@ def tank_detail(request: Request, tank_id: int):
                 db,
                 user,
                 "dosing-volume-update",
-                f"tank_id={tank_id} updates={json.dumps(container_updates)}",
+                {"tank_id": tank_id, "updates": container_updates},
             )
         dosing_low_days = row_get(profile, "dosing_low_days")
         if dosing_low_days is None:
@@ -2062,6 +2419,34 @@ def tank_detail(request: Request, tank_id: int):
             "target_high": row_get(t, "target_high") if row_get(t, "target_high") is not None else row_get(t, "high"),
             "unit": row_get(t, "unit") or unit_by_name.get(param_name, "")
         }
+
+    dose_log_rows = q(
+        db,
+        """SELECT dl.logged_at, dl.amount_ml, dl.reason, a.name AS additive_name, a.parameter AS parameter
+           FROM dose_logs dl
+           LEFT JOIN additives a ON a.id = dl.additive_id
+           WHERE dl.tank_id=?
+           ORDER BY dl.logged_at DESC
+           LIMIT 50""",
+        (tank_id,),
+    )
+    dose_log_events = []
+    for row in dose_log_rows:
+        param_name = row_get(row, "parameter") or ""
+        if not param_name:
+            continue
+        logged_at = parse_dt_any(row_get(row, "logged_at"))
+        if not logged_at:
+            continue
+        dose_log_events.append(
+            {
+                "parameter": param_name,
+                "key": normalize_param_key(param_name),
+                "logged_at": logged_at.isoformat(),
+                "label": row_get(row, "additive_name") or row_get(row, "reason") or "Dose",
+                "amount_ml": row_get(row, "amount_ml"),
+            }
+        )
             
     params = [
         {
@@ -2156,6 +2541,7 @@ def tank_detail(request: Request, tank_id: int):
             "series": series,
             "series_map": series_map,
             "chart_targets_map": chart_targets_map,
+            "dose_log_events": dose_log_events,
             "selected_parameter_id": selected_parameter_id,
             "format_value": format_value,
             "low_container_alerts": low_container_alerts,
@@ -2165,13 +2551,40 @@ def tank_detail(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/journal", response_class=HTMLResponse)
 def tank_journal(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     entries = q(db, "SELECT * FROM tank_journal WHERE tank_id=? ORDER BY entry_date DESC, id DESC", (tank_id,))
+    tasks = q(db, "SELECT * FROM tank_maintenance_tasks WHERE tank_id=? AND active=1 ORDER BY next_due_at ASC", (tank_id,))
+    task_views = []
+    today = datetime.utcnow().date()
+    for task in tasks:
+        due_at = parse_dt_any(task["next_due_at"])
+        days_until = None
+        if due_at:
+            days_until = (due_at.date() - today).days
+        status = "ok"
+        if days_until is not None:
+            if days_until < 0:
+                status = "overdue"
+            elif days_until <= 3:
+                status = "due_soon"
+        task_views.append(
+            {
+                **dict(task),
+                "due_at": due_at,
+                "days_until": days_until,
+                "status": status,
+            }
+        )
+    error = (request.query_params.get("error") or "").strip()
     db.close()
-    return templates.TemplateResponse("tank_journal.html", {"request": request, "tank": tank, "entries": entries})
+    return templates.TemplateResponse(
+        "tank_journal.html",
+        {"request": request, "tank": tank, "entries": entries, "tasks": task_views, "error": error},
+    )
 
 @app.post("/tanks/{tank_id}/journal")
 async def tank_journal_add(request: Request, tank_id: int):
@@ -2188,6 +2601,11 @@ async def tank_journal_add(request: Request, tank_id: int):
     title = (form.get("title") or "").strip() or None
     notes = (form.get("notes") or "").strip() or None
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     db.execute(
         "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
         (tank_id, entry_iso, entry_type, title, notes),
@@ -2196,9 +2614,104 @@ async def tank_journal_add(request: Request, tank_id: int):
     db.close()
     return redirect(f"/tanks/{tank_id}/journal")
 
-@app.post("/tanks/{tank_id}/journal/{entry_id}/delete")
-def tank_journal_delete(tank_id: int, entry_id: int):
+@app.post("/tanks/{tank_id}/maintenance")
+async def maintenance_task_add(request: Request, tank_id: int):
+    form = await request.form()
+    title = (form.get("title") or "").strip()
+    notes = (form.get("notes") or "").strip() or None
+    first_due = (form.get("first_due_date") or "").strip()
+    try:
+        interval_days = int(form.get("interval_days") or 0)
+    except Exception:
+        interval_days = 0
+    if not title or interval_days <= 0:
+        return redirect(f"/tanks/{tank_id}/journal?error=maintenance")
+    if first_due:
+        try:
+            next_due = datetime.fromisoformat(first_due)
+        except ValueError:
+            next_due = datetime.utcnow() + timedelta(days=interval_days)
+    else:
+        next_due = datetime.utcnow() + timedelta(days=interval_days)
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    db.execute(
+        """INSERT INTO tank_maintenance_tasks
+           (tank_id, title, interval_days, next_due_at, last_completed_at, notes, active, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+        (
+            tank_id,
+            title,
+            interval_days,
+            next_due.isoformat(),
+            None,
+            notes,
+            datetime.utcnow().isoformat(),
+        ),
+    )
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/maintenance/{task_id}/complete")
+def maintenance_task_complete(request: Request, tank_id: int, task_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    task = one(db, "SELECT * FROM tank_maintenance_tasks WHERE id=? AND tank_id=?", (task_id, tank_id))
+    if task:
+        try:
+            interval_days = int(task["interval_days"] or 0)
+        except Exception:
+            interval_days = 0
+        now = datetime.utcnow()
+        next_due = now + timedelta(days=interval_days) if interval_days > 0 else now
+        db.execute(
+            "UPDATE tank_maintenance_tasks SET last_completed_at=?, next_due_at=? WHERE id=? AND tank_id=?",
+            (now.isoformat(), next_due.isoformat(), task_id, tank_id),
+        )
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (
+                tank_id,
+                now.isoformat(),
+                "maintenance",
+                f"Completed: {task['title']}",
+                "Scheduled maintenance task completed.",
+            ),
+        )
+        db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/maintenance/{task_id}/delete")
+def maintenance_task_delete(request: Request, tank_id: int, task_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    db.execute("DELETE FROM tank_maintenance_tasks WHERE id=? AND tank_id=?", (task_id, tank_id))
+    db.commit()
+    db.close()
+    return redirect(f"/tanks/{tank_id}/journal")
+
+@app.post("/tanks/{tank_id}/journal/{entry_id}/delete")
+def tank_journal_delete(request: Request, tank_id: int, entry_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     db.execute("DELETE FROM tank_journal WHERE id=? AND tank_id=?", (entry_id, tank_id))
     db.commit()
     db.close()
@@ -2208,7 +2721,8 @@ def tank_journal_delete(tank_id: int, entry_id: int):
 def tank_export(request: Request, tank_id: int):
     pd = require_pandas()
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2237,11 +2751,124 @@ def tank_export(request: Request, tank_id: int):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+@app.get("/api/tanks")
+def api_tanks(request: Request):
+    db = get_db()
+    user = get_authenticated_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Authentication required")
+    tanks = get_visible_tanks(db, request)
+    payload = [
+        {
+            "id": t["id"],
+            "name": t["name"],
+            "volume_l": row_get(t, "volume_l"),
+        }
+        for t in tanks
+    ]
+    db.close()
+    return JSONResponse(payload)
+
+@app.get("/api/samples")
+def api_samples(request: Request, tank_id: Optional[int] = None):
+    db = get_db()
+    user = get_authenticated_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Authentication required")
+    tank_ids: List[int] = []
+    if tank_id is not None:
+        tank = get_tank_for_user(db, user, tank_id)
+        if not tank:
+            db.close()
+            raise HTTPException(status_code=404, detail="Tank not found")
+        tank_ids = [tank_id]
+    else:
+        tank_ids = get_visible_tank_ids(db, user)
+    if not tank_ids:
+        db.close()
+        return JSONResponse([])
+    placeholders = ",".join(["?"] * len(tank_ids))
+    samples = q(
+        db,
+        f"SELECT * FROM samples WHERE tank_id IN ({placeholders}) ORDER BY taken_at DESC",
+        tuple(tank_ids),
+    )
+    payload = []
+    for sample in samples:
+        readings = []
+        for r in get_sample_readings(db, sample["id"]):
+            readings.append(
+                {
+                    "name": r["name"],
+                    "value": r["value"],
+                    "unit": r["unit"] or "",
+                    "test_kit_id": row_get(r, "test_kit_id"),
+                    "test_kit_name": row_get(r, "test_kit_name"),
+                }
+            )
+        payload.append(
+            {
+                "id": sample["id"],
+                "tank_id": sample["tank_id"],
+                "taken_at": sample["taken_at"],
+                "notes": sample["notes"],
+                "readings": readings,
+            }
+        )
+    db.close()
+    return JSONResponse(payload)
+
+@app.get("/api/targets")
+def api_targets(request: Request, tank_id: Optional[int] = None):
+    db = get_db()
+    user = get_authenticated_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Authentication required")
+    tank_ids: List[int] = []
+    if tank_id is not None:
+        tank = get_tank_for_user(db, user, tank_id)
+        if not tank:
+            db.close()
+            raise HTTPException(status_code=404, detail="Tank not found")
+        tank_ids = [tank_id]
+    else:
+        tank_ids = get_visible_tank_ids(db, user)
+    if not tank_ids:
+        db.close()
+        return JSONResponse([])
+    placeholders = ",".join(["?"] * len(tank_ids))
+    targets = q(
+        db,
+        f"SELECT * FROM targets WHERE tank_id IN ({placeholders}) ORDER BY tank_id, parameter",
+        tuple(tank_ids),
+    )
+    payload = []
+    for target in targets:
+        payload.append(
+            {
+                "id": target["id"],
+                "tank_id": target["tank_id"],
+                "parameter": target["parameter"],
+                "target_low": row_get(target, "target_low") if "target_low" in target.keys() else row_get(target, "low"),
+                "target_high": row_get(target, "target_high") if "target_high" in target.keys() else row_get(target, "high"),
+                "alert_low": row_get(target, "alert_low"),
+                "alert_high": row_get(target, "alert_high"),
+                "unit": row_get(target, "unit") or "",
+                "enabled": row_get(target, "enabled"),
+            }
+        )
+    db.close()
+    return JSONResponse(payload)
+
 @app.get("/tanks/{tank_id}/profile", response_class=HTMLResponse)
 @app.get("/tanks/{tank_id}/edit", response_class=HTMLResponse, include_in_schema=False)
 def tank_profile(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2294,7 +2921,8 @@ def tank_profile(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/dosing-settings", response_class=HTMLResponse)
 def tank_dosing_settings(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2542,10 +3170,16 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     ):
         container_updated_at = datetime.utcnow().isoformat()
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
         db.close()
         raise HTTPException(status_code=404, detail="Tank profile not found")
+    previous_values = dict(profile)
     ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
     ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
     ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
@@ -2688,6 +3322,52 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
             tank_id,
         ),
     )
+    updated_values = {
+        "dosing_mode": dosing_mode,
+        "all_in_one_solution": all_in_one_solution,
+        "all_in_one_daily_ml": all_in_one_daily_ml,
+        "alk_solution": alk_solution,
+        "alk_daily_ml": alk_daily_ml,
+        "kalk_solution": kalk_solution,
+        "kalk_daily_ml": kalk_daily_ml,
+        "ca_solution": ca_solution,
+        "ca_daily_ml": ca_daily_ml,
+        "mg_solution": mg_solution,
+        "mg_daily_ml": mg_daily_ml,
+        "nitrate_solution": nitrate_solution,
+        "nitrate_daily_ml": nitrate_daily_ml,
+        "phosphate_solution": phosphate_solution,
+        "phosphate_daily_ml": phosphate_daily_ml,
+        "nopox_daily_ml": nopox_daily_ml,
+        "calcium_reactor_daily_ml": calcium_reactor_daily_ml,
+        "calcium_reactor_effluent_dkh": calcium_reactor_effluent_dkh,
+        "use_all_in_one": use_all_in_one,
+        "use_alk": use_alk,
+        "use_ca": use_ca,
+        "use_mg": use_mg,
+        "use_nitrate": use_nitrate,
+        "use_phosphate": use_phosphate,
+        "use_nopox": use_nopox,
+        "use_calcium_reactor": use_calcium_reactor,
+        "use_kalkwasser": use_kalkwasser,
+        "dosing_low_days": dosing_low_days,
+    }
+    changed = []
+    for key, new_value in updated_values.items():
+        old_value = previous_values.get(key)
+        if old_value != new_value:
+            changed.append(f"{key}: {old_value} → {new_value}")
+    if changed:
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                "Updated dosing settings",
+                "; ".join(changed),
+            ),
+        )
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
@@ -2700,7 +3380,8 @@ async def tank_profile_save(request: Request, tank_id: int):
     net_percent = to_float(form.get("net_percent"))
     if net_percent is None: net_percent = 100
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -2740,6 +3421,11 @@ async def dosing_container_action(request: Request, tank_id: int):
         return redirect(f"/tanks/{tank_id}")
     capacity_col, remaining_col = mapping[container_key]
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
         db.close()
@@ -2753,6 +3439,27 @@ async def dosing_container_action(request: Request, tank_id: int):
         db.execute(
             "DELETE FROM dosing_notifications WHERE tank_id=? AND container_key=?",
             (tank_id, container_key),
+        )
+        label_map = {
+            "all_in_one": "All-in-one",
+            "alk": "Alkalinity",
+            "kalk": "Kalkwasser",
+            "ca": "Calcium",
+            "mg": "Magnesium",
+            "nitrate": "Nitrate",
+            "phosphate": "Phosphate",
+            "nopox": "NoPox",
+        }
+        label = label_map.get(container_key, container_key)
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                f"Refilled {label} container",
+                f"Reset remaining volume to {capacity} ml.",
+            ),
         )
         db.commit()
     db.close()
@@ -2780,7 +3487,7 @@ async def dismiss_notification(request: Request):
         db,
         user,
         "notification-dismiss",
-        f"tank_id={tank_id} container_key={container_key} notified_on={notified_on}",
+        {"tank_id": tank_id, "container_key": container_key, "notified_on": notified_on},
     )
     db.commit()
     db.close()
@@ -2789,7 +3496,11 @@ async def dismiss_notification(request: Request):
 @app.get("/tanks/{tank_id}/add", response_class=HTMLResponse)
 def add_sample_form(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     params_rows = get_active_param_defs(db)
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
@@ -2804,6 +3515,11 @@ async def add_sample(request: Request, tank_id: int):
     taken_at = (form.get("taken_at") or "").strip()
     db = get_db()
     cur = db.cursor()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     if taken_at:
         try: when_iso = datetime.fromisoformat(taken_at).isoformat()
         except ValueError: when_iso = datetime.utcnow().isoformat()
@@ -2836,7 +3552,11 @@ async def add_sample(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/samples/{sample_id}", response_class=HTMLResponse)
 def sample_detail(request: Request, tank_id: int, sample_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     sample = one(db, "SELECT * FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
     if not tank or not sample:
         db.close()
@@ -2853,7 +3573,11 @@ def sample_detail(request: Request, tank_id: int, sample_id: int):
 @app.get("/tanks/{tank_id}/samples/{sample_id}/edit", response_class=HTMLResponse)
 def sample_edit(request: Request, tank_id: int, sample_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     sample = one(db, "SELECT * FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
     if not tank or not sample:
         db.close()
@@ -2877,7 +3601,11 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     taken_at = (form.get("taken_at") or "").strip()
     db = get_db()
     cur = db.cursor()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     sample = one(db, "SELECT * FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
     if not tank or not sample:
         db.close()
@@ -3064,7 +3792,7 @@ async def tank_samples_dedupe(request: Request, tank_id: int):
                 if table_exists(db, "parameters"):
                     execute_with_retry(cur, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
             removed += 1
-        log_audit(db, user, "samples-dedupe", f"tank_id={tank_id} removed={removed}")
+        log_audit(db, user, "samples-dedupe", {"tank_id": tank_id, "removed": removed})
         db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/samples?deduped={removed}")
@@ -3072,7 +3800,8 @@ async def tank_samples_dedupe(request: Request, tank_id: int):
 @app.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
 def edit_targets(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -3355,7 +4084,7 @@ def test_kit_edit(request: Request, kit_id: int):
     return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": kit, "parameters": parameters})
 
 @app.post("/settings/test-kits/save")
-def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), manufacturer_accuracy: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -3367,6 +4096,7 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
         name.strip(),
         (unit or "").strip() or None,
         to_float(resolution),
+        to_float(manufacturer_accuracy),
         to_float(min_value),
         to_float(max_value),
         (notes or "").strip() or None,
@@ -3376,12 +4106,12 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
     )
     if kit_id and str(kit_id).strip().isdigit():
         cur.execute(
-            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
+            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, manufacturer_accuracy=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
             (*data, int(kit_id)),
         )
     else:
         cur.execute(
-            "INSERT INTO test_kits (parameter, name, unit, resolution, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO test_kits (parameter, name, unit, resolution, manufacturer_accuracy, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             data,
         )
     db.commit()
@@ -3476,7 +4206,8 @@ def additive_delete(request: Request, additive_id: int):
 @app.get("/tank/{tank_id}/dosing-log", response_class=HTMLResponse, include_in_schema=False)
 def dosing_log(request: Request, tank_id: int):
     db = get_db()
-    tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
@@ -3504,6 +4235,11 @@ async def dosing_log_add(request: Request, tank_id: int):
     reason = (form.get("reason") or "").strip() or None
     if amount_ml is None: return redirect(f"/tanks/{tank_id}/dosing-log")
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     cur = db.cursor()
     when_dt = None
     if logged_at:
@@ -3516,22 +4252,29 @@ async def dosing_log_add(request: Request, tank_id: int):
     cur.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, aid, float(amount_ml), reason, when_iso))
     if aid is not None:
         profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-        additive = one(db, "SELECT name FROM additives WHERE id=?", (aid,))
+        additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
         if profile and additive:
             additive_name = (row_get(additive, "name") or "").strip().lower()
+            additive_label_name = additive_label(additive).strip().lower()
             updates = {}
-            for solution_col, container_col, remaining_col in (
-                ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml"),
-                ("alk_solution", "alk_container_ml", "alk_remaining_ml"),
-                ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml"),
-                ("ca_solution", "ca_container_ml", "ca_remaining_ml"),
-                ("mg_solution", "mg_container_ml", "mg_remaining_ml"),
-                ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml"),
-                ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml"),
+            for solution_col, container_col, remaining_col, default_label in (
+                ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml", "All-in-one"),
+                ("alk_solution", "alk_container_ml", "alk_remaining_ml", "Alkalinity"),
+                ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml", "Kalkwasser"),
+                ("ca_solution", "ca_container_ml", "ca_remaining_ml", "Calcium"),
+                ("mg_solution", "mg_container_ml", "mg_remaining_ml", "Magnesium"),
+                ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml", "Nitrate"),
+                ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml", "Phosphate"),
+                (None, "nopox_container_ml", "nopox_remaining_ml", "NoPox"),
             ):
-                solution_name = (row_get(profile, solution_col) or "").strip().lower()
-                if not solution_name or solution_name != additive_name:
-                    continue
+                if solution_col:
+                    solution_name = (row_get(profile, solution_col) or "").strip().lower()
+                    if not solution_name or solution_name not in {additive_name, additive_label_name}:
+                        continue
+                else:
+                    default_name = default_label.strip().lower()
+                    if additive_name != default_name and additive_label_name != default_name:
+                        continue
                 container_ml = row_get(profile, container_col)
                 remaining_ml = row_get(profile, remaining_col)
                 if remaining_ml is None:
@@ -3552,30 +4295,42 @@ async def dosing_log_add(request: Request, tank_id: int):
     return redirect(f"/tanks/{tank_id}/dosing-log")
 
 @app.post("/dose-logs/{log_id}/delete")
-async def dosing_log_delete(log_id: int, tank_id: int = Form(...)):
+async def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(...)):
     db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     log_row = one(db, "SELECT additive_id, amount_ml FROM dose_logs WHERE id=? AND tank_id=?", (log_id, tank_id))
     if log_row:
         aid = row_get(log_row, "additive_id")
         amount_ml = row_get(log_row, "amount_ml")
         if aid is not None and amount_ml is not None:
             profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-            additive = one(db, "SELECT name FROM additives WHERE id=?", (aid,))
+            additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
             if profile and additive:
                 additive_name = (row_get(additive, "name") or "").strip().lower()
+                additive_label_name = additive_label(additive).strip().lower()
                 updates = {}
-                for solution_col, container_col, remaining_col in (
-                    ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml"),
-                    ("alk_solution", "alk_container_ml", "alk_remaining_ml"),
-                    ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml"),
-                    ("ca_solution", "ca_container_ml", "ca_remaining_ml"),
-                    ("mg_solution", "mg_container_ml", "mg_remaining_ml"),
-                    ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml"),
-                    ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml"),
+                for solution_col, container_col, remaining_col, default_label in (
+                    ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml", "All-in-one"),
+                    ("alk_solution", "alk_container_ml", "alk_remaining_ml", "Alkalinity"),
+                    ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml", "Kalkwasser"),
+                    ("ca_solution", "ca_container_ml", "ca_remaining_ml", "Calcium"),
+                    ("mg_solution", "mg_container_ml", "mg_remaining_ml", "Magnesium"),
+                    ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml", "Nitrate"),
+                    ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml", "Phosphate"),
+                    (None, "nopox_container_ml", "nopox_remaining_ml", "NoPox"),
                 ):
-                    solution_name = (row_get(profile, solution_col) or "").strip().lower()
-                    if not solution_name or solution_name != additive_name:
-                        continue
+                    if solution_col:
+                        solution_name = (row_get(profile, solution_col) or "").strip().lower()
+                        if not solution_name or solution_name not in {additive_name, additive_label_name}:
+                            continue
+                    else:
+                        default_name = default_label.strip().lower()
+                        if additive_name != default_name and additive_label_name != default_name:
+                            continue
                     container_ml = row_get(profile, container_col)
                     remaining_ml = row_get(profile, remaining_col)
                     if remaining_ml is None:
@@ -3934,7 +4689,7 @@ async def admin_user_role(request: Request, user_id: int):
     require_admin(current_user)
     role = "admin" if make_admin else "user"
     db.execute("UPDATE users SET admin=?, role=? WHERE id=?", (1 if make_admin else 0, role, user_id))
-    log_audit(db, current_user, "user-role-update", f"user_id={user_id} admin={make_admin}")
+    log_audit(db, current_user, "user-role-update", {"user_id": user_id, "admin": make_admin})
     db.commit()
     db.close()
     return redirect("/admin/users")
@@ -3959,7 +4714,7 @@ async def admin_user_delete(request: Request, user_id: int):
             db.close()
             return redirect("/admin/users?error=Cannot delete the last admin")
     db.execute("DELETE FROM users WHERE id=?", (user_id,))
-    log_audit(db, current_user, "user-delete", f"user_id={user_id}")
+    log_audit(db, current_user, "user-delete", {"user_id": user_id})
     db.commit()
     db.close()
     return redirect("/admin/users?success=User deleted")
@@ -3978,7 +4733,7 @@ async def admin_user_tanks(request: Request, user_id: int):
         except Exception:
             continue
         db.execute("INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)", (user_id, tid))
-    log_audit(db, current_user, "user-tanks-update", f"user_id={user_id} tanks={','.join(tank_ids)}")
+    log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
     db.commit()
     db.close()
     return redirect("/admin/users")
@@ -3998,7 +4753,7 @@ async def assign_tank(request: Request, tank_id: int):
             "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
             (int(user_id), tank_id),
         )
-    log_audit(db, current_user, "tank-owner-update", f"tank_id={tank_id} owner_id={user_id}")
+    log_audit(db, current_user, "tank-owner-update", {"tank_id": tank_id, "owner_id": user_id})
     db.commit()
     db.close()
     return redirect("/admin/users")

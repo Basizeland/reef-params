@@ -51,6 +51,18 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="fw-semibold mb-2">JSON API Endpoints</div>
+    <div class="text-muted small mb-3">These endpoints require an authenticated session and support an optional <code>tank_id</code> query parameter for samples/targets.</div>
+    <ul class="mb-0 small">
+      <li><code>GET /api/tanks</code></li>
+      <li><code>GET /api/samples?tank_id=&lt;id&gt;</code></li>
+      <li><code>GET /api/targets?tank_id=&lt;id&gt;</code></li>
+    </ul>
+  </div>
+</div>
+
 <div class="card shadow-sm">
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
@@ -93,7 +105,18 @@
               <div class="fw-semibold">{{ action_label }}</div>
               <div class="text-muted small">{{ log.action }}</div>
             </td>
-            <td class="text-end pe-3 text-muted small">{{ log.details }}</td>
+            <td class="text-end pe-3 text-muted small">
+              {% set detail_items = log.details|audit_details %}
+              {% if detail_items and detail_items|length %}
+                <div class="d-flex flex-column gap-1 align-items-end">
+                  {% for item in detail_items %}
+                    <div><span class="fw-semibold">{{ item.label }}:</span> {{ item.value }}</div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                {{ log.details }}
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
         {% if logs|length == 0 %}
