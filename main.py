@@ -2080,6 +2080,7 @@ def tank_detail(request: Request, tank_id: int):
     
     status_by_param_id = {}
     trend_warning_by_param = {}
+    stability_score_by_param = {}
     overdue_by_param = {}
     for pname in available_params:
         data = latest_by_param_id.get(pname)
@@ -2113,6 +2114,15 @@ def tank_detail(request: Request, tank_id: int):
                     trend_warning_by_param[pname] = True
             except Exception:
                 trend_warning_by_param[pname] = False
+        series_vals = [point.get("y") for point in series_map.get(pname, [])][-10:]
+        series_vals = [float(val) for val in series_vals if val is not None]
+        if len(series_vals) >= 2:
+            mean_val = sum(series_vals) / len(series_vals)
+            if mean_val != 0:
+                variance = sum((val - mean_val) ** 2 for val in series_vals) / len(series_vals)
+                std_dev = variance ** 0.5
+                coeff = abs(std_dev / mean_val) * 100.0
+                stability_score_by_param[pname] = max(0.0, 100.0 - min(100.0, coeff))
         overdue_by_param[pname] = False
         latest_taken = latest_data["taken_at"] if latest_data else None
         interval_days = row_get(pdef_map.get(pname), "test_interval_days")
@@ -2122,6 +2132,8 @@ def tank_detail(request: Request, tank_id: int):
             except Exception:
                 overdue_by_param[pname] = False
         
+    trend_alert_params = sorted([name for name, flagged in trend_warning_by_param.items() if flagged], key=lambda s: s.lower())
+
     recent_samples = samples[:10] if samples else []
     db.close()
     return templates.TemplateResponse(
@@ -2136,6 +2148,8 @@ def tank_detail(request: Request, tank_id: int):
             "latest_vals": latest_by_param_id,
             "status_by_param_id": status_by_param_id,
             "trend_warning_by_param": trend_warning_by_param,
+            "trend_alert_params": trend_alert_params,
+            "stability_score_by_param": stability_score_by_param,
             "overdue_by_param": overdue_by_param,
             "targets": targets,
             "target_map": targets_by_param,
@@ -2357,6 +2371,19 @@ def tank_dosing_settings(request: Request, tank_id: int):
             tank_view["nopox_remaining_ml"] = profile["nopox_remaining_ml"]
             tank_view["dosing_low_days"] = profile["dosing_low_days"] if profile["dosing_low_days"] is not None else 5
         except Exception: pass
+    param_limits = {}
+    try:
+        pdefs = q(db, "SELECT name, max_daily_change, unit FROM parameter_defs WHERE active=1")
+        for row in pdefs:
+            name = row_get(row, "name")
+            if not name:
+                continue
+            param_limits[name] = {
+                "max_daily_change": row_get(row, "max_daily_change"),
+                "unit": row_get(row, "unit") or "",
+            }
+    except Exception:
+        param_limits = {}
     daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
     suggested_dosing: Dict[str, float] = {}
     volume_l = row_get(tank_view, "volume_l")
@@ -2380,6 +2407,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
             "additives": additives_rows,
             "grouped_additives": grouped_additives,
             "suggested_dosing": suggested_dosing,
+            "param_limits": param_limits,
         },
     )
 
