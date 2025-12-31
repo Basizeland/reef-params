@@ -2848,6 +2848,7 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     if not profile:
         db.close()
         raise HTTPException(status_code=404, detail="Tank profile not found")
+    previous_values = dict(profile)
     ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
     ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
     ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
@@ -2990,6 +2991,52 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
             tank_id,
         ),
     )
+    updated_values = {
+        "dosing_mode": dosing_mode,
+        "all_in_one_solution": all_in_one_solution,
+        "all_in_one_daily_ml": all_in_one_daily_ml,
+        "alk_solution": alk_solution,
+        "alk_daily_ml": alk_daily_ml,
+        "kalk_solution": kalk_solution,
+        "kalk_daily_ml": kalk_daily_ml,
+        "ca_solution": ca_solution,
+        "ca_daily_ml": ca_daily_ml,
+        "mg_solution": mg_solution,
+        "mg_daily_ml": mg_daily_ml,
+        "nitrate_solution": nitrate_solution,
+        "nitrate_daily_ml": nitrate_daily_ml,
+        "phosphate_solution": phosphate_solution,
+        "phosphate_daily_ml": phosphate_daily_ml,
+        "nopox_daily_ml": nopox_daily_ml,
+        "calcium_reactor_daily_ml": calcium_reactor_daily_ml,
+        "calcium_reactor_effluent_dkh": calcium_reactor_effluent_dkh,
+        "use_all_in_one": use_all_in_one,
+        "use_alk": use_alk,
+        "use_ca": use_ca,
+        "use_mg": use_mg,
+        "use_nitrate": use_nitrate,
+        "use_phosphate": use_phosphate,
+        "use_nopox": use_nopox,
+        "use_calcium_reactor": use_calcium_reactor,
+        "use_kalkwasser": use_kalkwasser,
+        "dosing_low_days": dosing_low_days,
+    }
+    changed = []
+    for key, new_value in updated_values.items():
+        old_value = previous_values.get(key)
+        if old_value != new_value:
+            changed.append(f"{key}: {old_value} → {new_value}")
+    if changed:
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                "Updated dosing settings",
+                "; ".join(changed),
+            ),
+        )
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
@@ -3055,6 +3102,27 @@ async def dosing_container_action(request: Request, tank_id: int):
         db.execute(
             "DELETE FROM dosing_notifications WHERE tank_id=? AND container_key=?",
             (tank_id, container_key),
+        )
+        label_map = {
+            "all_in_one": "All-in-one",
+            "alk": "Alkalinity",
+            "kalk": "Kalkwasser",
+            "ca": "Calcium",
+            "mg": "Magnesium",
+            "nitrate": "Nitrate",
+            "phosphate": "Phosphate",
+            "nopox": "NoPox",
+        }
+        label = label_map.get(container_key, container_key)
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                f"Refilled {label} container",
+                f"Reset remaining volume to {capacity} ml.",
+            ),
         )
         db.commit()
     db.close()
