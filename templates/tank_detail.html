@@ -16,6 +16,12 @@
     .tank-action-bar .dropdown-toggle::after {
       margin-left: 0.25rem;
     }
+    .dose-solution-name {
+      font-size: 0.85rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
   .dose-container {
     position: relative;
@@ -49,11 +55,15 @@
 </style>
 <div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
   <div>
-    <h1 class="h2 mb-0 fw-bold text-navy">{{ tank.name }}</h1>
-    <div class="text-muted small d-flex gap-3 align-items-center mt-1">
-      <span>ID: {{ tank.id }}</span>
+    <h1 class="h2 mb-0 fw-bold text-navy d-flex flex-wrap align-items-center gap-2">
+      <span>{{ tank.name }}</span>
       {% if tank.volume_l %}
-        <span class="badge bg-light text-secondary border fs-6">{{ tank.volume_l }} Liters</span>
+        <span class="badge bg-light text-secondary border fs-6 d-inline-flex d-sm-none">{{ tank.volume_l }} Liters</span>
+      {% endif %}
+    </h1>
+    <div class="text-muted small d-flex gap-3 align-items-center mt-1">
+      {% if tank.volume_l %}
+        <span class="badge bg-light text-secondary border fs-6 d-none d-sm-inline-flex">{{ tank.volume_l }} Liters</span>
       {% endif %}
     </div>
   </div>
@@ -131,7 +141,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">All-in-one</div>
-                <div class="fw-semibold">{{ tank.all_in_one_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.all_in_one_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.all_in_one_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -168,7 +178,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Alkalinity</div>
-                <div class="fw-semibold">{{ tank.alk_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.alk_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.alk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -205,7 +215,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Kalkwasser</div>
-                <div class="fw-semibold">{{ tank.kalk_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.kalk_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.kalk_daily_ml|fmt2 if tank.kalk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.kalk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -242,7 +252,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Calcium</div>
-                <div class="fw-semibold">{{ tank.ca_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.ca_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.ca_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -279,7 +289,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Magnesium</div>
-                <div class="fw-semibold">{{ tank.mg_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.mg_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.mg_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -316,7 +326,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Nitrate</div>
-                <div class="fw-semibold">{{ tank.nitrate_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.nitrate_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.nitrate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -353,7 +363,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Phosphate</div>
-                <div class="fw-semibold">{{ tank.phosphate_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.phosphate_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.phosphate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -390,7 +400,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">NoPox</div>
-                <div class="fw-semibold">Red Sea NoPox</div>
+                <div class="fw-semibold dose-solution-name">Red Sea NoPox</div>
                 <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
                 {% if tank.nopox_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
