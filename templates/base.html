@@ -97,9 +97,6 @@
                 </ul>
             </div>
             <div class="d-flex align-items-center gap-2 ms-auto">
-                <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="modal" data-bs-target="#onboardingModal">
-                    <i class="bi bi-compass"></i> Guide
-                </button>
                 {% set global_notifications = global_dosing_notifications(request) %}
                 <div class="dropdown">
                     <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
@@ -145,6 +142,11 @@
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
                             <li class="dropdown-header text-muted small">{{ request.state.user.email }}</li>
+                            <li>
+                                <button class="dropdown-item" type="button" data-bs-toggle="modal" data-bs-target="#onboardingModal">
+                                    <i class="bi bi-compass"></i> Guide
+                                </button>
+                            </li>
                             <li><a class="dropdown-item" href="/account"><i class="bi bi-key"></i> Change Password</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="/auth/logout"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
@@ -172,44 +174,58 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted">Here’s a quick guide to the main areas of the app:</p>
+                    <p class="text-muted">Here’s a quick guide to the main areas of the app. Click any card to jump there.</p>
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <div class="border rounded p-3 h-100">
-                                <div class="fw-semibold">Dashboard</div>
+                            <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/">
+                                <div class="fw-semibold text-navy">Dashboard</div>
                                 <div class="text-muted small">Your tanks, recent readings, and alerts in one place.</div>
-                            </div>
+                            </a>
                         </div>
                         <div class="col-md-6">
-                            <div class="border rounded p-3 h-100">
-                                <div class="fw-semibold">Tools</div>
+                            <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/tools/calculators">
+                                <div class="fw-semibold text-navy">Tools</div>
                                 <div class="text-muted small">Use the dosing calculator and dose planner to map your additions.</div>
-                            </div>
+                                <div class="text-muted small mt-1">Shortcuts: Dosing Calculator, Dose Planner.</div>
+                            </a>
                         </div>
                         <div class="col-md-6">
-                            <div class="border rounded p-3 h-100">
-                                <div class="fw-semibold">Manage</div>
+                            <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/settings/parameters">
+                                <div class="fw-semibold text-navy">Manage</div>
                                 <div class="text-muted small">Set parameters, additives, and test kits that power calculations.</div>
-                            </div>
+                                <div class="text-muted small mt-1">Start with Parameters → Additives → Test Kits.</div>
+                            </a>
                         </div>
                         <div class="col-md-6">
-                            <div class="border rounded p-3 h-100">
-                                <div class="fw-semibold">Dosing Settings</div>
+                            <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/">
+                                <div class="fw-semibold text-navy">Dosing Settings</div>
                                 <div class="text-muted small">Pick dosing methods, enter daily amounts, and track containers.</div>
-                            </div>
+                                <div class="text-muted small mt-1">Open any tank → Edit Dosing.</div>
+                            </a>
                         </div>
                         <div class="col-md-6">
                             <div class="border rounded p-3 h-100">
                                 <div class="fw-semibold">Notifications</div>
                                 <div class="text-muted small">Check the bell for low-container warnings and actions.</div>
+                                <div class="text-muted small mt-1">Dismiss alerts or jump to the tank.</div>
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <div class="border rounded p-3 h-100">
-                                <div class="fw-semibold">Data Center</div>
+                            <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/admin/import">
+                                <div class="fw-semibold text-navy">Data Center</div>
                                 <div class="text-muted small">Import/export and backups for power users.</div>
-                            </div>
+                                <div class="text-muted small mt-1">Export data, restore backups, or bulk import.</div>
+                            </a>
                         </div>
+                    </div>
+                    <div class="mt-3">
+                        <div class="fw-semibold">Quick Start</div>
+                        <ol class="small text-muted mb-0">
+                            <li>Create a tank from the dashboard.</li>
+                            <li>Add parameters, targets, and preferred additives.</li>
+                            <li>Enter initial readings and set dosing methods.</li>
+                            <li>Use the calculator to dial in daily dosing.</li>
+                        </ol>
                     </div>
                 </div>
                 <div class="modal-footer">
