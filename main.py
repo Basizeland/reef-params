@@ -467,7 +467,11 @@ def collect_dosing_notifications(
                         db,
                         actor_user,
                         "notification-sent",
-                        f"tank_id={row_get(row, 'tank_id')} container_key={key} notified_on={today}",
+                        {
+                            "tank_id": row_get(row, "tank_id"),
+                            "container_key": key,
+                            "notified_on": today,
+                        },
                     )
                     db.commit()
     return notifications
@@ -1550,7 +1554,12 @@ async def auth_middleware(request: Request, call_next):
             return redirect("/auth/login")
         response = await call_next(request)
         if user:
-            log_audit(db, user, f"{request.method} {path}", f"status={response.status_code}")
+            log_audit(
+                db,
+                user,
+                f"{request.method} {path}",
+                {"status": response.status_code},
+            )
         return response
     finally:
         db.close()
@@ -1707,7 +1716,7 @@ async def register_submit(request: Request):
         db,
         user,
         "welcome-email",
-        f"email={email} sent={sent} reason={reason}" if reason else f"email={email} sent={sent}",
+        {"email": email, "sent": sent, "reason": reason} if reason else {"email": email, "sent": sent},
     )
     token = create_session(db, user["id"])
     db.close()
@@ -1772,7 +1781,7 @@ async def account_change_password(request: Request):
         "UPDATE users SET password_hash=?, password_salt=? WHERE id=?",
         (password_hash, password_salt, user["id"]),
     )
-    log_audit(db, user, "password-change", "self-service")
+    log_audit(db, user, "password-change", {"mode": "self-service"})
     db.commit()
     tokens = list_api_tokens(db, user["id"])
     db.close()
@@ -1829,7 +1838,9 @@ async def admin_send_daily_summaries(request: Request):
             db,
             current_user,
             "daily-summary-send",
-            f"user_id={u['id']} email={u['email']} sent={success} reason={reason}" if reason else f"user_id={u['id']} email={u['email']} sent={success}",
+            {"user_id": u["id"], "email": u["email"], "sent": success, "reason": reason}
+            if reason
+            else {"user_id": u["id"], "email": u["email"], "sent": success},
         )
         if success:
             sent_count += 1
@@ -1929,7 +1940,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
             db,
             user,
             "welcome-email",
-            f"email={email} sent={sent} reason={reason}" if reason else f"email={email} sent={sent}",
+            {"email": email, "sent": sent, "reason": reason} if reason else {"email": email, "sent": sent},
         )
     token = create_session(db, user["id"])
     db.close()
@@ -2248,7 +2259,7 @@ def tank_detail(request: Request, tank_id: int):
                 db,
                 user,
                 "dosing-volume-update",
-                f"tank_id={tank_id} updates={json.dumps(container_updates)}",
+                {"tank_id": tank_id, "updates": container_updates},
             )
         dosing_low_days = row_get(profile, "dosing_low_days")
         if dosing_low_days is None:
@@ -3474,7 +3485,7 @@ async def dismiss_notification(request: Request):
         db,
         user,
         "notification-dismiss",
-        f"tank_id={tank_id} container_key={container_key} notified_on={notified_on}",
+        {"tank_id": tank_id, "container_key": container_key, "notified_on": notified_on},
     )
     db.commit()
     db.close()
@@ -3779,7 +3790,7 @@ async def tank_samples_dedupe(request: Request, tank_id: int):
                 if table_exists(db, "parameters"):
                     execute_with_retry(cur, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
             removed += 1
-        log_audit(db, user, "samples-dedupe", f"tank_id={tank_id} removed={removed}")
+        log_audit(db, user, "samples-dedupe", {"tank_id": tank_id, "removed": removed})
         db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/samples?deduped={removed}")
@@ -4238,22 +4249,29 @@ async def dosing_log_add(request: Request, tank_id: int):
     cur.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, aid, float(amount_ml), reason, when_iso))
     if aid is not None:
         profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-        additive = one(db, "SELECT name FROM additives WHERE id=?", (aid,))
+        additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
         if profile and additive:
             additive_name = (row_get(additive, "name") or "").strip().lower()
+            additive_label_name = additive_label(additive).strip().lower()
             updates = {}
-            for solution_col, container_col, remaining_col in (
-                ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml"),
-                ("alk_solution", "alk_container_ml", "alk_remaining_ml"),
-                ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml"),
-                ("ca_solution", "ca_container_ml", "ca_remaining_ml"),
-                ("mg_solution", "mg_container_ml", "mg_remaining_ml"),
-                ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml"),
-                ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml"),
+            for solution_col, container_col, remaining_col, default_label in (
+                ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml", "All-in-one"),
+                ("alk_solution", "alk_container_ml", "alk_remaining_ml", "Alkalinity"),
+                ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml", "Kalkwasser"),
+                ("ca_solution", "ca_container_ml", "ca_remaining_ml", "Calcium"),
+                ("mg_solution", "mg_container_ml", "mg_remaining_ml", "Magnesium"),
+                ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml", "Nitrate"),
+                ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml", "Phosphate"),
+                (None, "nopox_container_ml", "nopox_remaining_ml", "NoPox"),
             ):
-                solution_name = (row_get(profile, solution_col) or "").strip().lower()
-                if not solution_name or solution_name != additive_name:
-                    continue
+                if solution_col:
+                    solution_name = (row_get(profile, solution_col) or "").strip().lower()
+                    if not solution_name or solution_name not in {additive_name, additive_label_name}:
+                        continue
+                else:
+                    default_name = default_label.strip().lower()
+                    if additive_name != default_name and additive_label_name != default_name:
+                        continue
                 container_ml = row_get(profile, container_col)
                 remaining_ml = row_get(profile, remaining_col)
                 if remaining_ml is None:
@@ -4287,22 +4305,29 @@ async def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(.
         amount_ml = row_get(log_row, "amount_ml")
         if aid is not None and amount_ml is not None:
             profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-            additive = one(db, "SELECT name FROM additives WHERE id=?", (aid,))
+            additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
             if profile and additive:
                 additive_name = (row_get(additive, "name") or "").strip().lower()
+                additive_label_name = additive_label(additive).strip().lower()
                 updates = {}
-                for solution_col, container_col, remaining_col in (
-                    ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml"),
-                    ("alk_solution", "alk_container_ml", "alk_remaining_ml"),
-                    ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml"),
-                    ("ca_solution", "ca_container_ml", "ca_remaining_ml"),
-                    ("mg_solution", "mg_container_ml", "mg_remaining_ml"),
-                    ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml"),
-                    ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml"),
+                for solution_col, container_col, remaining_col, default_label in (
+                    ("all_in_one_solution", "all_in_one_container_ml", "all_in_one_remaining_ml", "All-in-one"),
+                    ("alk_solution", "alk_container_ml", "alk_remaining_ml", "Alkalinity"),
+                    ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml", "Kalkwasser"),
+                    ("ca_solution", "ca_container_ml", "ca_remaining_ml", "Calcium"),
+                    ("mg_solution", "mg_container_ml", "mg_remaining_ml", "Magnesium"),
+                    ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml", "Nitrate"),
+                    ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml", "Phosphate"),
+                    (None, "nopox_container_ml", "nopox_remaining_ml", "NoPox"),
                 ):
-                    solution_name = (row_get(profile, solution_col) or "").strip().lower()
-                    if not solution_name or solution_name != additive_name:
-                        continue
+                    if solution_col:
+                        solution_name = (row_get(profile, solution_col) or "").strip().lower()
+                        if not solution_name or solution_name not in {additive_name, additive_label_name}:
+                            continue
+                    else:
+                        default_name = default_label.strip().lower()
+                        if additive_name != default_name and additive_label_name != default_name:
+                            continue
                     container_ml = row_get(profile, container_col)
                     remaining_ml = row_get(profile, remaining_col)
                     if remaining_ml is None:
@@ -4661,7 +4686,7 @@ async def admin_user_role(request: Request, user_id: int):
     require_admin(current_user)
     role = "admin" if make_admin else "user"
     db.execute("UPDATE users SET admin=?, role=? WHERE id=?", (1 if make_admin else 0, role, user_id))
-    log_audit(db, current_user, "user-role-update", f"user_id={user_id} admin={make_admin}")
+    log_audit(db, current_user, "user-role-update", {"user_id": user_id, "admin": make_admin})
     db.commit()
     db.close()
     return redirect("/admin/users")
@@ -4686,7 +4711,7 @@ async def admin_user_delete(request: Request, user_id: int):
             db.close()
             return redirect("/admin/users?error=Cannot delete the last admin")
     db.execute("DELETE FROM users WHERE id=?", (user_id,))
-    log_audit(db, current_user, "user-delete", f"user_id={user_id}")
+    log_audit(db, current_user, "user-delete", {"user_id": user_id})
     db.commit()
     db.close()
     return redirect("/admin/users?success=User deleted")
@@ -4705,7 +4730,7 @@ async def admin_user_tanks(request: Request, user_id: int):
         except Exception:
             continue
         db.execute("INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)", (user_id, tid))
-    log_audit(db, current_user, "user-tanks-update", f"user_id={user_id} tanks={','.join(tank_ids)}")
+    log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
     db.commit()
     db.close()
     return redirect("/admin/users")
@@ -4725,7 +4750,7 @@ async def assign_tank(request: Request, tank_id: int):
             "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
             (int(user_id), tank_id),
         )
-    log_audit(db, current_user, "tank-owner-update", f"tank_id={tank_id} owner_id={user_id}")
+    log_audit(db, current_user, "tank-owner-update", {"tank_id": tank_id, "owner_id": user_id})
     db.commit()
     db.close()
     return redirect("/admin/users")
