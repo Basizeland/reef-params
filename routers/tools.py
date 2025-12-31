@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from datetime import date, timedelta, datetime
 import math, os
 from database import get_db
+import main as app_main
 from models import Tank, Additive, TankProfile, ParameterDef, Sample, SampleValue, Target, DosePlanCheck, DoseLog
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,13 +17,27 @@ templates.env.filters["fmt2"] = lambda v: f"{float(v):.2f}".rstrip("0").rstrip("
 
 @router.get("/tools/calculators", response_class=HTMLResponse)
 def calculators(request: Request, db: Session = Depends(get_db)):
+    db_main = app_main.get_db()
+    try:
+        user = request.state.user if hasattr(request, "state") else None
+        visible_ids = app_main.get_visible_tank_ids(db_main, user)
+    finally:
+        db_main.close()
+    tanks = db.query(Tank).filter(Tank.id.in_(visible_ids)).all() if visible_ids else []
     return templates.TemplateResponse("calculators.html", {
-        "request": request, "tanks": db.query(Tank).all(), "additives": db.query(Additive).filter(Additive.active==1).all(),
-        "profiles": {p.tank_id: p for p in db.query(TankProfile).all()}
+        "request": request, "tanks": tanks, "additives": db.query(Additive).filter(Additive.active==1).all(),
+        "profiles": {p.tank_id: p for p in db.query(TankProfile).filter(TankProfile.tank_id.in_(visible_ids)).all()}
     })
 
 @router.post("/tools/calculators", response_class=HTMLResponse)
 def calculators_post(request: Request, tank_id: int = Form(...), additive_id: int = Form(...), desired_change: float = Form(...), db: Session = Depends(get_db)):
+    db_main = app_main.get_db()
+    try:
+        user = request.state.user if hasattr(request, "state") else None
+        if not app_main.get_tank_for_user(db_main, user, tank_id):
+            raise HTTPException(status_code=404, detail="Tank not found")
+    finally:
+        db_main.close()
     tank = db.query(Tank).filter(Tank.id==tank_id).first()
     additive = db.query(Additive).filter(Additive.id==additive_id).first()
     prof = tank.profile
@@ -55,7 +70,13 @@ def dose_plan(request: Request, db: Session = Depends(get_db)):
     checks = db.query(DosePlanCheck).filter(DosePlanCheck.planned_date >= today.isoformat()).all()
     check_map = {(c.tank_id, c.parameter, c.additive_id, c.planned_date): c.checked for c in checks}
     
-    for t in db.query(Tank).all():
+    db_main = app_main.get_db()
+    try:
+        user = request.state.user if hasattr(request, "state") else None
+        visible_ids = app_main.get_visible_tank_ids(db_main, user)
+    finally:
+        db_main.close()
+    for t in db.query(Tank).filter(Tank.id.in_(visible_ids)).all():
         if not t.profile: continue
         eff_vol = t.profile.volume_l * (t.profile.net_percent / 100.0)
         

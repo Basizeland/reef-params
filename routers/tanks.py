@@ -9,6 +9,7 @@ import os
 import re
 
 from database import get_db
+import main as app_main
 from models import Tank, TankProfile, Sample, SampleValue, ParameterDef, Target, DoseLog, Additive, TestKit, SampleValueKit
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,9 +83,28 @@ templates.env.globals["format_value"] = lambda p, v: fmt2(v)
 
 router = APIRouter()
 
+def authorize_tank(request: Request, tank_id: int) -> None:
+    db = app_main.get_db()
+    try:
+        user = request.state.user if hasattr(request, "state") else None
+        tank = app_main.get_tank_for_user(db, user, tank_id)
+        if not tank:
+            raise HTTPException(status_code=404, detail="Tank not found")
+    finally:
+        db.close()
+
+def visible_tank_ids(request: Request) -> List[int]:
+    db = app_main.get_db()
+    try:
+        user = request.state.user if hasattr(request, "state") else None
+        return app_main.get_visible_tank_ids(db, user)
+    finally:
+        db.close()
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    tanks = db.query(Tank).all()
+    tank_ids = visible_tank_ids(request)
+    tanks = db.query(Tank).filter(Tank.id.in_(tank_ids)).all() if tank_ids else []
     tank_cards = []
     for t in tanks:
         latest = db.query(Sample).filter(Sample.tank_id == t.id).order_by(Sample.taken_at.desc()).first()
@@ -115,6 +135,7 @@ def tank_new(name: str = Form(...), volume_l: Optional[float] = Form(None), db: 
 
 @router.get("/tanks/{tank_id}", response_class=HTMLResponse)
 def tank_detail(request: Request, tank_id: int, parameter: Optional[str] = None, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     tank = db.query(Tank).filter(Tank.id == tank_id).first()
     if not tank: raise HTTPException(404, "Tank not found")
     samples = db.query(Sample).filter(Sample.tank_id == tank_id).order_by(Sample.taken_at.desc()).limit(50).all()
@@ -141,7 +162,8 @@ def tank_detail(request: Request, tank_id: int, parameter: Optional[str] = None,
     })
 
 @router.post("/tanks/{tank_id}/delete")
-def tank_delete(tank_id: int, db: Session = Depends(get_db)):
+def tank_delete(request: Request, tank_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     db.query(Tank).filter(Tank.id == tank_id).delete()
     db.commit()
     return RedirectResponse("/", status_code=303)
@@ -149,6 +171,7 @@ def tank_delete(tank_id: int, db: Session = Depends(get_db)):
 # --- Profile ---
 @router.get("/tanks/{tank_id}/profile", response_class=HTMLResponse)
 def tank_profile(request: Request, tank_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     tank = db.query(Tank).filter(Tank.id == tank_id).first()
     if not tank.profile:
         db.add(TankProfile(tank_id=tank.id, volume_l=tank.volume_l, net_percent=100))
@@ -156,7 +179,8 @@ def tank_profile(request: Request, tank_id: int, db: Session = Depends(get_db)):
     return templates.TemplateResponse("tank_profile.html", {"request": request, "tank": tank})
 
 @router.post("/tanks/{tank_id}/profile")
-def tank_profile_save(tank_id: int, volume_l: Optional[float] = Form(None), net_percent: float = Form(100), db: Session = Depends(get_db)):
+def tank_profile_save(request: Request, tank_id: int, volume_l: Optional[float] = Form(None), net_percent: float = Form(100), db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     prof = db.query(TankProfile).filter(TankProfile.tank_id == tank_id).first()
     if prof:
         prof.volume_l = volume_l
@@ -170,6 +194,7 @@ def tank_profile_save(tank_id: int, volume_l: Optional[float] = Form(None), net_
 # --- Samples ---
 @router.get("/tanks/{tank_id}/add", response_class=HTMLResponse)
 def add_sample_form(request: Request, tank_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     tank = db.query(Tank).filter(Tank.id == tank_id).first()
     params = db.query(ParameterDef).filter(ParameterDef.active == 1).order_by(ParameterDef.sort_order).all()
     kits = db.query(TestKit).filter(TestKit.active == 1).order_by(TestKit.parameter, TestKit.name).all()
@@ -180,6 +205,7 @@ def add_sample_form(request: Request, tank_id: int, db: Session = Depends(get_db
 
 @router.post("/tanks/{tank_id}/add")
 async def add_sample(request: Request, tank_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     form = await request.form()
     taken_at = (form.get("taken_at") or "").strip() or datetime.utcnow().isoformat()
     s = Sample(tank_id=tank_id, taken_at=taken_at, notes=form.get("notes"))
@@ -216,6 +242,7 @@ async def add_sample(request: Request, tank_id: int, db: Session = Depends(get_d
 
 @router.get("/tanks/{tank_id}/samples/{sample_id}", response_class=HTMLResponse)
 def sample_detail(request: Request, tank_id: int, sample_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     sample = db.query(Sample).filter(Sample.id == sample_id).first()
     readings = []
     for sv in sample.values:
@@ -223,8 +250,11 @@ def sample_detail(request: Request, tank_id: int, sample_id: int, db: Session = 
     return templates.TemplateResponse("sample_detail.html", {"request": request, "tank": sample.tank, "sample": sample, "readings": readings})
 
 @router.post("/samples/{sample_id}/delete")
-def sample_delete(sample_id: int, db: Session = Depends(get_db)):
+def sample_delete(request: Request, sample_id: int, db: Session = Depends(get_db)):
     s = db.query(Sample).filter(Sample.id == sample_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    authorize_tank(request, s.tank_id)
     tid = s.tank_id
     db.delete(s)
     db.commit()
@@ -233,6 +263,7 @@ def sample_delete(sample_id: int, db: Session = Depends(get_db)):
 # --- Targets ---
 @router.get("/tanks/{tank_id}/targets", response_class=HTMLResponse)
 def edit_targets(request: Request, tank_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     tank = db.query(Tank).filter(Tank.id == tank_id).first()
     params = db.query(ParameterDef).order_by(ParameterDef.sort_order).all()
     targets = {t.parameter: t for t in db.query(Target).filter(Target.tank_id == tank_id).all()}
@@ -254,6 +285,7 @@ def edit_targets(request: Request, tank_id: int, db: Session = Depends(get_db)):
 
 @router.post("/tanks/{tank_id}/targets")
 async def save_targets(request: Request, tank_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     form = await request.form()
     params = db.query(ParameterDef).all()
     for p in params:
@@ -285,6 +317,7 @@ async def save_targets(request: Request, tank_id: int, db: Session = Depends(get
 # --- Dosing Log ---
 @router.get("/tanks/{tank_id}/dosing-log", response_class=HTMLResponse)
 def dosing_log(request: Request, tank_id: int, db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     tank = db.query(Tank).filter(Tank.id == tank_id).first()
     logs = db.query(DoseLog).filter(DoseLog.tank_id == tank_id).order_by(DoseLog.logged_at.desc()).all()
     adds = db.query(Additive).filter(Additive.active == 1).all()
@@ -299,13 +332,18 @@ def dosing_log(request: Request, tank_id: int, db: Session = Depends(get_db)):
     return templates.TemplateResponse("dosing_log.html", {"request": request, "tank": tank, "logs": norm_logs, "additives": adds})
 
 @router.post("/tanks/{tank_id}/dosing-log")
-def dosing_log_add(tank_id: int, additive_id: int = Form(...), amount_ml: float = Form(...), reason: str = Form(None), db: Session = Depends(get_db)):
+def dosing_log_add(request: Request, tank_id: int, additive_id: int = Form(...), amount_ml: float = Form(...), reason: str = Form(None), db: Session = Depends(get_db)):
+    authorize_tank(request, tank_id)
     db.add(DoseLog(tank_id=tank_id, additive_id=additive_id, amount_ml=amount_ml, reason=reason, logged_at=datetime.utcnow().isoformat()))
     db.commit()
     return RedirectResponse(f"/tanks/{tank_id}/dosing-log", status_code=303)
 
 @router.post("/dose-logs/{log_id}/delete")
-def dosing_log_delete(log_id: int, tank_id: int = Form(...), db: Session = Depends(get_db)):
+def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(...), db: Session = Depends(get_db)):
+    log = db.query(DoseLog).filter(DoseLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Dose log not found")
+    authorize_tank(request, log.tank_id)
     db.query(DoseLog).filter(DoseLog.id == log_id).delete()
     db.commit()
     return RedirectResponse(f"/tanks/{tank_id}/dosing-log", status_code=303)
