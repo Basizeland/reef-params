@@ -703,6 +703,15 @@ def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, 
     except Exception:
         pass
 
+def describe_changes(before: Optional[sqlite3.Row], after: Dict[str, Any], fields: List[str]) -> str:
+    changes = []
+    for field in fields:
+        old_value = row_get(before, field) if before else None
+        new_value = after.get(field)
+        if old_value != new_value:
+            changes.append(f"{field}={old_value} -> {new_value}")
+    return "; ".join(changes)
+
 def ensure_column(db: sqlite3.Connection, table: str, col: str, ddl: str) -> None:
     cur = db.execute(f"PRAGMA table_info({table})")
     cols = [r[1] for r in cur.fetchall()]
@@ -3341,6 +3350,7 @@ def test_kit_edit(request: Request, kit_id: int):
 def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
+    current_user = get_current_user(db, request)
     selected_parameter = (parameter or "").strip() or (parameter_id or "").strip()
     payload = build_test_kit_payload(
         parameter=selected_parameter,
@@ -3367,15 +3377,34 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
         payload["conversion_data"],
         payload["active"],
     )
+    existing_kit = None
     if kit_id and str(kit_id).strip().isdigit():
+        existing_kit = one(db, "SELECT * FROM test_kits WHERE id=?", (int(kit_id),))
         cur.execute(
             "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
             (*data, int(kit_id)),
+        )
+        changes = describe_changes(
+            existing_kit,
+            payload,
+            ["parameter", "name", "unit", "resolution", "min_value", "max_value", "notes", "conversion_type", "conversion_data", "active"],
+        )
+        log_audit(
+            db,
+            current_user,
+            "test-kit-update",
+            f"id={kit_id} name={payload['name']} parameter={payload['parameter']} changes={changes or 'none'}",
         )
     else:
         cur.execute(
             "INSERT INTO test_kits (parameter, name, unit, resolution, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             data,
+        )
+        log_audit(
+            db,
+            current_user,
+            "test-kit-create",
+            f"name={payload['name']} parameter={payload['parameter']} active={payload['active']}",
         )
     db.commit()
     db.close()
@@ -3384,7 +3413,11 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
 @app.post("/settings/test-kits/{kit_id}/delete")
 def test_kit_delete(request: Request, kit_id: int):
     db = get_db()
+    current_user = get_current_user(db, request)
+    kit = one(db, "SELECT name, parameter FROM test_kits WHERE id=?", (kit_id,))
     db.execute("DELETE FROM test_kits WHERE id=?", (kit_id,))
+    if kit:
+        log_audit(db, current_user, "test-kit-delete", f"id={kit_id} name={kit['name']} parameter={kit['parameter']}")
     db.commit()
     db.close()
     return redirect("/settings/test-kits")
@@ -3498,6 +3531,7 @@ async def dosing_log_add(request: Request, tank_id: int):
     if amount_ml is None: return redirect(f"/tanks/{tank_id}/dosing-log")
     db = get_db()
     cur = db.cursor()
+    current_user = get_current_user(db, request)
     when_dt = None
     if logged_at:
         try:
@@ -3507,6 +3541,14 @@ async def dosing_log_add(request: Request, tank_id: int):
     when_iso = (when_dt or datetime.now()).isoformat()
     aid = int(additive_id) if additive_id and str(additive_id).isdigit() else None
     cur.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, aid, float(amount_ml), reason, when_iso))
+    tank = one(db, "SELECT name FROM tanks WHERE id=?", (tank_id,))
+    additive = one(db, "SELECT name FROM additives WHERE id=?", (aid,)) if aid is not None else None
+    log_audit(
+        db,
+        current_user,
+        "dose-log-create",
+        f"tank_id={tank_id} tank={row_get(tank, 'name')} additive_id={aid} additive={row_get(additive, 'name')} amount_ml={amount_ml} logged_at={when_iso} reason={reason}",
+    )
     if aid is not None:
         profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
         additive = one(db, "SELECT name FROM additives WHERE id=?", (aid,))
@@ -3545,8 +3587,9 @@ async def dosing_log_add(request: Request, tank_id: int):
     return redirect(f"/tanks/{tank_id}/dosing-log")
 
 @app.post("/dose-logs/{log_id}/delete")
-async def dosing_log_delete(log_id: int, tank_id: int = Form(...)):
+async def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(...)):
     db = get_db()
+    current_user = get_current_user(db, request)
     log_row = one(db, "SELECT additive_id, amount_ml FROM dose_logs WHERE id=? AND tank_id=?", (log_id, tank_id))
     if log_row:
         aid = row_get(log_row, "additive_id")
@@ -3587,6 +3630,14 @@ async def dosing_log_delete(log_id: int, tank_id: int = Form(...)):
                         (*updates.values(), tank_id),
                     )
     db.execute("DELETE FROM dose_logs WHERE id=?", (log_id,))
+    tank = one(db, "SELECT name FROM tanks WHERE id=?", (tank_id,))
+    additive = one(db, "SELECT name FROM additives WHERE id=?", (aid,)) if log_row else None
+    log_audit(
+        db,
+        current_user,
+        "dose-log-delete",
+        f"log_id={log_id} tank_id={tank_id} tank={row_get(tank, 'name')} additive_id={row_get(log_row, 'additive_id') if log_row else None} additive={row_get(additive, 'name')} amount_ml={row_get(log_row, 'amount_ml') if log_row else None}",
+    )
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/dosing-log")
@@ -3861,6 +3912,7 @@ async def dose_plan_check(request: Request):
     except Exception: amount_ml = 0.0
     if not tank_id or not additive_id or not parameter or not planned_date: raise HTTPException(status_code=400, detail="Missing fields")
     db = get_db()
+    current_user = get_current_user(db, request)
     now_iso = datetime.utcnow().isoformat()
     db.execute("INSERT INTO dose_plan_checks (tank_id, parameter, additive_id, planned_date, checked, checked_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tank_id, parameter, additive_id, planned_date) DO UPDATE SET checked=excluded.checked, checked_at=excluded.checked_at", (tank_id, parameter, additive_id, planned_date, checked, now_iso))
     try:
@@ -3879,6 +3931,14 @@ async def dose_plan_check(request: Request):
         elif not checked:
             db.execute("DELETE FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at LIKE ? AND reason=?", (tank_id, additive_id, date_like, reason))
     except Exception: pass
+    additive = one(db, "SELECT name FROM additives WHERE id=?", (additive_id,))
+    tank = one(db, "SELECT name FROM tanks WHERE id=?", (tank_id,))
+    log_audit(
+        db,
+        current_user,
+        "dose-plan-check",
+        f"tank_id={tank_id} tank={row_get(tank, 'name')} additive_id={additive_id} additive={row_get(additive, 'name')} parameter={parameter} planned_date={planned_date} checked={checked} amount_ml={amount_ml}",
+    )
     db.commit()
     db.close()
     return {"ok": True, "checked": checked}
