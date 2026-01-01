@@ -501,7 +501,7 @@ def collect_dosing_notifications(
                 continue
             remaining_ml = row_get(entry, "remaining_ml")
             daily_ml = row_get(entry, "daily_ml")
-            solution_name = row_get(entry, "solution") or "Trace Elements"
+            solution_name = row_get(entry, "solution") or row_get(entry, "parameter") or "Dosing"
             if remaining_ml is None:
                 remaining_ml = container_ml
             if not daily_ml:
@@ -2312,10 +2312,10 @@ def tank_detail(request: Request, tank_id: int):
             },
         )
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-    extra_trace_entries = q(
+    extra_dosing_entries = q(
         db,
-        "SELECT id, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE tank_id=? AND parameter=? AND active=1 ORDER BY id",
-        (tank_id, "Trace Elements"),
+        "SELECT id, parameter, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE tank_id=? AND active=1 ORDER BY id",
+        (tank_id,),
     )
     tank_view = dict(tank)
     if profile:
@@ -2349,7 +2349,7 @@ def tank_detail(request: Request, tank_id: int):
                 if updated_remaining != remaining_ml:
                     container_updates[remaining_col] = updated_remaining
             extra_updates = []
-            for entry in extra_trace_entries:
+            for entry in extra_dosing_entries:
                 container_ml = row_get(entry, "container_ml")
                 daily_ml = row_get(entry, "daily_ml")
                 if container_ml is None or daily_ml in (None, 0):
@@ -2365,10 +2365,10 @@ def tank_detail(request: Request, tank_id: int):
                     "UPDATE dosing_entries SET remaining_ml=? WHERE id=?",
                     extra_updates,
                 )
-                extra_trace_entries = q(
+                extra_dosing_entries = q(
                     db,
-                    "SELECT id, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE tank_id=? AND parameter=? AND active=1 ORDER BY id",
-                    (tank_id, "Trace Elements"),
+                    "SELECT id, parameter, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE tank_id=? AND active=1 ORDER BY id",
+                    (tank_id,),
                 )
         if container_updates or row_get(profile, "dosing_container_updated_at") is None:
             container_updates["dosing_container_updated_at"] = now.isoformat()
@@ -2653,7 +2653,7 @@ def tank_detail(request: Request, tank_id: int):
         {
             "request": request,
             "tank": tank_view,
-            "extra_trace_entries": extra_trace_entries,
+            "extra_dosing_entries": extra_dosing_entries,
             "daily_consumption": daily_consumption,
             "params": params,
             "recent_samples": recent_samples,
@@ -3074,10 +3074,10 @@ def tank_dosing_settings(request: Request, tank_id: int):
             key = parameter
         grouped_additives.setdefault(key, []).append(a)
     grouped_additives.setdefault("all", []).extend(additives_rows)
-    extra_trace_entries = q(
+    extra_dosing_entries = q(
         db,
-        "SELECT id, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE tank_id=? AND parameter=? AND active=1 ORDER BY id",
-        (tank_id, "Trace Elements"),
+        "SELECT id, parameter, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE tank_id=? AND active=1 ORDER BY id",
+        (tank_id,),
     )
     profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     if not profile:
@@ -3167,6 +3167,48 @@ def tank_dosing_settings(request: Request, tank_id: int):
             suggested_ml = (float(entry["value"]) / float(strength)) * (float(volume_l) / 100.0)
             suggested_dosing[additive["name"]] = round(suggested_ml, 2)
     db.close()
+    dosing_entries_view = []
+    type_map = {
+        "all_in_one": ("All-in-one", "all_in_one_solution", "all_in_one_daily_ml", "all_in_one_container_ml", "all_in_one_remaining_ml"),
+        "alk": ("Alkalinity", "alk_solution", "alk_daily_ml", "alk_container_ml", "alk_remaining_ml"),
+        "kalkwasser": ("Kalkwasser", "kalk_solution", "kalk_daily_ml", "kalk_container_ml", "kalk_remaining_ml"),
+        "ca": ("Calcium", "ca_solution", "ca_daily_ml", "ca_container_ml", "ca_remaining_ml"),
+        "mg": ("Magnesium", "mg_solution", "mg_daily_ml", "mg_container_ml", "mg_remaining_ml"),
+        "nitrate": ("Nitrate", "nitrate_solution", "nitrate_daily_ml", "nitrate_container_ml", "nitrate_remaining_ml"),
+        "phosphate": ("Phosphate", "phosphate_solution", "phosphate_daily_ml", "phosphate_container_ml", "phosphate_remaining_ml"),
+        "trace": ("Trace Elements", "trace_solution", "trace_daily_ml", "trace_container_ml", "trace_remaining_ml"),
+        "nopox": ("NoPox", None, "nopox_daily_ml", "nopox_container_ml", "nopox_remaining_ml"),
+    }
+    for key, (label, solution_col, daily_col, container_col, remaining_col) in type_map.items():
+        daily_val = row_get(profile, daily_col) if profile else None
+        solution_val = row_get(profile, solution_col) if solution_col and profile else None
+        if daily_val is None and not solution_val:
+            continue
+        dosing_entries_view.append(
+            {
+                "type_key": key,
+                "label": label,
+                "solution": solution_val or "",
+                "daily_ml": daily_val,
+                "container_ml": row_get(profile, container_col) if profile else None,
+                "remaining_ml": row_get(profile, remaining_col) if profile else None,
+            }
+        )
+    type_key_by_label = {v[0].lower(): k for k, v in type_map.items()}
+    for entry in extra_dosing_entries:
+        label = (row_get(entry, "parameter") or "").strip()
+        key = type_key_by_label.get(label.lower(), "trace")
+        dosing_entries_view.append(
+            {
+                "type_key": key,
+                "label": label or "Trace Elements",
+                "solution": row_get(entry, "solution") or "",
+                "daily_ml": row_get(entry, "daily_ml"),
+                "container_ml": row_get(entry, "container_ml"),
+                "remaining_ml": row_get(entry, "remaining_ml"),
+            }
+        )
+    dosing_type_options = [{"key": key, "label": label} for key, (label, *_rest) in type_map.items()]
     return templates.TemplateResponse(
         "dosing_settings.html",
         {
@@ -3176,7 +3218,8 @@ def tank_dosing_settings(request: Request, tank_id: int):
             "grouped_additives": grouped_additives,
             "suggested_dosing": suggested_dosing,
             "param_limits": param_limits,
-            "extra_trace_entries": extra_trace_entries,
+            "dosing_entries": dosing_entries_view,
+            "dosing_type_options": dosing_type_options,
         },
     )
 
@@ -3184,104 +3227,99 @@ def tank_dosing_settings(request: Request, tank_id: int):
 async def tank_dosing_settings_save(request: Request, tank_id: int):
     form = await request.form()
     dosing_mode = (form.get("dosing_mode") or "").strip() or None
-    all_in_one_solution = (form.get("all_in_one_solution") or "").strip() or None
-    all_in_one_daily_ml = to_float(form.get("all_in_one_daily_ml"))
-    alk_solution = (form.get("alk_solution") or "").strip() or None
-    alk_daily_ml = to_float(form.get("alk_daily_ml"))
-    kalk_solution = (form.get("kalk_solution") or "").strip() or None
-    kalk_daily_ml = to_float(form.get("kalk_daily_ml"))
-    ca_solution = (form.get("ca_solution") or "").strip() or None
-    ca_daily_ml = to_float(form.get("ca_daily_ml"))
-    mg_solution = (form.get("mg_solution") or "").strip() or None
-    mg_daily_ml = to_float(form.get("mg_daily_ml"))
-    nitrate_solution = (form.get("nitrate_solution") or "").strip() or None
-    nitrate_daily_ml = to_float(form.get("nitrate_daily_ml"))
-    phosphate_solution = (form.get("phosphate_solution") or "").strip() or None
-    phosphate_daily_ml = to_float(form.get("phosphate_daily_ml"))
-    trace_solution = (form.get("trace_solution") or "").strip() or None
-    trace_daily_ml = to_float(form.get("trace_daily_ml"))
-    extra_trace_solutions = form.getlist("trace_extra_solution[]")
-    extra_trace_daily_ml = form.getlist("trace_extra_daily_ml[]")
-    extra_trace_container_ml = form.getlist("trace_extra_container_ml[]")
-    extra_trace_remaining_ml = form.getlist("trace_extra_remaining_ml[]")
-    nopox_daily_ml = to_float(form.get("nopox_daily_ml"))
+    entry_types = form.getlist("dosing_type[]")
+    entry_solutions = form.getlist("dosing_solution[]")
+    entry_daily_ml = form.getlist("dosing_daily_ml[]")
+    entry_container_ml = form.getlist("dosing_container_ml[]")
+    entry_remaining_ml = form.getlist("dosing_remaining_ml[]")
+    nopox_daily_ml = None
     calcium_reactor_daily_ml = to_float(form.get("calcium_reactor_daily_ml"))
     calcium_reactor_effluent_dkh = to_float(form.get("calcium_reactor_effluent_dkh"))
-    use_all_in_one = 1 if form.get("use_all_in_one") else 0
-    use_alk = 1 if form.get("use_alk") else 0
-    use_ca = 1 if form.get("use_ca") else 0
-    use_mg = 1 if form.get("use_mg") else 0
-    use_nitrate = 1 if form.get("use_nitrate") else 0
-    use_phosphate = 1 if form.get("use_phosphate") else 0
-    use_trace = 1 if form.get("use_trace") else 0
-    use_nopox = 1 if form.get("use_nopox") else 0
-    use_calcium_reactor = 1 if form.get("use_calcium_reactor") else 0
-    use_kalkwasser = 1 if form.get("use_kalkwasser") else 0
-    if not use_all_in_one:
-        all_in_one_solution = None
-        all_in_one_daily_ml = None
-        all_in_one_container_ml = None
-        all_in_one_remaining_ml = None
-    if not use_alk:
-        alk_solution = None
-        alk_daily_ml = None
-        alk_container_ml = None
-        alk_remaining_ml = None
-    if not use_kalkwasser:
-        kalk_solution = None
-        kalk_daily_ml = None
-        kalk_container_ml = None
-        kalk_remaining_ml = None
-    if not use_ca:
-        ca_solution = None
-        ca_daily_ml = None
-        ca_container_ml = None
-        ca_remaining_ml = None
-    if not use_mg:
-        mg_solution = None
-        mg_daily_ml = None
-        mg_container_ml = None
-        mg_remaining_ml = None
-    if not use_nitrate:
-        nitrate_solution = None
-        nitrate_daily_ml = None
-        nitrate_container_ml = None
-        nitrate_remaining_ml = None
-    if not use_phosphate:
-        phosphate_solution = None
-        phosphate_daily_ml = None
-        phosphate_container_ml = None
-        phosphate_remaining_ml = None
-    if not use_trace:
-        trace_solution = None
-        trace_daily_ml = None
-        trace_container_ml = None
-        trace_remaining_ml = None
-    if not use_nopox:
-        nopox_daily_ml = None
-        nopox_container_ml = None
-        nopox_remaining_ml = None
-    if not use_calcium_reactor:
-        calcium_reactor_daily_ml = None
-        calcium_reactor_effluent_dkh = None
-    all_in_one_container_ml = to_float(form.get("all_in_one_container_ml"))
-    all_in_one_remaining_ml = to_float(form.get("all_in_one_remaining_ml"))
-    alk_container_ml = to_float(form.get("alk_container_ml"))
-    alk_remaining_ml = to_float(form.get("alk_remaining_ml"))
-    kalk_container_ml = to_float(form.get("kalk_container_ml"))
-    kalk_remaining_ml = to_float(form.get("kalk_remaining_ml"))
-    ca_container_ml = to_float(form.get("ca_container_ml"))
-    ca_remaining_ml = to_float(form.get("ca_remaining_ml"))
-    mg_container_ml = to_float(form.get("mg_container_ml"))
-    mg_remaining_ml = to_float(form.get("mg_remaining_ml"))
-    nitrate_container_ml = to_float(form.get("nitrate_container_ml"))
-    nitrate_remaining_ml = to_float(form.get("nitrate_remaining_ml"))
-    phosphate_container_ml = to_float(form.get("phosphate_container_ml"))
-    phosphate_remaining_ml = to_float(form.get("phosphate_remaining_ml"))
-    trace_container_ml = to_float(form.get("trace_container_ml"))
-    trace_remaining_ml = to_float(form.get("trace_remaining_ml"))
-    nopox_container_ml = to_float(form.get("nopox_container_ml"))
-    nopox_remaining_ml = to_float(form.get("nopox_remaining_ml"))
+    type_config = {
+        "all_in_one": ("All-in-one", "all_in_one_solution", "all_in_one_daily_ml", "all_in_one_container_ml", "all_in_one_remaining_ml", "use_all_in_one"),
+        "alk": ("Alkalinity", "alk_solution", "alk_daily_ml", "alk_container_ml", "alk_remaining_ml", "use_alk"),
+        "kalkwasser": ("Kalkwasser", "kalk_solution", "kalk_daily_ml", "kalk_container_ml", "kalk_remaining_ml", "use_kalkwasser"),
+        "ca": ("Calcium", "ca_solution", "ca_daily_ml", "ca_container_ml", "ca_remaining_ml", "use_ca"),
+        "mg": ("Magnesium", "mg_solution", "mg_daily_ml", "mg_container_ml", "mg_remaining_ml", "use_mg"),
+        "nitrate": ("Nitrate", "nitrate_solution", "nitrate_daily_ml", "nitrate_container_ml", "nitrate_remaining_ml", "use_nitrate"),
+        "phosphate": ("Phosphate", "phosphate_solution", "phosphate_daily_ml", "phosphate_container_ml", "phosphate_remaining_ml", "use_phosphate"),
+        "trace": ("Trace Elements", "trace_solution", "trace_daily_ml", "trace_container_ml", "trace_remaining_ml", "use_trace"),
+        "nopox": ("NoPox", None, "nopox_daily_ml", "nopox_container_ml", "nopox_remaining_ml", "use_nopox"),
+    }
+    primary_entries = {}
+    extra_entries = []
+    for idx, type_key in enumerate(entry_types):
+        type_key = (type_key or "").strip()
+        if type_key not in type_config:
+            continue
+        _, solution_col, daily_col, container_col, remaining_col, _ = type_config[type_key]
+        solution = (entry_solutions[idx] or "").strip() if idx < len(entry_solutions) else ""
+        daily_val = to_float(entry_daily_ml[idx]) if idx < len(entry_daily_ml) else None
+        if daily_val is None:
+            continue
+        container_val = to_float(entry_container_ml[idx]) if idx < len(entry_container_ml) else None
+        remaining_val = to_float(entry_remaining_ml[idx]) if idx < len(entry_remaining_ml) else None
+        if container_val is not None and remaining_val is None:
+            remaining_val = container_val
+        entry_data = {
+            "type_key": type_key,
+            "solution": solution if solution_col else None,
+            "daily_ml": daily_val,
+            "container_ml": container_val,
+            "remaining_ml": remaining_val,
+        }
+        if type_key not in primary_entries:
+            primary_entries[type_key] = entry_data
+        else:
+            extra_entries.append(entry_data)
+    def primary_value(type_key, key, default=None):
+        entry = primary_entries.get(type_key) or {}
+        return entry.get(key, default)
+    all_in_one_solution = primary_value("all_in_one", "solution")
+    all_in_one_daily_ml = primary_value("all_in_one", "daily_ml")
+    all_in_one_container_ml = primary_value("all_in_one", "container_ml")
+    all_in_one_remaining_ml = primary_value("all_in_one", "remaining_ml")
+    alk_solution = primary_value("alk", "solution")
+    alk_daily_ml = primary_value("alk", "daily_ml")
+    alk_container_ml = primary_value("alk", "container_ml")
+    alk_remaining_ml = primary_value("alk", "remaining_ml")
+    kalk_solution = primary_value("kalkwasser", "solution")
+    kalk_daily_ml = primary_value("kalkwasser", "daily_ml")
+    kalk_container_ml = primary_value("kalkwasser", "container_ml")
+    kalk_remaining_ml = primary_value("kalkwasser", "remaining_ml")
+    ca_solution = primary_value("ca", "solution")
+    ca_daily_ml = primary_value("ca", "daily_ml")
+    ca_container_ml = primary_value("ca", "container_ml")
+    ca_remaining_ml = primary_value("ca", "remaining_ml")
+    mg_solution = primary_value("mg", "solution")
+    mg_daily_ml = primary_value("mg", "daily_ml")
+    mg_container_ml = primary_value("mg", "container_ml")
+    mg_remaining_ml = primary_value("mg", "remaining_ml")
+    nitrate_solution = primary_value("nitrate", "solution")
+    nitrate_daily_ml = primary_value("nitrate", "daily_ml")
+    nitrate_container_ml = primary_value("nitrate", "container_ml")
+    nitrate_remaining_ml = primary_value("nitrate", "remaining_ml")
+    phosphate_solution = primary_value("phosphate", "solution")
+    phosphate_daily_ml = primary_value("phosphate", "daily_ml")
+    phosphate_container_ml = primary_value("phosphate", "container_ml")
+    phosphate_remaining_ml = primary_value("phosphate", "remaining_ml")
+    trace_solution = primary_value("trace", "solution")
+    trace_daily_ml = primary_value("trace", "daily_ml")
+    trace_container_ml = primary_value("trace", "container_ml")
+    trace_remaining_ml = primary_value("trace", "remaining_ml")
+    nopox_daily_ml = primary_value("nopox", "daily_ml")
+    nopox_container_ml = primary_value("nopox", "container_ml")
+    nopox_remaining_ml = primary_value("nopox", "remaining_ml")
+    use_all_in_one = 1 if all_in_one_daily_ml is not None or all_in_one_solution else 0
+    use_alk = 1 if alk_daily_ml is not None or alk_solution else 0
+    use_kalkwasser = 1 if kalk_daily_ml is not None or kalk_solution else 0
+    use_ca = 1 if ca_daily_ml is not None or ca_solution else 0
+    use_mg = 1 if mg_daily_ml is not None or mg_solution else 0
+    use_nitrate = 1 if nitrate_daily_ml is not None or nitrate_solution else 0
+    use_phosphate = 1 if phosphate_daily_ml is not None or phosphate_solution else 0
+    use_trace = 1 if trace_daily_ml is not None or trace_solution else 0
+    use_nopox = 1 if nopox_daily_ml is not None else 0
+    use_calcium_reactor = 1 if calcium_reactor_daily_ml is not None or calcium_reactor_effluent_dkh is not None else 0
     dosing_low_days = to_float(form.get("dosing_low_days"))
     if dosing_low_days is None:
         dosing_low_days = 5
@@ -3304,28 +3342,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     if nopox_container_ml is not None and nopox_remaining_ml is None:
         nopox_remaining_ml = nopox_container_ml
     container_updated_at = None
-    extra_trace_rows = []
-    for idx, solution in enumerate(extra_trace_solutions):
-        solution_name = (solution or "").strip()
-        if not solution_name:
-            continue
-        daily_value = to_float(extra_trace_daily_ml[idx]) if idx < len(extra_trace_daily_ml) else None
-        if daily_value is None:
-            continue
-        container_value = to_float(extra_trace_container_ml[idx]) if idx < len(extra_trace_container_ml) else None
-        remaining_value = to_float(extra_trace_remaining_ml[idx]) if idx < len(extra_trace_remaining_ml) else None
-        if container_value is not None and remaining_value is None:
-            remaining_value = container_value
-        extra_trace_rows.append(
-            {
-                "solution": solution_name,
-                "daily_ml": daily_value,
-                "container_ml": container_value,
-                "remaining_ml": remaining_value,
-            }
-        )
     if not use_trace:
-        extra_trace_rows = []
+        extra_entries = [entry for entry in extra_entries if entry.get("type_key") != "trace"]
 
     if any(
         value is not None
@@ -3520,29 +3538,30 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         ),
     )
     db.execute(
-        "DELETE FROM dosing_entries WHERE tank_id=? AND parameter=?",
-        (tank_id, "Trace Elements"),
+        "DELETE FROM dosing_entries WHERE tank_id=?",
+        (tank_id,),
     )
-    if extra_trace_rows:
+    if extra_entries:
         now_iso = datetime.utcnow().isoformat()
-        for row in extra_trace_rows:
+        for entry in extra_entries:
+            label = type_config[entry["type_key"]][0]
             db.execute(
                 """INSERT INTO dosing_entries
                    (tank_id, parameter, solution, daily_ml, container_ml, remaining_ml, active, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
                 (
                     tank_id,
-                    "Trace Elements",
-                    row["solution"],
-                    row["daily_ml"],
-                    row["container_ml"],
-                    row["remaining_ml"],
+                    label,
+                    entry["solution"],
+                    entry["daily_ml"],
+                    entry["container_ml"],
+                    entry["remaining_ml"],
                     now_iso,
                 ),
             )
         if container_updated_at is None and any(
-            row.get("container_ml") is not None or row.get("remaining_ml") is not None
-            for row in extra_trace_rows
+            entry.get("container_ml") is not None or entry.get("remaining_ml") is not None
+            for entry in extra_entries
         ):
             db.execute(
                 "UPDATE tank_profiles SET dosing_container_updated_at=? WHERE tank_id=?",
@@ -3681,7 +3700,7 @@ async def dosing_container_action(request: Request, tank_id: int):
                 "DELETE FROM dosing_notifications WHERE tank_id=? AND container_key=?",
                 (tank_id, container_key),
             )
-            label = row_get(entry, "solution") or "Trace Elements"
+            label = row_get(entry, "solution") or row_get(entry, "parameter") or "Dosing"
             db.execute(
                 "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
                 (

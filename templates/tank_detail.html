@@ -107,7 +107,7 @@
   </div>
 {% endif %}
 
-{% set has_dosing = tank.use_all_in_one or tank.use_alk or tank.use_kalkwasser or tank.use_ca or tank.use_mg or tank.use_nitrate or tank.use_phosphate or tank.use_trace or tank.use_nopox or tank.use_calcium_reactor or tank.all_in_one_solution or tank.alk_solution or tank.kalk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.trace_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.kalk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml or tank.trace_daily_ml or tank.calcium_reactor_daily_ml or tank.calcium_reactor_effluent_dkh or (extra_trace_entries and extra_trace_entries|length > 0) %}
+{% set has_dosing = tank.use_all_in_one or tank.use_alk or tank.use_kalkwasser or tank.use_ca or tank.use_mg or tank.use_nitrate or tank.use_phosphate or tank.use_trace or tank.use_nopox or tank.use_calcium_reactor or tank.all_in_one_solution or tank.alk_solution or tank.kalk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.trace_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.kalk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml or tank.trace_daily_ml or tank.calcium_reactor_daily_ml or tank.calcium_reactor_effluent_dkh or (extra_dosing_entries and extra_dosing_entries|length > 0) %}
 {% if has_dosing %}
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0 h5 fw-bold">Daily Dosing</h4>
@@ -426,8 +426,8 @@
             </div>
           </div>
         {% endif %}
-        {% if extra_trace_entries %}
-          {% for entry in extra_trace_entries %}
+        {% if extra_dosing_entries %}
+          {% for entry in extra_dosing_entries %}
             {% set extra_remaining = entry.remaining_ml if entry.remaining_ml is not none else entry.container_ml %}
             {% set extra_pct = (extra_remaining / entry.container_ml * 100) if entry.container_ml else none %}
             {% if extra_pct is not none and extra_pct > 100 %}{% set extra_pct = 100 %}{% endif %}
@@ -438,7 +438,7 @@
             <div class="col">
               <div class="card h-100 shadow-sm border-0">
                 <div class="card-body p-3">
-                  <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Trace Elements</div>
+                  <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">{{ entry.parameter or "Dosing" }}</div>
                   <div class="fw-semibold dose-solution-name">{{ entry.solution or "—" }}</div>
                   <div class="text-secondary small">{{ entry.daily_ml|fmt2 if entry.daily_ml is not none else "—" }} ml/day</div>
                   {% if entry.container_ml %}
