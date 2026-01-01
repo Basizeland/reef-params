@@ -66,6 +66,10 @@
                   <label class="form-check-label" for="use_phosphate">Phosphate</label>
                 </div>
                 <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="use_trace" id="use_trace" data-dosing-toggle="trace" {% if tank.use_trace or tank.trace_solution or tank.trace_daily_ml is not none %}checked{% endif %}>
+                  <label class="form-check-label" for="use_trace">Trace Elements</label>
+                </div>
+                <div class="form-check">
                   <input class="form-check-input" type="checkbox" name="use_nopox" id="use_nopox" data-dosing-toggle="nopox" {% if tank.use_nopox or tank.nopox_daily_ml is not none %}checked{% endif %}>
                   <label class="form-check-label" for="use_nopox">NoPox</label>
                 </div>
@@ -213,6 +217,24 @@
               <div class="form-text" data-preview-for="phosphate_solution"></div>
               <div class="form-text text-warning" data-warning-for="phosphate_solution"></div>
             </div>
+            <div class="col-12 col-md-6" data-dosing-group="trace">
+              <label class="form-label fw-bold">Trace Elements Solution</label>
+              <select class="form-select" name="trace_solution" data-initial-value="{{ tank.trace_solution or '' }}">
+                <option value="">Select additive</option>
+                {% for additive in grouped_additives.get('trace', grouped_additives.get('all', additives)) %}
+                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.trace_solution == additive.name %}selected{% endif %}>
+                    {{ additive|additive_label }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-6" data-dosing-group="trace">
+              <label class="form-label fw-bold">Trace Elements Daily (ml)</label>
+              <input type="number" step="any" name="trace_daily_ml" class="form-control" value="{{ tank.trace_daily_ml if tank.trace_daily_ml is not none else '' }}" placeholder="e.g. 1" data-preview-input="trace_solution" data-initial-value="{{ tank.trace_daily_ml if tank.trace_daily_ml is not none else '' }}">
+              <div class="form-text" data-suggestion-for="trace_solution"></div>
+              <div class="form-text" data-preview-for="trace_solution"></div>
+              <div class="form-text text-warning" data-warning-for="trace_solution"></div>
+            </div>
             <div class="col-12 col-md-6" data-dosing-group="nopox">
               <label class="form-label fw-bold">NoPox Daily (ml)</label>
               <input type="number" step="any" name="nopox_daily_ml" class="form-control" value="{{ tank.nopox_daily_ml if tank.nopox_daily_ml is not none else '' }}" placeholder="e.g. 5">
@@ -282,6 +304,14 @@
               <div class="col-12 col-md-6" data-dosing-group="phosphate">
                 <label class="form-label fw-bold">Phosphate Remaining (ml)</label>
                 <input type="number" step="any" name="phosphate_remaining_ml" class="form-control" value="{{ tank.phosphate_remaining_ml if tank.phosphate_remaining_ml is not none else '' }}" placeholder="e.g. 300">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-group="trace">
+                <label class="form-label fw-bold">Trace Elements Container Size (ml)</label>
+                <input type="number" step="any" name="trace_container_ml" class="form-control" value="{{ tank.trace_container_ml if tank.trace_container_ml is not none else '' }}" placeholder="e.g. 500">
+              </div>
+              <div class="col-12 col-md-6" data-dosing-group="trace">
+                <label class="form-label fw-bold">Trace Elements Remaining (ml)</label>
+                <input type="number" step="any" name="trace_remaining_ml" class="form-control" value="{{ tank.trace_remaining_ml if tank.trace_remaining_ml is not none else '' }}" placeholder="e.g. 300">
               </div>
               <div class="col-12 col-md-6" data-dosing-group="nopox">
                 <label class="form-label fw-bold">NoPox Container Size (ml)</label>

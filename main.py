@@ -57,6 +57,8 @@ def normalize_param_name(name: str) -> str:
         return "Nitrate"
     if cleaned in {"phosphate", "po4"}:
         return "Phosphate"
+    if cleaned in {"traceelements", "trace"}:
+        return "Trace Elements"
     return name.strip() or name
 
 def additive_label(additive: Any) -> str:
@@ -103,6 +105,7 @@ def build_daily_consumption(db: sqlite3.Connection, tank_view: Dict[str, Any]) -
         ("mg", tank_view.get("mg_solution"), tank_view.get("mg_daily_ml"), tank_view.get("use_mg")),
         ("nitrate", tank_view.get("nitrate_solution"), tank_view.get("nitrate_daily_ml"), tank_view.get("use_nitrate")),
         ("phosphate", tank_view.get("phosphate_solution"), tank_view.get("phosphate_daily_ml"), tank_view.get("use_phosphate")),
+        ("trace", tank_view.get("trace_solution"), tank_view.get("trace_daily_ml"), tank_view.get("use_trace")),
     ]
     for key, solution_name, daily_ml, enabled in dosing_entries:
         has_data = solution_name and daily_ml not in (None, 0)
@@ -418,6 +421,7 @@ def collect_dosing_notifications(
         ("mg", "mg_container_ml", "mg_remaining_ml", "mg_daily_ml", "mg_solution", "Magnesium"),
         ("nitrate", "nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml", "nitrate_solution", "Nitrate"),
         ("phosphate", "phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml", "phosphate_solution", "Phosphate"),
+        ("trace", "trace_container_ml", "trace_remaining_ml", "trace_daily_ml", "trace_solution", "Trace Elements"),
         ("nopox", "nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml", None, "NoPox"),
     ]
     for row in rows:
@@ -1374,7 +1378,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, username TEXT, role TEXT, password_hash TEXT, password_salt TEXT, google_sub TEXT, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, session_token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS user_tanks (user_id INTEGER NOT NULL, tank_id INTEGER NOT NULL, PRIMARY KEY (user_id, tank_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, nopox_daily_ml REAL, calcium_reactor_daily_ml REAL, calcium_reactor_effluent_dkh REAL, kalk_solution TEXT, kalk_daily_ml REAL, use_all_in_one INTEGER, use_alk INTEGER, use_ca INTEGER, use_mg INTEGER, use_nitrate INTEGER, use_phosphate INTEGER, use_nopox INTEGER, use_calcium_reactor INTEGER, use_kalkwasser INTEGER, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, kalk_container_ml REAL, kalk_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, trace_solution TEXT, trace_daily_ml REAL, nopox_daily_ml REAL, calcium_reactor_daily_ml REAL, calcium_reactor_effluent_dkh REAL, kalk_solution TEXT, kalk_daily_ml REAL, use_all_in_one INTEGER, use_alk INTEGER, use_ca INTEGER, use_mg INTEGER, use_nitrate INTEGER, use_phosphate INTEGER, use_trace INTEGER, use_nopox INTEGER, use_calcium_reactor INTEGER, use_kalkwasser INTEGER, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, trace_container_ml REAL, trace_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, kalk_container_ml REAL, kalk_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -1441,6 +1445,8 @@ def init_db() -> None:
     ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
     ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
     ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "trace_solution", "ALTER TABLE tank_profiles ADD COLUMN trace_solution TEXT")
+    ensure_column(db, "tank_profiles", "trace_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_daily_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
     ensure_column(db, "tank_profiles", "calcium_reactor_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN calcium_reactor_daily_ml REAL")
     ensure_column(db, "tank_profiles", "calcium_reactor_effluent_dkh", "ALTER TABLE tank_profiles ADD COLUMN calcium_reactor_effluent_dkh REAL")
@@ -1452,6 +1458,7 @@ def init_db() -> None:
     ensure_column(db, "tank_profiles", "use_mg", "ALTER TABLE tank_profiles ADD COLUMN use_mg INTEGER")
     ensure_column(db, "tank_profiles", "use_nitrate", "ALTER TABLE tank_profiles ADD COLUMN use_nitrate INTEGER")
     ensure_column(db, "tank_profiles", "use_phosphate", "ALTER TABLE tank_profiles ADD COLUMN use_phosphate INTEGER")
+    ensure_column(db, "tank_profiles", "use_trace", "ALTER TABLE tank_profiles ADD COLUMN use_trace INTEGER")
     ensure_column(db, "tank_profiles", "use_nopox", "ALTER TABLE tank_profiles ADD COLUMN use_nopox INTEGER")
     ensure_column(db, "tank_profiles", "use_calcium_reactor", "ALTER TABLE tank_profiles ADD COLUMN use_calcium_reactor INTEGER")
     ensure_column(db, "tank_profiles", "use_kalkwasser", "ALTER TABLE tank_profiles ADD COLUMN use_kalkwasser INTEGER")
@@ -1467,6 +1474,8 @@ def init_db() -> None:
     ensure_column(db, "tank_profiles", "nitrate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "phosphate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_container_ml REAL")
     ensure_column(db, "tank_profiles", "phosphate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "trace_container_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_container_ml REAL")
+    ensure_column(db, "tank_profiles", "trace_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "kalk_container_ml", "ALTER TABLE tank_profiles ADD COLUMN kalk_container_ml REAL")
@@ -2020,6 +2029,8 @@ def tank_new_form(request: Request):
             key = "nitrate"
         elif "phosphate" in parameter or "po4" in parameter:
             key = "phosphate"
+        elif "trace" in parameter:
+            key = "trace"
         else:
             key = parameter
         grouped_additives.setdefault(key, []).append(a)
@@ -2252,6 +2263,7 @@ def tank_detail(request: Request, tank_id: int):
                 ("mg_container_ml", "mg_remaining_ml", "mg_daily_ml"),
                 ("nitrate_container_ml", "nitrate_remaining_ml", "nitrate_daily_ml"),
                 ("phosphate_container_ml", "phosphate_remaining_ml", "phosphate_daily_ml"),
+                ("trace_container_ml", "trace_remaining_ml", "trace_daily_ml"),
                 ("nopox_container_ml", "nopox_remaining_ml", "nopox_daily_ml"),
             ]
             for container_col, remaining_col, daily_col in dosing_containers:
@@ -2304,6 +2316,7 @@ def tank_detail(request: Request, tank_id: int):
             "use_mg": row_get(profile, "use_mg"),
             "use_nitrate": row_get(profile, "use_nitrate"),
             "use_phosphate": row_get(profile, "use_phosphate"),
+            "use_trace": row_get(profile, "use_trace"),
             "use_nopox": row_get(profile, "use_nopox"),
             "use_calcium_reactor": row_get(profile, "use_calcium_reactor"),
             "use_kalkwasser": row_get(profile, "use_kalkwasser"),
@@ -2311,6 +2324,8 @@ def tank_detail(request: Request, tank_id: int):
             "nitrate_daily_ml": row_get(profile, "nitrate_daily_ml"),
             "phosphate_solution": row_get(profile, "phosphate_solution"),
             "phosphate_daily_ml": row_get(profile, "phosphate_daily_ml"),
+            "trace_solution": row_get(profile, "trace_solution"),
+            "trace_daily_ml": row_get(profile, "trace_daily_ml"),
             "nopox_daily_ml": row_get(profile, "nopox_daily_ml"),
             "all_in_one_container_ml": row_get(profile, "all_in_one_container_ml"),
             "all_in_one_remaining_ml": row_get(profile, "all_in_one_remaining_ml"),
@@ -2326,6 +2341,8 @@ def tank_detail(request: Request, tank_id: int):
             "nitrate_remaining_ml": row_get(profile, "nitrate_remaining_ml"),
             "phosphate_container_ml": row_get(profile, "phosphate_container_ml"),
             "phosphate_remaining_ml": row_get(profile, "phosphate_remaining_ml"),
+            "trace_container_ml": row_get(profile, "trace_container_ml"),
+            "trace_remaining_ml": row_get(profile, "trace_remaining_ml"),
             "nopox_container_ml": row_get(profile, "nopox_container_ml"),
             "nopox_remaining_ml": row_get(profile, "nopox_remaining_ml"),
             "dosing_container_updated_at": row_get(profile, "dosing_container_updated_at"),
@@ -2345,6 +2362,7 @@ def tank_detail(request: Request, tank_id: int):
                 "mg_solution",
                 "nitrate_solution",
                 "phosphate_solution",
+                "trace_solution",
             ):
                 current = tank_view.get(key)
                 if current and current in additive_map:
@@ -2956,6 +2974,8 @@ def tank_dosing_settings(request: Request, tank_id: int):
             key = "nitrate"
         elif "phosphate" in parameter or "po4" in parameter:
             key = "phosphate"
+        elif "trace" in parameter:
+            key = "trace"
         else:
             key = parameter
         grouped_additives.setdefault(key, []).append(a)
@@ -2983,6 +3003,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
             tank_view["use_mg"] = profile["use_mg"]
             tank_view["use_nitrate"] = profile["use_nitrate"]
             tank_view["use_phosphate"] = profile["use_phosphate"]
+            tank_view["use_trace"] = profile["use_trace"]
             tank_view["use_nopox"] = profile["use_nopox"]
             tank_view["use_calcium_reactor"] = profile["use_calcium_reactor"]
             tank_view["use_kalkwasser"] = profile["use_kalkwasser"]
@@ -2996,6 +3017,8 @@ def tank_dosing_settings(request: Request, tank_id: int):
             tank_view["nitrate_daily_ml"] = profile["nitrate_daily_ml"]
             tank_view["phosphate_solution"] = profile["phosphate_solution"]
             tank_view["phosphate_daily_ml"] = profile["phosphate_daily_ml"]
+            tank_view["trace_solution"] = profile["trace_solution"]
+            tank_view["trace_daily_ml"] = profile["trace_daily_ml"]
             tank_view["nopox_daily_ml"] = profile["nopox_daily_ml"]
             tank_view["all_in_one_container_ml"] = profile["all_in_one_container_ml"]
             tank_view["all_in_one_remaining_ml"] = profile["all_in_one_remaining_ml"]
@@ -3011,6 +3034,8 @@ def tank_dosing_settings(request: Request, tank_id: int):
             tank_view["nitrate_remaining_ml"] = profile["nitrate_remaining_ml"]
             tank_view["phosphate_container_ml"] = profile["phosphate_container_ml"]
             tank_view["phosphate_remaining_ml"] = profile["phosphate_remaining_ml"]
+            tank_view["trace_container_ml"] = profile["trace_container_ml"]
+            tank_view["trace_remaining_ml"] = profile["trace_remaining_ml"]
             tank_view["nopox_container_ml"] = profile["nopox_container_ml"]
             tank_view["nopox_remaining_ml"] = profile["nopox_remaining_ml"]
             tank_view["dosing_low_days"] = profile["dosing_low_days"] if profile["dosing_low_days"] is not None else 5
@@ -3073,6 +3098,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     nitrate_daily_ml = to_float(form.get("nitrate_daily_ml"))
     phosphate_solution = (form.get("phosphate_solution") or "").strip() or None
     phosphate_daily_ml = to_float(form.get("phosphate_daily_ml"))
+    trace_solution = (form.get("trace_solution") or "").strip() or None
+    trace_daily_ml = to_float(form.get("trace_daily_ml"))
     nopox_daily_ml = to_float(form.get("nopox_daily_ml"))
     calcium_reactor_daily_ml = to_float(form.get("calcium_reactor_daily_ml"))
     calcium_reactor_effluent_dkh = to_float(form.get("calcium_reactor_effluent_dkh"))
@@ -3082,6 +3109,7 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     use_mg = 1 if form.get("use_mg") else 0
     use_nitrate = 1 if form.get("use_nitrate") else 0
     use_phosphate = 1 if form.get("use_phosphate") else 0
+    use_trace = 1 if form.get("use_trace") else 0
     use_nopox = 1 if form.get("use_nopox") else 0
     use_calcium_reactor = 1 if form.get("use_calcium_reactor") else 0
     use_kalkwasser = 1 if form.get("use_kalkwasser") else 0
@@ -3120,6 +3148,11 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         phosphate_daily_ml = None
         phosphate_container_ml = None
         phosphate_remaining_ml = None
+    if not use_trace:
+        trace_solution = None
+        trace_daily_ml = None
+        trace_container_ml = None
+        trace_remaining_ml = None
     if not use_nopox:
         nopox_daily_ml = None
         nopox_container_ml = None
@@ -3141,6 +3174,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     nitrate_remaining_ml = to_float(form.get("nitrate_remaining_ml"))
     phosphate_container_ml = to_float(form.get("phosphate_container_ml"))
     phosphate_remaining_ml = to_float(form.get("phosphate_remaining_ml"))
+    trace_container_ml = to_float(form.get("trace_container_ml"))
+    trace_remaining_ml = to_float(form.get("trace_remaining_ml"))
     nopox_container_ml = to_float(form.get("nopox_container_ml"))
     nopox_remaining_ml = to_float(form.get("nopox_remaining_ml"))
     dosing_low_days = to_float(form.get("dosing_low_days"))
@@ -3160,6 +3195,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         nitrate_remaining_ml = nitrate_container_ml
     if phosphate_container_ml is not None and phosphate_remaining_ml is None:
         phosphate_remaining_ml = phosphate_container_ml
+    if trace_container_ml is not None and trace_remaining_ml is None:
+        trace_remaining_ml = trace_container_ml
     if nopox_container_ml is not None and nopox_remaining_ml is None:
         nopox_remaining_ml = nopox_container_ml
     container_updated_at = None
@@ -3180,6 +3217,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
             nitrate_remaining_ml,
             phosphate_container_ml,
             phosphate_remaining_ml,
+            trace_container_ml,
+            trace_remaining_ml,
             nopox_container_ml,
             nopox_remaining_ml,
         )
@@ -3209,6 +3248,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
     ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
     ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
+    ensure_column(db, "tank_profiles", "trace_solution", "ALTER TABLE tank_profiles ADD COLUMN trace_solution TEXT")
+    ensure_column(db, "tank_profiles", "trace_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_daily_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
     ensure_column(db, "tank_profiles", "calcium_reactor_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN calcium_reactor_daily_ml REAL")
     ensure_column(db, "tank_profiles", "calcium_reactor_effluent_dkh", "ALTER TABLE tank_profiles ADD COLUMN calcium_reactor_effluent_dkh REAL")
@@ -3220,6 +3261,7 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     ensure_column(db, "tank_profiles", "use_mg", "ALTER TABLE tank_profiles ADD COLUMN use_mg INTEGER")
     ensure_column(db, "tank_profiles", "use_nitrate", "ALTER TABLE tank_profiles ADD COLUMN use_nitrate INTEGER")
     ensure_column(db, "tank_profiles", "use_phosphate", "ALTER TABLE tank_profiles ADD COLUMN use_phosphate INTEGER")
+    ensure_column(db, "tank_profiles", "use_trace", "ALTER TABLE tank_profiles ADD COLUMN use_trace INTEGER")
     ensure_column(db, "tank_profiles", "use_nopox", "ALTER TABLE tank_profiles ADD COLUMN use_nopox INTEGER")
     ensure_column(db, "tank_profiles", "use_calcium_reactor", "ALTER TABLE tank_profiles ADD COLUMN use_calcium_reactor INTEGER")
     ensure_column(db, "tank_profiles", "use_kalkwasser", "ALTER TABLE tank_profiles ADD COLUMN use_kalkwasser INTEGER")
@@ -3235,6 +3277,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
     ensure_column(db, "tank_profiles", "nitrate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "phosphate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_container_ml REAL")
     ensure_column(db, "tank_profiles", "phosphate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_remaining_ml REAL")
+    ensure_column(db, "tank_profiles", "trace_container_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_container_ml REAL")
+    ensure_column(db, "tank_profiles", "trace_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
     ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
     ensure_column(db, "tank_profiles", "kalk_container_ml", "ALTER TABLE tank_profiles ADD COLUMN kalk_container_ml REAL")
@@ -3258,6 +3302,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
              nitrate_daily_ml=?,
              phosphate_solution=?,
              phosphate_daily_ml=?,
+             trace_solution=?,
+             trace_daily_ml=?,
              nopox_daily_ml=?,
              calcium_reactor_daily_ml=?,
              calcium_reactor_effluent_dkh=?,
@@ -3267,6 +3313,7 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
              use_mg=?,
              use_nitrate=?,
              use_phosphate=?,
+             use_trace=?,
              use_nopox=?,
              use_calcium_reactor=?,
              use_kalkwasser=?,
@@ -3284,6 +3331,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
              nitrate_remaining_ml=?,
              phosphate_container_ml=?,
              phosphate_remaining_ml=?,
+             trace_container_ml=?,
+             trace_remaining_ml=?,
              nopox_container_ml=?,
              nopox_remaining_ml=?,
              dosing_container_updated_at=?,
@@ -3305,6 +3354,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
             nitrate_daily_ml,
             phosphate_solution,
             phosphate_daily_ml,
+            trace_solution,
+            trace_daily_ml,
             nopox_daily_ml,
             calcium_reactor_daily_ml,
             calcium_reactor_effluent_dkh,
@@ -3314,6 +3365,7 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
             use_mg,
             use_nitrate,
             use_phosphate,
+            use_trace,
             use_nopox,
             use_calcium_reactor,
             use_kalkwasser,
@@ -3331,6 +3383,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
             nitrate_remaining_ml,
             phosphate_container_ml,
             phosphate_remaining_ml,
+            trace_container_ml,
+            trace_remaining_ml,
             nopox_container_ml,
             nopox_remaining_ml,
             container_updated_at,
@@ -3354,6 +3408,8 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         "nitrate_daily_ml": nitrate_daily_ml,
         "phosphate_solution": phosphate_solution,
         "phosphate_daily_ml": phosphate_daily_ml,
+        "trace_solution": trace_solution,
+        "trace_daily_ml": trace_daily_ml,
         "nopox_daily_ml": nopox_daily_ml,
         "calcium_reactor_daily_ml": calcium_reactor_daily_ml,
         "calcium_reactor_effluent_dkh": calcium_reactor_effluent_dkh,
@@ -3363,6 +3419,7 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         "use_mg": use_mg,
         "use_nitrate": use_nitrate,
         "use_phosphate": use_phosphate,
+        "use_trace": use_trace,
         "use_nopox": use_nopox,
         "use_calcium_reactor": use_calcium_reactor,
         "use_kalkwasser": use_kalkwasser,
@@ -3431,6 +3488,7 @@ async def dosing_container_action(request: Request, tank_id: int):
         "mg": ("mg_container_ml", "mg_remaining_ml"),
         "nitrate": ("nitrate_container_ml", "nitrate_remaining_ml"),
         "phosphate": ("phosphate_container_ml", "phosphate_remaining_ml"),
+        "trace": ("trace_container_ml", "trace_remaining_ml"),
         "nopox": ("nopox_container_ml", "nopox_remaining_ml"),
     }
     if container_key not in mapping:
@@ -3464,6 +3522,7 @@ async def dosing_container_action(request: Request, tank_id: int):
             "mg": "Magnesium",
             "nitrate": "Nitrate",
             "phosphate": "Phosphate",
+            "trace": "Trace Elements",
             "nopox": "NoPox",
         }
         label = label_map.get(container_key, container_key)
@@ -4281,6 +4340,7 @@ async def dosing_log_add(request: Request, tank_id: int):
                 ("mg_solution", "mg_container_ml", "mg_remaining_ml", "Magnesium"),
                 ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml", "Nitrate"),
                 ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml", "Phosphate"),
+                ("trace_solution", "trace_container_ml", "trace_remaining_ml", "Trace Elements"),
                 (None, "nopox_container_ml", "nopox_remaining_ml", "NoPox"),
             ):
                 if solution_col:
@@ -4334,11 +4394,12 @@ async def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(.
                     ("alk_solution", "alk_container_ml", "alk_remaining_ml", "Alkalinity"),
                     ("kalk_solution", "kalk_container_ml", "kalk_remaining_ml", "Kalkwasser"),
                     ("ca_solution", "ca_container_ml", "ca_remaining_ml", "Calcium"),
-                    ("mg_solution", "mg_container_ml", "mg_remaining_ml", "Magnesium"),
-                    ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml", "Nitrate"),
-                    ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml", "Phosphate"),
-                    (None, "nopox_container_ml", "nopox_remaining_ml", "NoPox"),
-                ):
+                ("mg_solution", "mg_container_ml", "mg_remaining_ml", "Magnesium"),
+                ("nitrate_solution", "nitrate_container_ml", "nitrate_remaining_ml", "Nitrate"),
+                ("phosphate_solution", "phosphate_container_ml", "phosphate_remaining_ml", "Phosphate"),
+                ("trace_solution", "trace_container_ml", "trace_remaining_ml", "Trace Elements"),
+                (None, "nopox_container_ml", "nopox_remaining_ml", "NoPox"),
+            ):
                     if solution_col:
                         solution_name = (row_get(profile, solution_col) or "").strip().lower()
                         if not solution_name or solution_name not in {additive_name, additive_label_name}:
