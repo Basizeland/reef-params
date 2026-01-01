@@ -57,6 +57,37 @@
                 right: 0;
                 left: auto;
             }
+            .mobile-content-pad {
+                padding-bottom: 5.5rem;
+            }
+            .bottom-nav {
+                position: fixed;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 1030;
+                background: #ffffff;
+                border-top: 1px solid rgba(0, 0, 0, 0.08);
+                box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
+                padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
+            }
+            .bottom-nav .nav-link {
+                color: #6b7280 !important;
+                font-size: 0.7rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 0.2rem;
+            }
+            .bottom-nav .nav-link i {
+                font-size: 1.2rem;
+            }
+            .bottom-nav .nav-link.active {
+                color: var(--reef-cyan) !important;
+            }
         }
     </style>
 </head>
@@ -174,9 +205,37 @@
         </div>
     </nav>
 
-    <div class="container pb-5">
+    <div class="container pb-5 mobile-content-pad">
         {% block content %}{% endblock %}
     </div>
+
+    <nav class="bottom-nav d-sm-none">
+        <div class="d-flex justify-content-around align-items-center">
+            <a class="nav-link {% if request.url.path == '/' %}active{% endif %}" href="/">
+                <i class="bi bi-house-door"></i>
+                <span>Home</span>
+            </a>
+            <a class="nav-link {% if request.url.path.startswith('/tools') %}active{% endif %}" href="/tools/calculators">
+                <i class="bi bi-calculator"></i>
+                <span>Tools</span>
+            </a>
+            <a class="nav-link {% if request.url.path.startswith('/additives') %}active{% endif %}" href="/additives">
+                <i class="bi bi-droplet"></i>
+                <span>Additives</span>
+            </a>
+            {% if request.state.user is defined and request.state.user %}
+                <a class="nav-link {% if request.url.path.startswith('/account') %}active{% endif %}" href="/account">
+                    <i class="bi bi-person-circle"></i>
+                    <span>Account</span>
+                </a>
+            {% else %}
+                <a class="nav-link {% if request.url.path.startswith('/auth/login') %}active{% endif %}" href="/auth/login">
+                    <i class="bi bi-box-arrow-in-right"></i>
+                    <span>Login</span>
+                </a>
+            {% endif %}
+        </div>
+    </nav>
 
     <div class="modal fade" id="onboardingModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-lg modal-dialog-centered">
