@@ -1502,8 +1502,24 @@ def init_db() -> None:
     cur.execute("SELECT COUNT(1) FROM parameter_defs")
     cnt = cur.fetchone()[0]
     if cnt == 0:
-        defaults = [("Alkalinity/KH", "dKH", 1, 10), ("Calcium", "ppm", 1, 20), ("Magnesium", "ppm", 1, 30), ("Phosphate", "ppm", 1, 40), ("Nitrate", "ppm", 1, 50), ("Salinity", "ppt", 1, 60), ("Temperature", "°C", 1, 70)]
+        defaults = [
+            ("Alkalinity/KH", "dKH", 1, 10),
+            ("Calcium", "ppm", 1, 20),
+            ("Magnesium", "ppm", 1, 30),
+            ("Phosphate", "ppm", 1, 40),
+            ("Nitrate", "ppm", 1, 50),
+            ("Salinity", "ppt", 1, 60),
+            ("Temperature", "°C", 1, 70),
+            ("Trace Elements", None, 1, 80),
+        ]
         cur.executemany("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)", defaults)
+    else:
+        cur.execute("SELECT id FROM parameter_defs WHERE name=?", ("Trace Elements",))
+        if cur.fetchone() is None:
+            cur.execute(
+                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, ?)",
+                ("Trace Elements", None, 80),
+            )
         
     # MIGRATION: Populate defaults if they are null
     for name, d in INITIAL_DEFAULTS.items():
