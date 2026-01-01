@@ -52,11 +52,15 @@
         @media (max-width: 576px) {
             .brand-logo-img { height: 40px; }
             .notification-menu {
-                width: min(360px, calc(100vw - 1.5rem));
+                position: fixed !important;
+                top: 72px !important;
+                left: 0.75rem !important;
+                right: 0.75rem !important;
+                width: auto;
+                max-width: calc(100vw - 1.5rem);
                 min-width: auto;
-                left: 50% !important;
-                right: auto !important;
-                transform: translateX(-50%) !important;
+                margin: 0 auto;
+                transform: none !important;
             }
             .mobile-content-pad {
                 padding-bottom: 5.5rem;
