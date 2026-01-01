@@ -235,6 +235,73 @@
               <div class="form-text" data-preview-for="trace_solution"></div>
               <div class="form-text text-warning" data-warning-for="trace_solution"></div>
             </div>
+            <div class="col-12" data-dosing-group="trace">
+              <div class="border rounded-3 bg-light-subtle p-3">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                  <div class="fw-semibold">Additional Trace Elements</div>
+                  <button type="button" class="btn btn-sm btn-outline-primary" id="addTraceRow">Add Trace Element</button>
+                </div>
+                <div class="small text-muted mb-2">Use this to dose multiple trace additives independently.</div>
+                <div id="trace-extra-rows" class="d-grid gap-2">
+                  {% for entry in extra_trace_entries %}
+                    <div class="row g-2 align-items-end trace-extra-row">
+                      <div class="col-12 col-md-5">
+                        <label class="form-label fw-bold">Trace Additive</label>
+                        <select class="form-select" name="trace_extra_solution[]">
+                          <option value="">Select additive</option>
+                          {% for additive in grouped_additives.get('trace', grouped_additives.get('all', additives)) %}
+                            <option value="{{ additive.name }}" {% if entry.solution == additive.name %}selected{% endif %}>
+                              {{ additive|additive_label }}
+                            </option>
+                          {% endfor %}
+                        </select>
+                      </div>
+                      <div class="col-12 col-md-2">
+                        <label class="form-label fw-bold">Daily (ml)</label>
+                        <input type="number" step="any" name="trace_extra_daily_ml[]" class="form-control" value="{{ entry.daily_ml if entry.daily_ml is not none else '' }}" placeholder="e.g. 1">
+                      </div>
+                      <div class="col-12 col-md-2">
+                        <label class="form-label fw-bold">Container (ml)</label>
+                        <input type="number" step="any" name="trace_extra_container_ml[]" class="form-control" value="{{ entry.container_ml if entry.container_ml is not none else '' }}" placeholder="e.g. 500">
+                      </div>
+                      <div class="col-12 col-md-2">
+                        <label class="form-label fw-bold">Remaining (ml)</label>
+                        <input type="number" step="any" name="trace_extra_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="e.g. 300">
+                      </div>
+                      <div class="col-12 col-md-1 d-flex">
+                        <button type="button" class="btn btn-outline-danger w-100 remove-trace-row">Remove</button>
+                      </div>
+                    </div>
+                  {% endfor %}
+                  <div class="row g-2 align-items-end trace-extra-row">
+                    <div class="col-12 col-md-5">
+                      <label class="form-label fw-bold">Trace Additive</label>
+                      <select class="form-select" name="trace_extra_solution[]">
+                        <option value="">Select additive</option>
+                        {% for additive in grouped_additives.get('trace', grouped_additives.get('all', additives)) %}
+                          <option value="{{ additive.name }}">{{ additive|additive_label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <label class="form-label fw-bold">Daily (ml)</label>
+                      <input type="number" step="any" name="trace_extra_daily_ml[]" class="form-control" placeholder="e.g. 1">
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <label class="form-label fw-bold">Container (ml)</label>
+                      <input type="number" step="any" name="trace_extra_container_ml[]" class="form-control" placeholder="e.g. 500">
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <label class="form-label fw-bold">Remaining (ml)</label>
+                      <input type="number" step="any" name="trace_extra_remaining_ml[]" class="form-control" placeholder="e.g. 300">
+                    </div>
+                    <div class="col-12 col-md-1 d-flex">
+                      <button type="button" class="btn btn-outline-danger w-100 remove-trace-row">Remove</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="col-12 col-md-6" data-dosing-group="nopox">
               <label class="form-label fw-bold">NoPox Daily (ml)</label>
               <input type="number" step="any" name="nopox_daily_ml" class="form-control" value="{{ tank.nopox_daily_ml if tank.nopox_daily_ml is not none else '' }}" placeholder="e.g. 5">
@@ -501,6 +568,38 @@
   }
   if (applyDosingMethodButton) {
     applyDosingMethodButton.addEventListener('click', applyDosingMethod);
+  }
+
+  const traceRowsContainer = document.getElementById('trace-extra-rows');
+  const addTraceRowButton = document.getElementById('addTraceRow');
+
+  function wireTraceRow(row) {
+    const removeButton = row.querySelector('.remove-trace-row');
+    if (removeButton) {
+      removeButton.addEventListener('click', () => {
+        row.remove();
+      });
+    }
+  }
+
+  if (traceRowsContainer) {
+    traceRowsContainer.querySelectorAll('.trace-extra-row').forEach(wireTraceRow);
+  }
+
+  if (addTraceRowButton && traceRowsContainer) {
+    addTraceRowButton.addEventListener('click', () => {
+      const template = traceRowsContainer.querySelector('.trace-extra-row');
+      if (!template) return;
+      const clone = template.cloneNode(true);
+      clone.querySelectorAll('input').forEach((input) => {
+        input.value = '';
+      });
+      clone.querySelectorAll('select').forEach((select) => {
+        select.selectedIndex = 0;
+      });
+      traceRowsContainer.appendChild(clone);
+      wireTraceRow(clone);
+    });
   }
 </script>
 {% endblock %}
