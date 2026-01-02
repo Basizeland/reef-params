@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
-from pywebpush import webpush, WebPushException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
@@ -36,6 +35,11 @@ def get_pandas():
     if importlib.util.find_spec("pandas") is None:
         return None
     return importlib.import_module("pandas")
+
+def get_webpush():
+    if importlib.util.find_spec("pywebpush") is None:
+        return None
+    return importlib.import_module("pywebpush")
 
 def require_pandas():
     pandas = get_pandas()
@@ -323,6 +327,9 @@ def get_vapid_settings() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     return public_key, private_key, subject
 
 def send_web_push(db: sqlite3.Connection, user_ids: List[int], payload: Dict[str, Any]) -> None:
+    webpush_module = get_webpush()
+    if webpush_module is None:
+        return
     public_key, private_key, subject = get_vapid_settings()
     if not public_key or not private_key or not subject:
         return
@@ -347,13 +354,13 @@ def send_web_push(db: sqlite3.Connection, user_ids: List[int], payload: Dict[str
             db.execute("DELETE FROM push_subscriptions WHERE id=?", (row["id"],))
             continue
         try:
-            webpush(
+            webpush_module.webpush(
                 subscription_info=subscription_info,
                 data=json.dumps(payload),
                 vapid_private_key=private_key,
                 vapid_claims={"sub": subject},
             )
-        except WebPushException:
+        except webpush_module.WebPushException:
             db.execute("DELETE FROM push_subscriptions WHERE id=?", (row["id"],))
     db.commit()
 
