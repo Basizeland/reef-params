@@ -51,6 +51,48 @@
         /* Responsive logo scaling */
         @media (max-width: 576px) {
             .brand-logo-img { height: 40px; }
+            .notification-menu {
+                position: fixed !important;
+                top: 72px !important;
+                left: 0.75rem !important;
+                right: 0.75rem !important;
+                width: auto;
+                max-width: calc(100vw - 1.5rem);
+                min-width: auto;
+                margin: 0 auto;
+                transform: none !important;
+            }
+            .mobile-content-pad {
+                padding-bottom: 5.5rem;
+            }
+            .bottom-nav {
+                position: fixed;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 1030;
+                background: #ffffff;
+                border-top: 1px solid rgba(0, 0, 0, 0.08);
+                box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
+                padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
+            }
+            .bottom-nav .nav-link {
+                color: #6b7280 !important;
+                font-size: 0.7rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 0.2rem;
+            }
+            .bottom-nav .nav-link i {
+                font-size: 1.2rem;
+            }
+            .bottom-nav .nav-link.active {
+                color: var(--reef-cyan) !important;
+            }
         }
     </style>
 </head>
@@ -89,6 +131,7 @@
                                         <i class="bi bi-database"></i> Data Center
                                     </a>
                                 </li>
+                                <li><a class="dropdown-item" href="/settings/system"><i class="bi bi-gear"></i> System Settings</a></li>
                                 <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people"></i> Users</a></li>
                                 <li><a class="dropdown-item" href="/admin/audit"><i class="bi bi-journal-text"></i> Audit Log</a></li>
                             {% else %}
@@ -108,12 +151,12 @@
                     <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
                         <i class="bi bi-bell"></i>
                         {% if global_notifications %}
-                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="transform: translate(-50%, -50%);">
+                            <span class="position-absolute top-0 start-50 translate-middle badge rounded-pill bg-danger">
                                 {{ global_notifications|length }}
                             </span>
                         {% endif %}
                     </a>
-                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="min-width: 320px;">
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm notification-menu" style="min-width: 320px;">
                         <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
                         {% if global_notifications %}
                             {% for group in global_notifications|groupby('tank_id') %}
@@ -125,12 +168,19 @@
                                             <a class="text-decoration-none text-reset small" href="/tanks/{{ alert.tank_id }}">
                                                 {{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})
                                             </a>
-                                            <form method="post" action="/notifications/dismiss" class="ms-2">
-                                                <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
-                                                <input type="hidden" name="container_key" value="{{ alert.container_key }}">
-                                                <input type="hidden" name="notified_on" value="{{ alert.notified_on }}">
-                                                <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
-                                            </form>
+                                            <div class="d-flex flex-column gap-1">
+                                                <form method="post" action="/tanks/{{ alert.tank_id }}/dosing-containers">
+                                                    <input type="hidden" name="action" value="refill">
+                                                    <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                                                    <button class="btn btn-sm btn-outline-primary" type="submit">Refill</button>
+                                                </form>
+                                                <form method="post" action="/notifications/dismiss">
+                                                    <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
+                                                    <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                                                    <input type="hidden" name="notified_on" value="{{ alert.notified_on }}">
+                                                    <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
+                                                </form>
+                                            </div>
                                         </div>
                                     {% endfor %}
                                 </li>
@@ -139,28 +189,20 @@
                         {% else %}
                             <li class="dropdown-item text-muted small">No dosing alerts right now.</li>
                         {% endif %}
+                        <li><hr class="dropdown-divider"></li>
+                        <li class="dropdown-item">
+                            <div class="d-flex align-items-center justify-content-between gap-2">
+                                <div>
+                                    <div class="fw-semibold small">Push alerts</div>
+                                    <div class="text-muted small">Enable browser push notifications.</div>
+                                </div>
+                                <button class="btn btn-sm btn-outline-primary" type="button" id="enable-browser-alerts">
+                                    <span id="browser-alerts-status">Off</span>
+                                </button>
+                            </div>
+                        </li>
                     </ul>
                 </div>
-                {% if request.state.user is defined and request.state.user %}
-                    <div class="dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-person-circle"></i> Account
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-                            <li class="dropdown-header text-muted small">{{ request.state.user.email }}</li>
-                            <li>
-                                <button class="dropdown-item" type="button" data-bs-toggle="modal" data-bs-target="#onboardingModal">
-                                    <i class="bi bi-compass"></i> Guide
-                                </button>
-                            </li>
-                            <li><a class="dropdown-item" href="/account"><i class="bi bi-key"></i> Change Password</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="/auth/logout"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
-                        </ul>
-                    </div>
-                {% else %}
-                    <a class="nav-link" href="/auth/login"><i class="bi bi-box-arrow-in-right"></i> Login</a>
-                {% endif %}
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                     <span class="navbar-toggler-icon"></span>
                 </button>
@@ -168,9 +210,41 @@
         </div>
     </nav>
 
-    <div class="container pb-5">
+    <div class="container pb-5 mobile-content-pad">
         {% block content %}{% endblock %}
     </div>
+
+    <nav class="bottom-nav d-sm-none">
+        <div class="d-flex justify-content-around align-items-center">
+            <a class="nav-link {% if request.url.path == '/' %}active{% endif %}" href="/">
+                <i class="bi bi-house-door"></i>
+                <span>Home</span>
+            </a>
+            <a class="nav-link {% if request.url.path.startswith('/tools') %}active{% endif %}" href="/tools/calculators">
+                <i class="bi bi-calculator"></i>
+                <span>Tools</span>
+            </a>
+            <a class="nav-link {% if request.url.path.startswith('/tools/dose-plan') %}active{% endif %}" href="/tools/dose-plan">
+                <i class="bi bi-calendar-check"></i>
+                <span>Dose Plan</span>
+            </a>
+            <a class="nav-link {% if request.url.path.startswith('/additives') %}active{% endif %}" href="/additives">
+                <i class="bi bi-droplet"></i>
+                <span>Additives</span>
+            </a>
+            {% if request.state.user is defined and request.state.user %}
+                <a class="nav-link {% if request.url.path.startswith('/account') %}active{% endif %}" href="/account">
+                    <i class="bi bi-person-circle"></i>
+                    <span>Account</span>
+                </a>
+            {% else %}
+                <a class="nav-link {% if request.url.path.startswith('/auth/login') %}active{% endif %}" href="/auth/login">
+                    <i class="bi bi-box-arrow-in-right"></i>
+                    <span>Login</span>
+                </a>
+            {% endif %}
+        </div>
+    </nav>
 
     <div class="modal fade" id="onboardingModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-lg modal-dialog-centered">
@@ -345,6 +419,91 @@
             }
 
             render();
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const toggleBtn = document.getElementById("enable-browser-alerts");
+            const statusLabel = document.getElementById("browser-alerts-status");
+            const updateStatus = async () => {
+                if (!statusLabel) return;
+                if (!("serviceWorker" in navigator)) {
+                    statusLabel.textContent = "Unsupported";
+                    if (toggleBtn) toggleBtn.disabled = true;
+                    return;
+                }
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.getSubscription();
+                statusLabel.textContent = subscription ? "On" : "Off";
+            };
+            const urlBase64ToUint8Array = (base64String) => {
+                const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+                const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+                const rawData = atob(base64);
+                const outputArray = new Uint8Array(rawData.length);
+                for (let i = 0; i < rawData.length; i += 1) {
+                    outputArray[i] = rawData.charCodeAt(i);
+                }
+                return outputArray;
+            };
+            const getPublicKey = async () => {
+                const response = await fetch("/api/push/public-key");
+                if (!response.ok) return null;
+                const data = await response.json();
+                return data.public_key || null;
+            };
+            const subscribePush = async () => {
+                if (!("serviceWorker" in navigator)) return;
+                const publicKey = await getPublicKey();
+                if (!publicKey) {
+                    alert("Push notifications are not configured on the server.");
+                    return;
+                }
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(publicKey),
+                });
+                await fetch("/api/push/subscribe", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(subscription),
+                });
+            };
+            const unsubscribePush = async () => {
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.getSubscription();
+                if (!subscription) return;
+                await fetch("/api/push/unsubscribe", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ endpoint: subscription.endpoint }),
+                });
+                await subscription.unsubscribe();
+            };
+            if (toggleBtn) {
+                toggleBtn.addEventListener("click", async () => {
+                    if (!("Notification" in window)) {
+                        alert("Browser notifications are not supported on this device.");
+                        return;
+                    }
+                    const permission = await Notification.requestPermission();
+                    if (permission !== "granted") {
+                        await updateStatus();
+                        return;
+                    }
+                    const registration = await navigator.serviceWorker.ready;
+                    const subscription = await registration.pushManager.getSubscription();
+                    if (subscription) {
+                        await unsubscribePush();
+                    } else {
+                        await subscribePush();
+                    }
+                    await updateStatus();
+                });
+            }
+            updateStatus();
         });
     </script>
 </body>

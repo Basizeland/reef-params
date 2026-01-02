@@ -10,293 +10,114 @@
         <form method="post" action="/tanks/{{ tank.id }}/dosing-settings">
           <div class="border rounded-3 bg-light-subtle p-3 mb-4">
             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-              <h6 class="mb-0 text-uppercase small text-muted">Switch Dosing Method</h6>
-              <span class="badge text-bg-light border">Wizard</span>
+              <div class="fw-semibold">Dosing Entries</div>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="addDosingRow">Add Dosing Entry</button>
             </div>
-            <p class="small text-muted mb-3">
-              Use this wizard to switch your primary dosing approach. Nutrient dosing (nitrate/phosphate/NoPox) stays unchanged.
-            </p>
-            <div class="row g-2 align-items-end">
-              <div class="col-12 col-md-8">
-                <label class="form-label fw-bold" for="dosingMethodSelect">Method</label>
-                <select class="form-select" id="dosingMethodSelect">
-                  <option value="">Select a method</option>
-                  <option value="all_in_one">All-in-one additive</option>
-                  <option value="two_part">Two-part (Alk + Ca + Mg)</option>
-                  <option value="kalkwasser">Kalkwasser</option>
-                  <option value="calcium_reactor">Calcium reactor</option>
-                </select>
-              </div>
-              <div class="col-12 col-md-4">
-                <button type="button" class="btn btn-outline-primary w-100" id="applyDosingMethod">Apply Method</button>
+            <div class="small text-muted mb-3">Add as many dosing entries as you need, even multiple of the same type.</div>
+            <div id="dosing-rows" class="d-grid gap-3" data-tank-volume="{{ tank.volume_l or '' }}">
+              {% for entry in dosing_entries %}
+                <div class="row g-2 align-items-end dosing-row">
+                  <div class="col-12 col-md-4">
+                    <label class="form-label fw-bold">Additive</label>
+                    <select class="form-select dosing-solution" name="dosing_solution[]">
+                      <option value="">Select additive</option>
+                      <option value="NoPox" data-parameter="NoPox" {% if entry.solution == "NoPox" %}selected{% endif %}>NoPox</option>
+                      {% for additive in additives %}
+                        <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}" {% if entry.solution == additive.name %}selected{% endif %}>
+                          {{ additive|additive_label }}
+                        </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-12 col-md-2">
+                    <label class="form-label fw-bold">Daily (ml)</label>
+                    <input type="number" step="any" name="dosing_daily_ml[]" class="form-control" value="{{ entry.daily_ml if entry.daily_ml is not none else '' }}" placeholder="e.g. 5">
+                  </div>
+                  <div class="col-12 col-md-2">
+                    <label class="form-label fw-bold">Container (ml)</label>
+                    <input type="number" step="any" name="dosing_container_ml[]" class="form-control" value="{{ entry.container_ml if entry.container_ml is not none else '' }}" placeholder="ml">
+                  </div>
+                  <div class="col-12 col-md-2">
+                    <label class="form-label fw-bold">Remaining (ml)</label>
+                    <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="ml">
+                    <div class="d-grid gap-1 mt-2">
+                      <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Use container</button>
+                      <button type="button" class="btn btn-outline-secondary btn-sm copy-dosing-row">Copy row</button>
+                      <button type="button" class="btn btn-outline-secondary btn-sm clear-dosing-row">Clear row</button>
+                      <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row">Remove</button>
+                    </div>
+                  </div>
+                  <div class="col-12">
+                    <div class="text-danger small d-none dosing-row-warning">Select an additive and enter a daily amount to save this row.</div>
+                  </div>
+                </div>
+              {% endfor %}
+              <div class="row g-2 align-items-end dosing-row">
+                <div class="col-12 col-md-4">
+                  <label class="form-label fw-bold">Additive</label>
+                  <select class="form-select dosing-solution" name="dosing_solution[]">
+                    <option value="">Select additive</option>
+                    <option value="NoPox" data-parameter="NoPox">NoPox</option>
+                    {% for additive in additives %}
+                      <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}">{{ additive|additive_label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-12 col-md-2">
+                  <label class="form-label fw-bold">Daily (ml)</label>
+                  <input type="number" step="any" name="dosing_daily_ml[]" class="form-control" placeholder="e.g. 5">
+                </div>
+                <div class="col-12 col-md-2">
+                  <label class="form-label fw-bold">Container (ml)</label>
+                  <input type="number" step="any" name="dosing_container_ml[]" class="form-control" placeholder="ml">
+                </div>
+                <div class="col-12 col-md-2">
+                  <label class="form-label fw-bold">Remaining (ml)</label>
+                  <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" placeholder="ml">
+                  <div class="d-grid gap-1 mt-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Use container</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm copy-dosing-row">Copy row</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm clear-dosing-row">Clear row</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row">Remove</button>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="text-danger small d-none dosing-row-warning">Select an additive and enter a daily amount to save this row.</div>
+                </div>
               </div>
             </div>
-            <div class="form-text mt-2" id="dosingMethodHelp">Choose a method to auto-toggle the matching dosing fields.</div>
           </div>
-          <div class="row g-3 mb-3">
-            <div class="col-12">
-              <label class="form-label fw-bold">Dosing Methods</label>
-              <div class="d-flex flex-wrap gap-3">
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_all_in_one" id="use_all_in_one" data-dosing-toggle="all_in_one" {% if tank.use_all_in_one or tank.all_in_one_solution or tank.all_in_one_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_all_in_one">All-in-one</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_alk" id="use_alk" data-dosing-toggle="alk" {% if tank.use_alk or tank.alk_solution or tank.alk_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_alk">Alkalinity</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_kalkwasser" id="use_kalkwasser" data-dosing-toggle="kalkwasser" {% if tank.use_kalkwasser or tank.kalk_solution or tank.kalk_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_kalkwasser">Kalkwasser</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_ca" id="use_ca" data-dosing-toggle="ca" {% if tank.use_ca or tank.ca_solution or tank.ca_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_ca">Calcium</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_mg" id="use_mg" data-dosing-toggle="mg" {% if tank.use_mg or tank.mg_solution or tank.mg_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_mg">Magnesium</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_nitrate" id="use_nitrate" data-dosing-toggle="nitrate" {% if tank.use_nitrate or tank.nitrate_solution or tank.nitrate_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_nitrate">Nitrate</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_phosphate" id="use_phosphate" data-dosing-toggle="phosphate" {% if tank.use_phosphate or tank.phosphate_solution or tank.phosphate_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_phosphate">Phosphate</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_nopox" id="use_nopox" data-dosing-toggle="nopox" {% if tank.use_nopox or tank.nopox_daily_ml is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_nopox">NoPox</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="use_calcium_reactor" id="use_calcium_reactor" data-dosing-toggle="calcium_reactor" {% if tank.use_calcium_reactor or tank.calcium_reactor_daily_ml is not none or tank.calcium_reactor_effluent_dkh is not none %}checked{% endif %}>
-                  <label class="form-check-label" for="use_calcium_reactor">Calcium Reactor</label>
-                </div>
+
+          <div class="border rounded-3 p-3 mb-4">
+            <div class="fw-semibold mb-3">Calcium Reactor</div>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Calcium Reactor Effluent (dKH)</label>
+                <input type="number" step="any" name="calcium_reactor_effluent_dkh" class="form-control" value="{{ tank.calcium_reactor_effluent_dkh if tank.calcium_reactor_effluent_dkh is not none else '' }}" placeholder="e.g. 30">
+                <div class="form-text">Enter the tested dKH of the effluent.</div>
               </div>
-            </div>
-          </div>
-          <div class="row g-3" data-tank-volume="{{ tank.volume_l or '' }}">
-            <div class="col-12 col-md-6" data-dosing-group="all_in_one">
-              <label class="form-label fw-bold">All-in-one Solution</label>
-              <select class="form-select" name="all_in_one_solution" data-initial-value="{{ tank.all_in_one_solution or '' }}">
-                <option value="">Select additive</option>
-                {% for additive in additives %}
-                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.all_in_one_solution == additive.name %}selected{% endif %}>
-                    {{ additive|additive_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="all_in_one">
-              <label class="form-label fw-bold">All-in-one Daily (ml)</label>
-              <input type="number" step="any" name="all_in_one_daily_ml" class="form-control" value="{{ tank.all_in_one_daily_ml if tank.all_in_one_daily_ml is not none else '' }}" placeholder="e.g. 12" data-preview-input="all_in_one_solution" data-initial-value="{{ tank.all_in_one_daily_ml if tank.all_in_one_daily_ml is not none else '' }}">
-              <div class="form-text" data-suggestion-for="all_in_one_solution"></div>
-              <div class="form-text" data-preview-for="all_in_one_solution"></div>
-              <div class="form-text text-warning" data-warning-for="all_in_one_solution"></div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="alk">
-              <label class="form-label fw-bold">Alkalinity Solution</label>
-              <select class="form-select" name="alk_solution" data-initial-value="{{ tank.alk_solution or '' }}">
-                <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.alk_solution == additive.name %}selected{% endif %}>
-                    {{ additive|additive_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="alk">
-              <label class="form-label fw-bold">Alkalinity Daily (ml)</label>
-              <input type="number" step="any" name="alk_daily_ml" class="form-control" value="{{ tank.alk_daily_ml if tank.alk_daily_ml is not none else '' }}" placeholder="e.g. 25" data-preview-input="alk_solution" data-initial-value="{{ tank.alk_daily_ml if tank.alk_daily_ml is not none else '' }}">
-              <div class="form-text" data-suggestion-for="alk_solution"></div>
-              <div class="form-text" data-preview-for="alk_solution"></div>
-              <div class="form-text text-warning" data-warning-for="alk_solution"></div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
-              <label class="form-label fw-bold">Kalkwasser Solution</label>
-              <select class="form-select" name="kalk_solution" data-initial-value="{{ tank.kalk_solution or '' }}">
-                <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('alkalinity', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.kalk_solution == additive.name %}selected{% endif %}>
-                    {{ additive|additive_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
-              <label class="form-label fw-bold">Kalkwasser Daily (ml)</label>
-              <input type="number" step="any" name="kalk_daily_ml" class="form-control" value="{{ tank.kalk_daily_ml if tank.kalk_daily_ml is not none else '' }}" placeholder="e.g. 500" data-preview-input="kalk_solution" data-initial-value="{{ tank.kalk_daily_ml if tank.kalk_daily_ml is not none else '' }}">
-              <div class="form-text" data-suggestion-for="kalk_solution"></div>
-              <div class="form-text" data-preview-for="kalk_solution"></div>
-              <div class="form-text text-warning" data-warning-for="kalk_solution"></div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="ca">
-              <label class="form-label fw-bold">Calcium Solution</label>
-              <select class="form-select" name="ca_solution" data-initial-value="{{ tank.ca_solution or '' }}">
-                <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('calcium', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.ca_solution == additive.name %}selected{% endif %}>
-                    {{ additive|additive_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="ca">
-              <label class="form-label fw-bold">Calcium Daily (ml)</label>
-              <input type="number" step="any" name="ca_daily_ml" class="form-control" value="{{ tank.ca_daily_ml if tank.ca_daily_ml is not none else '' }}" placeholder="e.g. 20" data-preview-input="ca_solution" data-initial-value="{{ tank.ca_daily_ml if tank.ca_daily_ml is not none else '' }}">
-              <div class="form-text" data-suggestion-for="ca_solution"></div>
-              <div class="form-text" data-preview-for="ca_solution"></div>
-              <div class="form-text text-warning" data-warning-for="ca_solution"></div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="mg">
-              <label class="form-label fw-bold">Magnesium Solution</label>
-              <select class="form-select" name="mg_solution" data-initial-value="{{ tank.mg_solution or '' }}">
-                <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('magnesium', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.mg_solution == additive.name %}selected{% endif %}>
-                    {{ additive|additive_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="mg">
-              <label class="form-label fw-bold">Magnesium Daily (ml)</label>
-              <input type="number" step="any" name="mg_daily_ml" class="form-control" value="{{ tank.mg_daily_ml if tank.mg_daily_ml is not none else '' }}" placeholder="e.g. 15" data-preview-input="mg_solution" data-initial-value="{{ tank.mg_daily_ml if tank.mg_daily_ml is not none else '' }}">
-              <div class="form-text" data-suggestion-for="mg_solution"></div>
-              <div class="form-text" data-preview-for="mg_solution"></div>
-              <div class="form-text text-warning" data-warning-for="mg_solution"></div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="calcium_reactor">
-              <label class="form-label fw-bold">Calcium Reactor Effluent (dKH)</label>
-              <input type="number" step="any" name="calcium_reactor_effluent_dkh" class="form-control" value="{{ tank.calcium_reactor_effluent_dkh if tank.calcium_reactor_effluent_dkh is not none else '' }}" placeholder="e.g. 30">
-              <div class="form-text">Enter the tested dKH of the effluent.</div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="calcium_reactor">
-              <label class="form-label fw-bold">Calcium Reactor Effluent (ml/day)</label>
-              <input type="number" step="any" name="calcium_reactor_daily_ml" class="form-control" value="{{ tank.calcium_reactor_daily_ml if tank.calcium_reactor_daily_ml is not none else '' }}" placeholder="e.g. 2000">
-              <div class="form-text">Used to estimate daily alkalinity addition.</div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="nitrate">
-              <label class="form-label fw-bold">Nitrate Solution</label>
-              <select class="form-select" name="nitrate_solution" data-initial-value="{{ tank.nitrate_solution or '' }}">
-                <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('nitrate', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.nitrate_solution == additive.name %}selected{% endif %}>
-                    {{ additive|additive_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="nitrate">
-              <label class="form-label fw-bold">Nitrate Daily (ml)</label>
-              <input type="number" step="any" name="nitrate_daily_ml" class="form-control" value="{{ tank.nitrate_daily_ml if tank.nitrate_daily_ml is not none else '' }}" placeholder="e.g. 2" data-preview-input="nitrate_solution" data-initial-value="{{ tank.nitrate_daily_ml if tank.nitrate_daily_ml is not none else '' }}">
-              <div class="form-text" data-suggestion-for="nitrate_solution"></div>
-              <div class="form-text" data-preview-for="nitrate_solution"></div>
-              <div class="form-text text-warning" data-warning-for="nitrate_solution"></div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="phosphate">
-              <label class="form-label fw-bold">Phosphate Solution</label>
-              <select class="form-select" name="phosphate_solution" data-initial-value="{{ tank.phosphate_solution or '' }}">
-                <option value="">Select additive</option>
-                {% for additive in grouped_additives.get('phosphate', grouped_additives.get('all', additives)) %}
-                  <option value="{{ additive.name }}" data-suggested="{{ suggested_dosing.get(additive.name, '') }}" data-strength="{{ additive.strength }}" data-unit="{{ additive.unit }}" data-parameter="{{ additive.parameter }}" {% if tank.phosphate_solution == additive.name %}selected{% endif %}>
-                    {{ additive|additive_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="phosphate">
-              <label class="form-label fw-bold">Phosphate Daily (ml)</label>
-              <input type="number" step="any" name="phosphate_daily_ml" class="form-control" value="{{ tank.phosphate_daily_ml if tank.phosphate_daily_ml is not none else '' }}" placeholder="e.g. 1" data-preview-input="phosphate_solution" data-initial-value="{{ tank.phosphate_daily_ml if tank.phosphate_daily_ml is not none else '' }}">
-              <div class="form-text" data-suggestion-for="phosphate_solution"></div>
-              <div class="form-text" data-preview-for="phosphate_solution"></div>
-              <div class="form-text text-warning" data-warning-for="phosphate_solution"></div>
-            </div>
-            <div class="col-12 col-md-6" data-dosing-group="nopox">
-              <label class="form-label fw-bold">NoPox Daily (ml)</label>
-              <input type="number" step="any" name="nopox_daily_ml" class="form-control" value="{{ tank.nopox_daily_ml if tank.nopox_daily_ml is not none else '' }}" placeholder="e.g. 5">
+              <div class="col-12 col-md-6">
+                <label class="form-label fw-bold">Calcium Reactor Effluent (ml/day)</label>
+                <input type="number" step="any" name="calcium_reactor_daily_ml" class="form-control" value="{{ tank.calcium_reactor_daily_ml if tank.calcium_reactor_daily_ml is not none else '' }}" placeholder="e.g. 2000">
+                <div class="form-text">Used to estimate daily alkalinity addition.</div>
+              </div>
             </div>
           </div>
 
           <div class="border-top pt-4 mt-4">
-            <h6 class="text-muted text-uppercase small mb-3">Dosing Containers</h6>
+            <h6 class="text-muted text-uppercase small mb-3">Notifications</h6>
             <div class="row g-3">
               <div class="col-12">
                 <label class="form-label fw-bold">Low Container Notification Threshold (days)</label>
                 <input type="number" step="any" name="dosing_low_days" class="form-control" value="{{ tank.dosing_low_days if tank.dosing_low_days is not none else 5 }}" placeholder="e.g. 5">
                 <div class="form-text">Shows an in-app notification when estimated days remaining falls at or below this value.</div>
               </div>
-              <div class="col-12 col-md-6" data-dosing-group="all_in_one">
-                <label class="form-label fw-bold">All-in-one Container Size (ml)</label>
-                <input type="number" step="any" name="all_in_one_container_ml" class="form-control" value="{{ tank.all_in_one_container_ml if tank.all_in_one_container_ml is not none else '' }}" placeholder="e.g. 2000">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="all_in_one">
-                <label class="form-label fw-bold">All-in-one Remaining (ml)</label>
-                <input type="number" step="any" name="all_in_one_remaining_ml" class="form-control" value="{{ tank.all_in_one_remaining_ml if tank.all_in_one_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="alk">
-                <label class="form-label fw-bold">Alkalinity Container Size (ml)</label>
-                <input type="number" step="any" name="alk_container_ml" class="form-control" value="{{ tank.alk_container_ml if tank.alk_container_ml is not none else '' }}" placeholder="e.g. 2000">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="alk">
-                <label class="form-label fw-bold">Alkalinity Remaining (ml)</label>
-                <input type="number" step="any" name="alk_remaining_ml" class="form-control" value="{{ tank.alk_remaining_ml if tank.alk_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
-                <label class="form-label fw-bold">Kalkwasser Container Size (ml)</label>
-                <input type="number" step="any" name="kalk_container_ml" class="form-control" value="{{ tank.kalk_container_ml if tank.kalk_container_ml is not none else '' }}" placeholder="e.g. 5000">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="kalkwasser">
-                <label class="form-label fw-bold">Kalkwasser Remaining (ml)</label>
-                <input type="number" step="any" name="kalk_remaining_ml" class="form-control" value="{{ tank.kalk_remaining_ml if tank.kalk_remaining_ml is not none else '' }}" placeholder="e.g. 3500">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="ca">
-                <label class="form-label fw-bold">Calcium Container Size (ml)</label>
-                <input type="number" step="any" name="ca_container_ml" class="form-control" value="{{ tank.ca_container_ml if tank.ca_container_ml is not none else '' }}" placeholder="e.g. 2000">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="ca">
-                <label class="form-label fw-bold">Calcium Remaining (ml)</label>
-                <input type="number" step="any" name="ca_remaining_ml" class="form-control" value="{{ tank.ca_remaining_ml if tank.ca_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="mg">
-                <label class="form-label fw-bold">Magnesium Container Size (ml)</label>
-                <input type="number" step="any" name="mg_container_ml" class="form-control" value="{{ tank.mg_container_ml if tank.mg_container_ml is not none else '' }}" placeholder="e.g. 2000">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="mg">
-                <label class="form-label fw-bold">Magnesium Remaining (ml)</label>
-                <input type="number" step="any" name="mg_remaining_ml" class="form-control" value="{{ tank.mg_remaining_ml if tank.mg_remaining_ml is not none else '' }}" placeholder="e.g. 1200">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="nitrate">
-                <label class="form-label fw-bold">Nitrate Container Size (ml)</label>
-                <input type="number" step="any" name="nitrate_container_ml" class="form-control" value="{{ tank.nitrate_container_ml if tank.nitrate_container_ml is not none else '' }}" placeholder="e.g. 500">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="nitrate">
-                <label class="form-label fw-bold">Nitrate Remaining (ml)</label>
-                <input type="number" step="any" name="nitrate_remaining_ml" class="form-control" value="{{ tank.nitrate_remaining_ml if tank.nitrate_remaining_ml is not none else '' }}" placeholder="e.g. 300">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="phosphate">
-                <label class="form-label fw-bold">Phosphate Container Size (ml)</label>
-                <input type="number" step="any" name="phosphate_container_ml" class="form-control" value="{{ tank.phosphate_container_ml if tank.phosphate_container_ml is not none else '' }}" placeholder="e.g. 500">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="phosphate">
-                <label class="form-label fw-bold">Phosphate Remaining (ml)</label>
-                <input type="number" step="any" name="phosphate_remaining_ml" class="form-control" value="{{ tank.phosphate_remaining_ml if tank.phosphate_remaining_ml is not none else '' }}" placeholder="e.g. 300">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="nopox">
-                <label class="form-label fw-bold">NoPox Container Size (ml)</label>
-                <input type="number" step="any" name="nopox_container_ml" class="form-control" value="{{ tank.nopox_container_ml if tank.nopox_container_ml is not none else '' }}" placeholder="e.g. 1000">
-              </div>
-              <div class="col-12 col-md-6" data-dosing-group="nopox">
-                <label class="form-label fw-bold">NoPox Remaining (ml)</label>
-                <input type="number" step="any" name="nopox_remaining_ml" class="form-control" value="{{ tank.nopox_remaining_ml if tank.nopox_remaining_ml is not none else '' }}" placeholder="e.g. 600">
-              </div>
             </div>
           </div>
 
           <div class="d-flex justify-content-between align-items-center mt-4">
             <a href="/tanks/{{ tank.id }}" class="text-decoration-none">Cancel</a>
-            <button type="submit" class="btn btn-primary px-4">Save Dosing</button>
+            <button type="submit" class="btn btn-primary px-4" id="save-dosing-button">Save Dosing</button>
           </div>
         </form>
       </div>
@@ -305,172 +126,98 @@
 </div>
 
 <script>
-  const paramLimits = {{ param_limits|tojson|safe }};
-  const dosingToggles = document.querySelectorAll('[data-dosing-toggle]');
-  const dosingFields = document.querySelectorAll('[data-dosing-group]');
-  const dosingMethodSelect = document.getElementById('dosingMethodSelect');
-  const applyDosingMethodButton = document.getElementById('applyDosingMethod');
-  const dosingMethodHelp = document.getElementById('dosingMethodHelp');
+  const dosingRowsContainer = document.getElementById('dosing-rows');
+  const addDosingRowButton = document.getElementById('addDosingRow');
 
-  function updateDosingFields() {
-    const toggleMap = {};
-    dosingToggles.forEach((toggle) => {
-      toggleMap[toggle.dataset.dosingToggle] = toggle.checked;
-    });
-    dosingFields.forEach((field) => {
-      const group = field.dataset.dosingGroup;
-      const shouldShow = toggleMap[group];
-      field.classList.toggle('d-none', !shouldShow);
-    });
-  }
-
-  dosingToggles.forEach((toggle) => toggle.addEventListener('change', updateDosingFields));
-  updateDosingFields();
-
-  function normalizeKey(value) {
-    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-  }
-
-  const normalizedParamLimits = {};
-  Object.entries(paramLimits || {}).forEach(([name, values]) => {
-    normalizedParamLimits[normalizeKey(name)] = values || {};
-  });
-
-  function parseNumber(value) {
-    const parsed = parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  function hasDosingChanged(select, input) {
-    const initialSelect = select?.dataset?.initialValue ?? '';
-    const currentSelect = select?.value ?? '';
-    const initialInputRaw = input?.dataset?.initialValue ?? '';
-    const currentInputRaw = input?.value ?? '';
-    const initialInput = parseNumber(initialInputRaw);
-    const currentInput = parseNumber(currentInputRaw);
-    const inputChanged = initialInput !== currentInput;
-    return currentSelect !== initialSelect || inputChanged;
-  }
-
-  function updateSuggestions() {
-    document.querySelectorAll('select[name$="_solution"]').forEach((select) => {
-      const suggestionTarget = document.querySelector(`[data-suggestion-for="${select.name}"]`);
-      if (!suggestionTarget) return;
-      const input = document.querySelector(`[data-preview-input="${select.name}"]`);
-      if (!hasDosingChanged(select, input)) {
-        suggestionTarget.textContent = '';
-        return;
-      }
-      const selected = select.selectedOptions[0];
-      const suggested = selected ? selected.dataset.suggested : '';
-      suggestionTarget.textContent = suggested ? `Suggested start: ${suggested} ml/day` : '';
-    });
-  }
-
-  document.querySelectorAll('select[name$="_solution"]').forEach((select) => {
-    select.addEventListener('change', updateSuggestions);
-  });
-  updateSuggestions();
-
-  function updateDosePreviews() {
-    const tankVolume = parseFloat(document.querySelector('[data-tank-volume]')?.dataset.tankVolume || '');
-    document.querySelectorAll('[data-preview-input]').forEach((input) => {
-      const selectName = input.dataset.previewInput;
-      const select = document.querySelector(`select[name="${selectName}"]`);
-      const previewTarget = document.querySelector(`[data-preview-for="${selectName}"]`);
-      const warningTarget = document.querySelector(`[data-warning-for="${selectName}"]`);
-      if (!select || !previewTarget || !warningTarget) return;
-      const selected = select.selectedOptions[0];
-      const strength = selected ? parseFloat(selected.dataset.strength || '') : null;
-      const unit = selected ? (selected.dataset.unit || '') : '';
-      const parameter = selected ? (selected.dataset.parameter || '') : '';
-      const dailyMl = parseNumber(input.value || '');
-      const initialDaily = parseNumber(input.dataset.initialValue || '') ?? 0;
-      const isChanged = hasDosingChanged(select, input);
-
-      previewTarget.textContent = '';
-      warningTarget.textContent = '';
-
-      if (!isChanged) {
-        return;
-      }
-
-      if (!tankVolume || !strength || dailyMl === null) {
-        if (!tankVolume) {
-          warningTarget.textContent = 'Set a tank volume in the tank profile to preview dosing.';
-        }
-        return;
-      }
-
-      const deltaDaily = dailyMl - initialDaily;
-      if (!Number.isFinite(deltaDaily) || Math.abs(deltaDaily) < 1e-9) {
-        return;
-      }
-      const estimatedChange = (deltaDaily * strength) * (100.0 / tankVolume);
-      if (!Number.isFinite(estimatedChange)) return;
-
-      const roundedChange = Math.round(estimatedChange * 100) / 100;
-      const label = parameter ? `${parameter}` : 'parameter';
-      const sign = roundedChange > 0 ? '+' : '';
-      previewTarget.textContent = `Estimated daily change: ${sign}${roundedChange} ${unit}` + (parameter ? ` (${label})` : '');
-
-      const limit = normalizedParamLimits[normalizeKey(parameter)];
-      if (limit && limit.max_daily_change !== null && limit.max_daily_change !== undefined) {
-        const maxChange = parseFloat(limit.max_daily_change);
-        if (Number.isFinite(maxChange) && Math.abs(estimatedChange) > maxChange) {
-          const limitUnit = limit.unit || unit;
-          warningTarget.textContent = `Warning: exceeds max daily change (${maxChange} ${limitUnit}).`;
-        }
-      }
-    });
-  }
-
-  document.querySelectorAll('select[name$="_solution"]').forEach((select) => {
-    select.addEventListener('change', updateDosePreviews);
-  });
-  document.querySelectorAll('[data-preview-input]').forEach((input) => {
-    input.addEventListener('input', updateDosePreviews);
-  });
-  updateDosePreviews();
-
-  const methodHelpText = {
-    all_in_one: 'Enables All-in-one and disables Alk/Ca/Mg/Kalkwasser/Calcium Reactor.',
-    two_part: 'Enables Alk, Calcium, and Magnesium dosing and disables All-in-one/Kalkwasser/Calcium Reactor.',
-    kalkwasser: 'Enables Kalkwasser and disables All-in-one/Calcium Reactor.',
-    calcium_reactor: 'Enables Calcium Reactor and disables All-in-one/Alk/Ca/Kalkwasser.',
-  };
-
-  function setToggle(name, value) {
-    const toggle = document.querySelector(`[data-dosing-toggle="${name}"]`);
-    if (toggle) toggle.checked = value;
-  }
-
-  function applyDosingMethod() {
-    const method = dosingMethodSelect.value;
-    if (!method) return;
-    if (method === 'all_in_one') {
-      setToggle('all_in_one', true);
-      ['alk', 'ca', 'mg', 'kalkwasser', 'calcium_reactor'].forEach((key) => setToggle(key, false));
-    } else if (method === 'two_part') {
-      ['alk', 'ca', 'mg'].forEach((key) => setToggle(key, true));
-      ['all_in_one', 'kalkwasser', 'calcium_reactor'].forEach((key) => setToggle(key, false));
-    } else if (method === 'kalkwasser') {
-      setToggle('kalkwasser', true);
-      ['all_in_one', 'calcium_reactor'].forEach((key) => setToggle(key, false));
-    } else if (method === 'calcium_reactor') {
-      setToggle('calcium_reactor', true);
-      ['all_in_one', 'alk', 'ca', 'kalkwasser'].forEach((key) => setToggle(key, false));
+  function wireDosingRow(row) {
+    const removeButton = row.querySelector('.remove-dosing-row');
+    const copyButton = row.querySelector('.copy-dosing-row');
+    const clearButton = row.querySelector('.clear-dosing-row');
+    const autofillButton = row.querySelector('.autofill-remaining');
+    if (removeButton) {
+      removeButton.addEventListener('click', () => {
+        row.remove();
+        validateDosingRows();
+      });
     }
-    updateDosingFields();
+    if (copyButton && dosingRowsContainer) {
+      copyButton.addEventListener('click', () => {
+        const clone = row.cloneNode(true);
+        dosingRowsContainer.insertBefore(clone, row.nextSibling);
+        wireDosingRow(clone);
+        validateDosingRows();
+      });
+    }
+    if (clearButton) {
+      clearButton.addEventListener('click', () => {
+        row.querySelectorAll('input').forEach((input) => {
+          input.value = '';
+        });
+        row.querySelectorAll('select').forEach((select) => {
+          select.selectedIndex = 0;
+        });
+        validateDosingRows();
+      });
+    }
+    if (autofillButton) {
+      autofillButton.addEventListener('click', () => {
+        const containerInput = row.querySelector('input[name="dosing_container_ml[]"]');
+        const remainingInput = row.querySelector('input[name="dosing_remaining_ml[]"]');
+        if (containerInput && remainingInput) {
+          remainingInput.value = containerInput.value;
+          validateDosingRows();
+        }
+      });
+    }
   }
 
-  if (dosingMethodSelect) {
-    dosingMethodSelect.addEventListener('change', () => {
-      dosingMethodHelp.textContent = methodHelpText[dosingMethodSelect.value] || 'Choose a method to auto-toggle the matching dosing fields.';
+  if (dosingRowsContainer) {
+    dosingRowsContainer.querySelectorAll('.dosing-row').forEach(wireDosingRow);
+  }
+
+  if (addDosingRowButton && dosingRowsContainer) {
+    addDosingRowButton.addEventListener('click', () => {
+      const template = dosingRowsContainer.querySelector('.dosing-row');
+      if (!template) return;
+      const clone = template.cloneNode(true);
+      clone.querySelectorAll('input').forEach((input) => {
+        input.value = '';
+      });
+      clone.querySelectorAll('select').forEach((select) => {
+        select.selectedIndex = 0;
+      });
+      dosingRowsContainer.appendChild(clone);
+      wireDosingRow(clone);
+      validateDosingRows();
     });
   }
-  if (applyDosingMethodButton) {
-    applyDosingMethodButton.addEventListener('click', applyDosingMethod);
+
+  const saveButton = document.getElementById('save-dosing-button');
+
+  function validateDosingRows() {
+    let hasInvalid = false;
+    document.querySelectorAll('.dosing-row').forEach((row) => {
+      const solution = row.querySelector('.dosing-solution')?.value?.trim() || '';
+      const daily = row.querySelector('input[name="dosing_daily_ml[]"]')?.value?.trim() || '';
+      const warning = row.querySelector('.dosing-row-warning');
+      const isEmpty = !solution && !daily;
+      const isValid = (solution && daily) || isEmpty;
+      if (warning) {
+        warning.classList.toggle('d-none', isValid);
+      }
+      if (!isValid) {
+        hasInvalid = true;
+      }
+    });
+    if (saveButton) {
+      saveButton.disabled = hasInvalid;
+    }
   }
+
+  document.querySelectorAll('.dosing-solution, input[name="dosing_daily_ml[]"]').forEach((input) => {
+    input.addEventListener('input', validateDosingRows);
+    input.addEventListener('change', validateDosingRows);
+  });
+  validateDosingRows();
 </script>
 {% endblock %}

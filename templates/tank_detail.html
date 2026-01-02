@@ -16,6 +16,12 @@
     .tank-action-bar .dropdown-toggle::after {
       margin-left: 0.25rem;
     }
+    .dose-solution-name {
+      font-size: 0.85rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
   .dose-container {
     position: relative;
@@ -49,11 +55,15 @@
 </style>
 <div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
   <div>
-    <h1 class="h2 mb-0 fw-bold text-navy">{{ tank.name }}</h1>
-    <div class="text-muted small d-flex gap-3 align-items-center mt-1">
-      <span>ID: {{ tank.id }}</span>
+    <h1 class="h2 mb-0 fw-bold text-navy d-flex flex-wrap align-items-center gap-2">
+      <span>{{ tank.name }}</span>
       {% if tank.volume_l %}
-        <span class="badge bg-light text-secondary border fs-6">{{ tank.volume_l }} Liters</span>
+        <span class="badge bg-light text-secondary border fs-6 d-inline-flex d-sm-none">{{ tank.volume_l }} Liters</span>
+      {% endif %}
+    </h1>
+    <div class="text-muted small d-flex gap-3 align-items-center mt-1">
+      {% if tank.volume_l %}
+        <span class="badge bg-light text-secondary border fs-6 d-none d-sm-inline-flex">{{ tank.volume_l }} Liters</span>
       {% endif %}
     </div>
   </div>
@@ -97,7 +107,7 @@
   </div>
 {% endif %}
 
-{% set has_dosing = tank.use_all_in_one or tank.use_alk or tank.use_kalkwasser or tank.use_ca or tank.use_mg or tank.use_nitrate or tank.use_phosphate or tank.use_nopox or tank.use_calcium_reactor or tank.all_in_one_solution or tank.alk_solution or tank.kalk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.kalk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml or tank.calcium_reactor_daily_ml or tank.calcium_reactor_effluent_dkh %}
+{% set has_dosing = tank.use_all_in_one or tank.use_alk or tank.use_kalkwasser or tank.use_ca or tank.use_mg or tank.use_nitrate or tank.use_phosphate or tank.use_trace or tank.use_nopox or tank.use_calcium_reactor or tank.all_in_one_solution or tank.alk_solution or tank.kalk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.trace_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.kalk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml or tank.trace_daily_ml or tank.calcium_reactor_daily_ml or tank.calcium_reactor_effluent_dkh or (extra_dosing_entries and extra_dosing_entries|length > 0) %}
 {% if has_dosing %}
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0 h5 fw-bold">Daily Dosing</h4>
@@ -113,6 +123,7 @@
   {% if tank.use_mg or tank.mg_solution or tank.mg_daily_ml is not none %}{% set _ = ns.methods.append("Magnesium") %}{% endif %}
   {% if tank.use_nitrate or tank.nitrate_solution or tank.nitrate_daily_ml is not none %}{% set _ = ns.methods.append("Nitrate") %}{% endif %}
   {% if tank.use_phosphate or tank.phosphate_solution or tank.phosphate_daily_ml is not none %}{% set _ = ns.methods.append("Phosphate") %}{% endif %}
+  {% if tank.use_trace or tank.trace_solution or tank.trace_daily_ml is not none %}{% set _ = ns.methods.append("Trace Elements") %}{% endif %}
   {% if tank.use_nopox or tank.nopox_daily_ml is not none %}{% set _ = ns.methods.append("NoPox") %}{% endif %}
   {% if tank.use_calcium_reactor or tank.calcium_reactor_daily_ml is not none or tank.calcium_reactor_effluent_dkh is not none %}{% set _ = ns.methods.append("Calcium Reactor") %}{% endif %}
   <div class="mb-3 text-muted small">
@@ -131,7 +142,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">All-in-one</div>
-                <div class="fw-semibold">{{ tank.all_in_one_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.all_in_one_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.all_in_one_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -168,7 +179,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Alkalinity</div>
-                <div class="fw-semibold">{{ tank.alk_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.alk_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.alk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -205,7 +216,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Kalkwasser</div>
-                <div class="fw-semibold">{{ tank.kalk_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.kalk_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.kalk_daily_ml|fmt2 if tank.kalk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.kalk_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -242,7 +253,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Calcium</div>
-                <div class="fw-semibold">{{ tank.ca_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.ca_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.ca_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -279,7 +290,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Magnesium</div>
-                <div class="fw-semibold">{{ tank.mg_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.mg_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.mg_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -316,7 +327,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Nitrate</div>
-                <div class="fw-semibold">{{ tank.nitrate_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.nitrate_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.nitrate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -353,7 +364,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Phosphate</div>
-                <div class="fw-semibold">{{ tank.phosphate_solution or "—" }}</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.phosphate_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.phosphate_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -378,6 +389,82 @@
             </div>
           </div>
         {% endif %}
+        {% if tank.use_trace or tank.trace_solution or tank.trace_daily_ml is not none %}
+          {% set trace_remaining = tank.trace_remaining_ml if tank.trace_remaining_ml is not none else tank.trace_container_ml %}
+          {% set trace_pct = (trace_remaining / tank.trace_container_ml * 100) if tank.trace_container_ml else none %}
+          {% if trace_pct is not none and trace_pct > 100 %}{% set trace_pct = 100 %}{% endif %}
+          {% if trace_pct is not none and trace_pct < 0 %}{% set trace_pct = 0 %}{% endif %}
+          {% set trace_days = (trace_remaining / tank.trace_daily_ml) if (trace_remaining is not none and tank.trace_daily_ml) else none %}
+          {% set trace_color = "var(--bs-primary)" %}
+          {% if trace_pct is not none and trace_pct <= 20 %}{% set trace_color = "var(--bs-danger)" %}{% elif trace_pct is not none and trace_pct <= 50 %}{% set trace_color = "var(--bs-warning)" %}{% endif %}
+          <div class="col">
+            <div class="card h-100 shadow-sm border-0">
+              <div class="card-body p-3">
+                <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">Trace Elements</div>
+                <div class="fw-semibold dose-solution-name">{{ tank.trace_solution or "—" }}</div>
+                <div class="text-secondary small">{{ tank.trace_daily_ml|fmt2 if tank.trace_daily_ml is not none else "—" }} ml/day</div>
+                {% if tank.trace_container_ml %}
+                  <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="dose-container">
+                      <div class="dose-liquid" style="height: {{ trace_pct }}%; background: {{ trace_color }};"></div>
+                      <div class="dose-markings"></div>
+                    </div>
+                    <div>
+                      <div class="text-muted small">{{ trace_remaining|fmt2 }} / {{ tank.trace_container_ml|fmt2 }} ml</div>
+                      {% if trace_days is not none %}
+                        <div class="text-muted small">{{ trace_days|round(1) }} days remaining</div>
+                      {% endif %}
+                      <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                        <input type="hidden" name="action" value="refill">
+                        <input type="hidden" name="container_key" value="trace">
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                      </form>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endif %}
+        {% if extra_dosing_entries %}
+          {% for entry in extra_dosing_entries %}
+            {% set extra_remaining = entry.remaining_ml if entry.remaining_ml is not none else entry.container_ml %}
+            {% set extra_pct = (extra_remaining / entry.container_ml * 100) if entry.container_ml else none %}
+            {% if extra_pct is not none and extra_pct > 100 %}{% set extra_pct = 100 %}{% endif %}
+            {% if extra_pct is not none and extra_pct < 0 %}{% set extra_pct = 0 %}{% endif %}
+            {% set extra_days = (extra_remaining / entry.daily_ml) if (extra_remaining is not none and entry.daily_ml) else none %}
+            {% set extra_color = "var(--bs-primary)" %}
+            {% if extra_pct is not none and extra_pct <= 20 %}{% set extra_color = "var(--bs-danger)" %}{% elif extra_pct is not none and extra_pct <= 50 %}{% set extra_color = "var(--bs-warning)" %}{% endif %}
+            <div class="col">
+              <div class="card h-100 shadow-sm border-0">
+                <div class="card-body p-3">
+                  <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">{{ entry.parameter or "Dosing" }}</div>
+                  <div class="fw-semibold dose-solution-name">{{ entry.solution or "—" }}</div>
+                  <div class="text-secondary small">{{ entry.daily_ml|fmt2 if entry.daily_ml is not none else "—" }} ml/day</div>
+                  {% if entry.container_ml %}
+                    <div class="d-flex align-items-end gap-2 mt-2">
+                      <div class="dose-container">
+                        <div class="dose-liquid" style="height: {{ extra_pct }}%; background: {{ extra_color }};"></div>
+                        <div class="dose-markings"></div>
+                      </div>
+                      <div>
+                        <div class="text-muted small">{{ extra_remaining|fmt2 }} / {{ entry.container_ml|fmt2 }} ml</div>
+                        {% if extra_days is not none %}
+                          <div class="text-muted small">{{ extra_days|round(1) }} days remaining</div>
+                        {% endif %}
+                        <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
+                          <input type="hidden" name="action" value="refill">
+                          <input type="hidden" name="container_key" value="extra_{{ entry.id }}">
+                          <button type="submit" class="btn btn-sm btn-outline-primary">Refill</button>
+                        </form>
+                      </div>
+                    </div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        {% endif %}
         {% if tank.use_nopox or tank.nopox_daily_ml is not none %}
           {% set nopox_remaining = tank.nopox_remaining_ml if tank.nopox_remaining_ml is not none else tank.nopox_container_ml %}
           {% set nopox_pct = (nopox_remaining / tank.nopox_container_ml * 100) if tank.nopox_container_ml else none %}
@@ -390,7 +477,7 @@
             <div class="card h-100 shadow-sm border-0">
               <div class="card-body p-3">
                 <div class="text-muted small text-uppercase fw-bold" style="letter-spacing: 0.5px;">NoPox</div>
-                <div class="fw-semibold">Red Sea NoPox</div>
+                <div class="fw-semibold dose-solution-name">Red Sea NoPox</div>
                 <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
                 {% if tank.nopox_container_ml %}
                   <div class="d-flex align-items-end gap-2 mt-2">
@@ -498,15 +585,23 @@
              <span class="h3 mb-0 fw-bold">{{ val|fmt2 if val is not none else "-" }}</span>
              <span class="text-muted small">{{ p.unit }}</span>
           </div>
-          <div class="mt-2 d-flex flex-wrap gap-1">
+          <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
             {% if stability_score_by_param.get(p.name) is not none %}
-              <span class="badge text-bg-light border">Stability {{ stability_score_by_param.get(p.name)|round(0)|int }}%</span>
+              <span class="badge text-bg-light border" title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability {{ stability_score_by_param.get(p.name)|round(0)|int }}%</span>
+            {% else %}
+              <span class="badge text-bg-light border" title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability —</span>
             {% endif %}
             {% if trend_warning_by_param.get(p.id) %}
               <span class="badge text-bg-warning">Rapid change</span>
             {% endif %}
             {% if overdue_by_param.get(p.id) %}
               <span class="badge text-bg-info">Overdue</span>
+            {% endif %}
+            {% if val is not none and target and target.target_low and val < target.target_low %}
+              {% set deficit = target.target_low - val %}
+              <a class="badge rounded-pill bg-primary-subtle text-primary-emphasis border position-relative z-1 text-decoration-none" href="/tools/dose-plan?tank_id={{ tank.id }}&parameter={{ p.name|replace(' ', '%20') }}">
+                Dose plan: +{{ deficit|fmt2 }} {{ p.unit }}
+              </a>
             {% endif %}
           </div>
         </div>
@@ -519,9 +614,6 @@
   <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0 fw-bold">Trend Analysis</h5>
     <div class="d-flex align-items-center gap-2 flex-wrap">
-      <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/targets">
-        <i class="bi bi-sliders"></i> Edit Target Range
-      </a>
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% for p in params %}
           {% set param_key = p.key %}
@@ -537,20 +629,15 @@
       </div>
       <div class="text-muted small">Compare up to 3 parameters at once.</div>
     </div>
+    <a class="btn btn-outline-secondary btn-sm ms-auto" href="/tanks/{{ tank.id }}/targets">
+      <i class="bi bi-sliders"></i> Edit Target Range
+    </a>
   </div>
   <div class="card-body">
     <div style="height: 350px;">
       <canvas id="historyChart"></canvas>
     </div>
-    <div class="d-flex flex-wrap justify-content-center gap-3 text-muted small mt-3" id="historyStats" aria-live="polite">
-      <div class="d-flex align-items-center gap-2">
-        <span class="rounded-circle" style="width:10px; height:10px; background: var(--stat-color, #6c757d);"></span>
-        <span class="fw-semibold text-dark" data-stat="label">—</span>
-      </div>
-      <div><span class="fw-semibold text-dark">Min:</span> <span data-stat="min">—</span></div>
-      <div><span class="fw-semibold text-dark">Median:</span> <span data-stat="median">—</span></div>
-      <div><span class="fw-semibold text-dark">Max:</span> <span data-stat="max">—</span></div>
-    </div>
+    <div class="d-flex flex-column gap-2 text-muted small mt-3" id="historyStats" aria-live="polite"></div>
   </div>
 </div>
 
@@ -648,6 +735,7 @@
           const targets = {{ chart_targets_map|tojson|safe }};
           const paramsMeta = {{ params|tojson|safe }};
           const doseLogEvents = {{ dose_log_events|tojson|safe }};
+          const stabilityScores = {{ stability_score_by_param|tojson|safe }};
           const ctx = document.getElementById('historyChart');
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
           const showDoseToggle = document.getElementById('toggle-dose-events');
@@ -679,6 +767,12 @@
           if (Array.isArray(paramsMeta)) {
             paramsMeta.forEach((param) => {
               unitsByKey[normalizeKey(param.name)] = param.unit || '';
+            });
+          }
+          const stabilityByKey = {};
+          if (stabilityScores) {
+            Object.keys(stabilityScores).forEach((key) => {
+              stabilityByKey[normalizeKey(key)] = stabilityScores[key];
             });
           }
 
@@ -886,6 +980,12 @@
             return checked.slice(0, 3);
           }
 
+          function formatNumber(value) {
+            if (value === null || typeof value === 'undefined') return '—';
+            if (typeof value !== 'number') return value;
+            return value.toFixed(2);
+          }
+
           function renderChart() {
             const selected = selectedParams();
             const labels = buildLabels(selected);
@@ -893,12 +993,6 @@
             const datasets = buildDatasets(selected, labels, unitToAxis);
             const annotations = buildAnnotations(selected);
             const statsEl = document.getElementById('historyStats');
-            const statValues = statsEl ? {
-              min: statsEl.querySelector('[data-stat="min"]'),
-              median: statsEl.querySelector('[data-stat="median"]'),
-              max: statsEl.querySelector('[data-stat="max"]'),
-              label: statsEl.querySelector('[data-stat="label"]')
-            } : null;
 
             if (!labels.length || datasets.length === 0) {
               const c = ctx.getContext('2d');
@@ -907,37 +1001,42 @@
               c.fillStyle = "#6c757d";
               c.textAlign = "center";
               c.fillText("No data available for these parameters.", ctx.width / 2, ctx.height / 2);
-              if (statValues) {
-                statValues.min.textContent = '—';
-                statValues.median.textContent = '—';
-                statValues.max.textContent = '—';
-                statValues.label.textContent = '—';
-                statsEl.style.setProperty('--stat-color', '#6c757d');
+              if (statsEl) {
+                statsEl.innerHTML = '<div>—</div>';
               }
               return;
             }
 
-            if (statValues) {
-              const primaryDataset = datasets[0];
-              const values = (primaryDataset?.data || []).filter((v) => v !== null && typeof v !== 'undefined');
-              if (values.length) {
-                const sorted = [...values].sort((a, b) => a - b);
-                const min = sorted[0];
-                const max = sorted[sorted.length - 1];
-                const mid = Math.floor(sorted.length / 2);
-                const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-                statValues.min.textContent = min.toFixed(2);
-                statValues.median.textContent = median.toFixed(2);
-                statValues.max.textContent = max.toFixed(2);
-                statValues.label.textContent = primaryDataset?.label || '—';
-                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
-              } else {
-                statValues.min.textContent = '—';
-                statValues.median.textContent = '—';
-                statValues.max.textContent = '—';
-                statValues.label.textContent = primaryDataset?.label || '—';
-                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
-              }
+            if (statsEl) {
+              statsEl.innerHTML = '';
+              datasets.forEach((dataset) => {
+                const values = (dataset?.data || []).filter((v) => v !== null && typeof v !== 'undefined');
+                let min = null;
+                let max = null;
+                let median = null;
+                if (values.length) {
+                  const sorted = [...values].sort((a, b) => a - b);
+                  min = sorted[0];
+                  max = sorted[sorted.length - 1];
+                  const mid = Math.floor(sorted.length / 2);
+                  median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+                }
+                const label = dataset?.label || '—';
+                const stability = stabilityByKey[normalizeKey(label)];
+                const row = document.createElement('div');
+                row.className = 'd-flex flex-wrap align-items-center gap-3';
+                row.innerHTML = `
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="rounded-circle" style="width:10px; height:10px; background: ${dataset?.borderColor || '#6c757d'};"></span>
+                    <span class="fw-semibold text-dark">${label}</span>
+                  </div>
+                  <div><span class="fw-semibold text-dark">Min:</span> ${formatNumber(min)}</div>
+                  <div><span class="fw-semibold text-dark">Median:</span> ${formatNumber(median)}</div>
+                  <div><span class="fw-semibold text-dark">Max:</span> ${formatNumber(max)}</div>
+                  <div><span class="fw-semibold text-dark">Stability:</span> ${stability !== null && typeof stability !== 'undefined' ? Math.round(stability) + '%' : '—'}</div>
+                `;
+                statsEl.appendChild(row);
+              });
             }
 
             const existingChart = window.historyChart && typeof window.historyChart.destroy === 'function'

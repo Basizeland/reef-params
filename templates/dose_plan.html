@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .dose-plan-focus {
+    border: 2px solid rgba(13, 110, 253, 0.35);
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.15);
+  }
+</style>
 <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-4">
   <div>
     <h1 class="display-6 fw-bold mb-1">Dose plan</h1>
@@ -11,10 +17,46 @@
     </span>
   </div>
 </div>
+<div id="dose-plan-focus-banner" class="alert alert-primary d-none align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <div class="fw-semibold">Focused dose plan</div>
+    <div class="small text-primary-emphasis" id="dose-plan-focus-text">Showing the highlighted parameter.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button type="button" class="btn btn-outline-primary btn-sm" id="dose-plan-jump">Jump to focus</button>
+    <a class="btn btn-primary btn-sm" href="/tools/dose-plan">Clear focus</a>
+  </div>
+</div>
+<div class="d-flex flex-wrap gap-2 align-items-center mb-4">
+  <div class="me-auto d-flex flex-wrap gap-2 align-items-center">
+    <label class="small text-muted">Jump to:</label>
+    <select class="form-select form-select-sm w-auto" id="jump-tank">
+      <option value="">Tank</option>
+      {% for t in available_tanks %}
+        <option value="{{ t.id }}">{{ t.name }}</option>
+      {% endfor %}
+    </select>
+    <select class="form-select form-select-sm w-auto" id="jump-parameter">
+      <option value="">Parameter</option>
+      {% for param in available_parameters %}
+        <option value="{{ param|lower }}">{{ param }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-outline-secondary btn-sm" type="button" id="jump-apply">Jump</button>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <span class="badge bg-light text-dark border">Parameters needing dose: {{ dose_plan_summary.parameters_needing_dose }}</span>
+    {% if dose_plan_summary.top_deficit %}
+      <span class="badge bg-primary-subtle text-primary-emphasis border">
+        Top deficit: {{ dose_plan_summary.top_deficit.parameter }} +{{ dose_plan_summary.top_deficit.delta|fmt2 }} {{ dose_plan_summary.top_deficit.unit }}
+      </span>
+    {% endif %}
+  </div>
+</div>
 
 {% if plans and plans|length %}
   {% for plan in plans %}
-    <div class="card shadow-sm mb-4 tank-wrapper">
+    <div class="card shadow-sm mb-4 tank-wrapper" data-tank-id="{{ plan.tank['id'] }}">
       <div class="card-body">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 border-bottom pb-3">
           <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -44,7 +86,7 @@
               <tbody>
                 {% for r in plan.rows %}
                   {% if r.additives and r.additives|length > 0 %}
-                    <tr>
+                    <tr data-parameter="{{ r.parameter|lower }}" data-tank-id="{{ plan.tank['id'] }}">
                       <td>
                         <select class="form-select form-select-sm additive-select desktop-select" 
                                 data-sync-key="{{ plan.tank['id'] }}-{{ r.parameter }}"
@@ -109,7 +151,15 @@
                       </td>
                     </tr>
                   {% else %}
-                    <tr><td colspan="6" class="text-muted small">No additive configured for {{ r.parameter }}</td></tr>
+                    <tr>
+                      <td colspan="6" class="text-muted small">
+                        No additive configured for {{ r.parameter }}.
+                        <a href="/additives/new?parameter={{ r.parameter|replace(' ', '%20') }}" class="ms-1">Create additive</a>
+                        {% if r.suggested_additive %}
+                          <span class="ms-2">Suggested: {{ r.suggested_additive.name }}</span>
+                        {% endif %}
+                      </td>
+                    </tr>
                   {% endif %}
                 {% endfor %}
               </tbody>
@@ -119,7 +169,7 @@
           <div class="d-lg-none">
             {% for r in plan.rows %}
               {% if r.additives and r.additives|length > 0 %}
-                <div class="card mb-3 bg-light bg-opacity-25 border additive-card-group">
+                <div class="card mb-3 bg-light bg-opacity-25 border additive-card-group" data-parameter="{{ r.parameter|lower }}" data-tank-id="{{ plan.tank['id'] }}">
                   <div class="card-body p-3">
                     <div class="d-flex justify-content-between align-items-start mb-2 gap-2">
                       <div class="w-100">
@@ -181,6 +231,19 @@
                     {% endfor %}
                   </div>
                 </div>
+              {% else %}
+                <div class="card mb-3 bg-light bg-opacity-25 border">
+                  <div class="card-body p-3">
+                    <div class="small text-muted mb-2">{{ r.parameter }}</div>
+                    <div class="text-muted small">
+                      No additive configured for {{ r.parameter }}.
+                      <a href="/additives/new?parameter={{ r.parameter|replace(' ', '%20') }}" class="ms-1">Create additive</a>
+                      {% if r.suggested_additive %}
+                        <span class="ms-2">Suggested: {{ r.suggested_additive.name }}</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
               {% endif %}
             {% endfor %}
           </div>
@@ -229,6 +292,62 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // D. Apply completed styling
     updateDoseCheckStyles();
+
+    const params = new URLSearchParams(window.location.search);
+    const targetParam = (params.get('parameter') || '').toLowerCase();
+    const targetTankId = params.get('tank_id');
+    if (targetParam) {
+        const selector = targetTankId
+            ? `[data-parameter="${CSS.escape(targetParam)}"][data-tank-id="${targetTankId}"]`
+            : `[data-parameter="${CSS.escape(targetParam)}"]`;
+        const targetRow = document.querySelector(selector);
+        if (targetRow) {
+            targetRow.classList.add('dose-plan-focus');
+            targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        const banner = document.getElementById('dose-plan-focus-banner');
+        const bannerText = document.getElementById('dose-plan-focus-text');
+        const jumpButton = document.getElementById('dose-plan-jump');
+        if (banner && bannerText) {
+            const label = targetParam.replace(/(^|\\s|_)([a-z])/g, (match, p1, p2) => `${p1}${p2.toUpperCase()}`);
+            const tankSuffix = targetTankId ? ` (Tank ${targetTankId})` : '';
+            bannerText.textContent = `Highlighting ${label}${tankSuffix}.`;
+            banner.classList.remove('d-none');
+            banner.classList.add('d-flex');
+        }
+        if (jumpButton) {
+            jumpButton.addEventListener('click', () => {
+                if (targetRow) {
+                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            });
+        }
+    }
+
+    const jumpTank = document.getElementById('jump-tank');
+    const jumpParam = document.getElementById('jump-parameter');
+    const jumpApply = document.getElementById('jump-apply');
+    if (jumpApply) {
+        jumpApply.addEventListener('click', () => {
+            const tankId = jumpTank?.value || '';
+            const param = jumpParam?.value || '';
+            let selector = '';
+            if (tankId && param) {
+                selector = `[data-parameter="${CSS.escape(param)}"][data-tank-id="${tankId}"]`;
+            } else if (param) {
+                selector = `[data-parameter="${CSS.escape(param)}"]`;
+            } else if (tankId) {
+                selector = `[data-tank-id="${tankId}"]`;
+            }
+            if (!selector) return;
+            const target = document.querySelector(selector);
+            if (target) {
+                document.querySelectorAll('.dose-plan-focus').forEach(el => el.classList.remove('dose-plan-focus'));
+                target.classList.add('dose-plan-focus');
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        });
+    }
 });
 
 // 2. Main Handler for Dropdown Changes

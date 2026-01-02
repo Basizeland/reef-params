@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <h2 class="h5 mb-1">System Settings</h2>
+        <div class="text-muted small">Configuration health checks for authentication and notifications.</div>
+      </div>
+    </div>
+
+    <div class="mt-4">
+      <h3 class="h6 text-uppercase text-muted">Public URL</h3>
+      <div class="border rounded p-3">
+        <div class="fw-semibold">PUBLIC_BASE_URL</div>
+        <div class="text-muted small">{{ base_url }}</div>
+      </div>
+    </div>
+
+    <div class="mt-4">
+      <h3 class="h6 text-uppercase text-muted">Google OAuth</h3>
+      <div class="border rounded p-3">
+        <div class="d-flex flex-column gap-2">
+          <div>
+            <div class="fw-semibold">Client ID</div>
+            <div class="text-muted small">{{ google_client_id if google_client_id else "Not configured" }}</div>
+          </div>
+          <div>
+            <div class="fw-semibold">Redirect URI</div>
+            <div class="text-muted small">{{ google_redirect_uri }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-4">
+      <h3 class="h6 text-uppercase text-muted">Web Push</h3>
+      <div class="border rounded p-3">
+        <div class="fw-semibold">VAPID Public Key</div>
+        <div class="text-muted small">{{ vapid_public_key if vapid_public_key else "Not configured" }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
