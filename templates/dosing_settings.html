@@ -25,7 +25,7 @@
                       {% endfor %}
                     </select>
                   </div>
-                  <div class="col-12 col-md-4">
+                  <div class="col-12 col-md-3">
                     <label class="form-label fw-bold">Additive</label>
                     <select class="form-select dosing-solution" name="dosing_solution[]">
                       <option value="">Select additive</option>
@@ -40,16 +40,14 @@
                     <label class="form-label fw-bold">Daily (ml)</label>
                     <input type="number" step="any" name="dosing_daily_ml[]" class="form-control" value="{{ entry.daily_ml if entry.daily_ml is not none else '' }}" placeholder="e.g. 5">
                   </div>
-                  <div class="col-12 col-md-1">
-                    <label class="form-label fw-bold">Container</label>
+                  <div class="col-12 col-md-2">
+                    <label class="form-label fw-bold">Container (ml)</label>
                     <input type="number" step="any" name="dosing_container_ml[]" class="form-control" value="{{ entry.container_ml if entry.container_ml is not none else '' }}" placeholder="ml">
                   </div>
-                  <div class="col-12 col-md-1">
-                    <label class="form-label fw-bold">Remaining</label>
+                  <div class="col-12 col-md-2">
+                    <label class="form-label fw-bold">Remaining (ml)</label>
                     <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="ml">
-                  </div>
-                  <div class="col-12 col-md-1 d-flex">
-                    <button type="button" class="btn btn-outline-danger w-100 remove-dosing-row">Remove</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm w-100 mt-2 remove-dosing-row">Remove</button>
                   </div>
                 </div>
               {% endfor %}
@@ -62,7 +60,7 @@
                     {% endfor %}
                   </select>
                 </div>
-                <div class="col-12 col-md-4">
+                <div class="col-12 col-md-3">
                   <label class="form-label fw-bold">Additive</label>
                   <select class="form-select dosing-solution" name="dosing_solution[]">
                     <option value="">Select additive</option>
@@ -75,16 +73,14 @@
                   <label class="form-label fw-bold">Daily (ml)</label>
                   <input type="number" step="any" name="dosing_daily_ml[]" class="form-control" placeholder="e.g. 5">
                 </div>
-                <div class="col-12 col-md-1">
-                  <label class="form-label fw-bold">Container</label>
+                <div class="col-12 col-md-2">
+                  <label class="form-label fw-bold">Container (ml)</label>
                   <input type="number" step="any" name="dosing_container_ml[]" class="form-control" placeholder="ml">
                 </div>
-                <div class="col-12 col-md-1">
-                  <label class="form-label fw-bold">Remaining</label>
+                <div class="col-12 col-md-2">
+                  <label class="form-label fw-bold">Remaining (ml)</label>
                   <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" placeholder="ml">
-                </div>
-                <div class="col-12 col-md-1 d-flex">
-                  <button type="button" class="btn btn-outline-danger w-100 remove-dosing-row">Remove</button>
+                  <button type="button" class="btn btn-outline-danger btn-sm w-100 mt-2 remove-dosing-row">Remove</button>
                 </div>
               </div>
             </div>
