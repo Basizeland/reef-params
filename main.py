@@ -4832,19 +4832,11 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
 def dose_plan(request: Request):
     db = get_db()
     today = date.today()
-    tank_id_filter = request.query_params.get("tank_id")
-    parameter_filter = (request.query_params.get("parameter") or "").strip()
-    try:
-        tank_id_filter = int(tank_id_filter) if tank_id_filter else None
-    except ValueError:
-        tank_id_filter = None
     try:
         chk_rows = q(db, "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?", (today.isoformat(), (today + timedelta(days=60)).isoformat()))
         check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
     except Exception: check_map = {}
     tanks = get_visible_tanks(db, request)
-    if tank_id_filter is not None:
-        tanks = [t for t in tanks if int(row_get(t, "id")) == tank_id_filter]
     pdefs = q(db, "SELECT name, unit, max_daily_change FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
     plans = []
@@ -4873,8 +4865,6 @@ def dose_plan(request: Request):
         for tr in targets:
             pname = tr["parameter"]
             if not pname: continue
-            if parameter_filter and pname.lower() != parameter_filter.lower():
-                continue
             tl = tr["target_low"] if "target_low" in tr.keys() else (tr["low"] if "low" in tr.keys() else None)
             th = tr["target_high"] if "target_high" in tr.keys() else (tr["high"] if "high" in tr.keys() else None)
             target_val = None

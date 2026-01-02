@@ -597,7 +597,7 @@
             {% endif %}
             {% if val is not none and target and target.target_low and val < target.target_low %}
               <a class="btn btn-sm btn-outline-primary position-relative z-1" href="/tools/dose-plan?tank_id={{ tank.id }}&parameter={{ p.name|replace(' ', '%20') }}">
-                Plan dose
+                View dose plan
               </a>
             {% endif %}
           </div>
