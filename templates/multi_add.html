@@ -36,6 +36,19 @@
           {% endfor %}
         </select>
         <div class="form-text mt-2">If your kit supports syringe conversion, the per-tank fields will appear below.</div>
+        <div class="mt-2 d-none" id="kit-workflow">
+          <div class="border rounded p-2 bg-light-subtle">
+            <div class="fw-semibold small text-uppercase">Test kit guide</div>
+            <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
+            <div class="workflow-steps"></div>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-start">Start guide</button>
+              <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-next">Next step</button>
+              <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-reset">Reset</button>
+              <span class="small text-muted align-self-center" id="workflow-timer"></span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="col-12 col-lg-6">
@@ -79,12 +92,29 @@
         {% endfor %}
       {% endfor %}
     };
+    const workflowSteps = {
+      {% for p in parameters %}
+        {% set kits = kits_by_param.get(p.name, []) %}
+        {% for kit in kits %}
+          {% if kit.workflow_data %}
+            "{{ kit.id }}": {{ kit.workflow_data|safe }},
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    };
     const kitSelect = document.getElementById("kit-select");
     const paramSelect = document.getElementById("parameter-select");
     const unitLabel = document.getElementById("parameter-unit");
     const options = Array.from(kitSelect.options);
     const remainingBlocks = document.querySelectorAll(".tank-remaining");
     const remainingInputs = document.querySelectorAll(".tank-remaining-input");
+    const workflowBlock = document.getElementById("kit-workflow");
+    const workflowStepsContainer = workflowBlock?.querySelector(".workflow-steps");
+    const workflowTimer = document.getElementById("workflow-timer");
+    const workflowStart = document.getElementById("workflow-start");
+    const workflowNext = document.getElementById("workflow-next");
+    const workflowReset = document.getElementById("workflow-reset");
+    let workflowState = { steps: [], currentIndex: 0, interval: null, remaining: null };
 
     const computeValue = (remaining, table) => {
       if (!table || !table.length || remaining === "" || remaining === null) return null;
@@ -106,6 +136,79 @@
       return null;
     };
 
+    const formatDuration = (seconds) => {
+      if (!seconds && seconds !== 0) return "";
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      if (mins && secs) return `${mins}m ${secs}s`;
+      if (mins) return `${mins}m`;
+      return `${secs}s`;
+    };
+
+    const stopWorkflowTimer = () => {
+      if (workflowState.interval) {
+        clearInterval(workflowState.interval);
+        workflowState.interval = null;
+      }
+    };
+
+    const highlightWorkflow = () => {
+      const items = workflowStepsContainer ? Array.from(workflowStepsContainer.querySelectorAll("li")) : [];
+      items.forEach((item, idx) => {
+        item.classList.toggle("fw-semibold", idx === workflowState.currentIndex);
+      });
+    };
+
+    const startWorkflowStep = (index) => {
+      if (!workflowState.steps.length || !workflowStepsContainer) return;
+      stopWorkflowTimer();
+      workflowState.currentIndex = Math.max(0, Math.min(index, workflowState.steps.length - 1));
+      const step = workflowState.steps[workflowState.currentIndex];
+      highlightWorkflow();
+      if (step?.seconds) {
+        workflowState.remaining = step.seconds;
+        workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: ${formatDuration(workflowState.remaining)} remaining`;
+        workflowState.interval = setInterval(() => {
+          workflowState.remaining -= 1;
+          if (workflowState.remaining <= 0) {
+            workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: done`;
+            stopWorkflowTimer();
+            if (workflowState.currentIndex < workflowState.steps.length - 1) {
+              workflowState.currentIndex += 1;
+              startWorkflowStep(workflowState.currentIndex);
+            }
+            return;
+          }
+          workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: ${formatDuration(workflowState.remaining)} remaining`;
+        }, 1000);
+      } else {
+        workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: no timer`;
+      }
+    };
+
+    const renderWorkflow = (steps) => {
+      if (!workflowBlock || !workflowStepsContainer) return;
+      workflowStepsContainer.innerHTML = "";
+      workflowState = { steps: steps || [], currentIndex: 0, interval: null, remaining: null };
+      stopWorkflowTimer();
+      workflowTimer.textContent = "";
+      if (!steps || !steps.length) {
+        workflowBlock.classList.add("d-none");
+        return;
+      }
+      workflowBlock.classList.remove("d-none");
+      const list = document.createElement("ol");
+      list.className = "small mb-2";
+      steps.forEach((step) => {
+        const item = document.createElement("li");
+        const duration = step.seconds ? ` (${formatDuration(step.seconds)})` : "";
+        item.textContent = `${step.label}${duration}`;
+        list.appendChild(item);
+      });
+      workflowStepsContainer.appendChild(list);
+      highlightWorkflow();
+    };
+
     const updateKits = () => {
       const paramId = paramSelect.value;
       const unit = paramSelect.options[paramSelect.selectedIndex]?.dataset?.unit;
@@ -122,6 +225,7 @@
       remainingInputs.forEach((input) => {
         input.value = "";
       });
+      renderWorkflow([]);
     };
 
     const updateConversion = () => {
@@ -135,6 +239,7 @@
           input.value = "";
         });
       }
+      renderWorkflow(workflowSteps[kitSelect.value]);
     };
 
     remainingInputs.forEach((input) => {
@@ -152,6 +257,20 @@
 
     paramSelect.addEventListener("change", updateKits);
     kitSelect.addEventListener("change", updateConversion);
+    if (workflowStart) {
+      workflowStart.addEventListener("click", () => startWorkflowStep(workflowState.currentIndex));
+    }
+    if (workflowNext) {
+      workflowNext.addEventListener("click", () => startWorkflowStep(workflowState.currentIndex + 1));
+    }
+    if (workflowReset) {
+      workflowReset.addEventListener("click", () => {
+        stopWorkflowTimer();
+        workflowState.currentIndex = 0;
+        workflowTimer.textContent = "";
+        highlightWorkflow();
+      });
+    }
     updateKits();
     updateConversion();
 

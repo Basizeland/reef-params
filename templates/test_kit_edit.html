@@ -74,6 +74,12 @@
         </div>
 
         <div class="col-12">
+          <label class="form-label">Test workflow steps (optional)</label>
+          <textarea class="form-control" name="workflow_steps" rows="4" placeholder="Add powder reagent | 2m&#10;Invert vial | 2m&#10;Wait before reading | 7m">{{ kit.workflow_steps if kit and kit.workflow_steps else '' }}</textarea>
+          <div class="form-text">Use one step per line. Add a timer with “| 2m” or “| 90s”.</div>
+        </div>
+
+        <div class="col-12">
           <hr>
           <h6 class="text-muted text-uppercase small mb-2">Conversion Chart (Optional)</h6>
         </div>

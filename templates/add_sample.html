@@ -27,6 +27,19 @@
             <input class="form-control form-control-sm remaining-input" name="remaining_{{ p.id }}" inputmode="decimal" placeholder="e.g. 0.35" data-param-id="{{ p.id }}">
             <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
           </div>
+          <div class="mt-2 kit-workflow d-none" data-param-id="{{ p.id }}">
+            <div class="border rounded p-2 bg-light-subtle">
+              <div class="fw-semibold small text-uppercase">Test kit guide</div>
+              <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
+              <div class="workflow-steps"></div>
+              <div class="d-flex flex-wrap gap-2 mt-2">
+                <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start guide</button>
+                <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
+                <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
+                <span class="small text-muted align-self-center workflow-timer"></span>
+              </div>
+            </div>
+          </div>
         {% endif %}
       </div>
     </div>
@@ -51,11 +64,22 @@
         {% endfor %}
       {% endfor %}
     };
+    const workflowSteps = {
+      {% for p in parameters %}
+        {% set kits = kits_by_param.get(p.name, []) %}
+        {% for kit in kits %}
+          {% if kit.workflow_data %}
+            "{{ kit.id }}": {{ kit.workflow_data|safe }},
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    };
     const valueInputs = {};
     document.querySelectorAll('.reading-input').forEach((input) => {
       const paramId = input.name.replace("value_", "");
       valueInputs[paramId] = input;
     });
+    const workflowState = new WeakMap();
 
     const computeValue = (remaining, table) => {
       if (!table || !table.length || remaining === "" || remaining === null) return null;
@@ -77,6 +101,100 @@
       return null;
     };
 
+    const formatDuration = (seconds) => {
+      if (!seconds && seconds !== 0) return "";
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      if (mins && secs) return `${mins}m ${secs}s`;
+      if (mins) return `${mins}m`;
+      return `${secs}s`;
+    };
+
+    const renderWorkflow = (paramId, steps) => {
+      const wrapper = document.querySelector(`.kit-workflow[data-param-id="${paramId}"]`);
+      if (!wrapper) return;
+      const stepsContainer = wrapper.querySelector(".workflow-steps");
+      const timerLabel = wrapper.querySelector(".workflow-timer");
+      const startBtn = wrapper.querySelector(".workflow-start");
+      const nextBtn = wrapper.querySelector(".workflow-next");
+      const resetBtn = wrapper.querySelector(".workflow-reset");
+      if (!steps || !steps.length) {
+        wrapper.classList.add("d-none");
+        stepsContainer.innerHTML = "";
+        timerLabel.textContent = "";
+        const state = workflowState.get(wrapper);
+        if (state?.interval) {
+          clearInterval(state.interval);
+        }
+        workflowState.delete(wrapper);
+        return;
+      }
+      wrapper.classList.remove("d-none");
+      stepsContainer.innerHTML = "";
+      const list = document.createElement("ol");
+      list.className = "small mb-2";
+      steps.forEach((step) => {
+        const item = document.createElement("li");
+        const duration = step.seconds ? ` (${formatDuration(step.seconds)})` : "";
+        item.textContent = `${step.label}${duration}`;
+        list.appendChild(item);
+      });
+      stepsContainer.appendChild(list);
+
+      const state = {
+        currentIndex: 0,
+        remaining: null,
+        interval: null,
+      };
+      const highlight = () => {
+        const items = Array.from(list.querySelectorAll("li"));
+        items.forEach((item, idx) => {
+          item.classList.toggle("fw-semibold", idx === state.currentIndex);
+        });
+      };
+      const stopTimer = () => {
+        if (state.interval) {
+          clearInterval(state.interval);
+          state.interval = null;
+        }
+      };
+      const startStep = (index) => {
+        stopTimer();
+        state.currentIndex = Math.max(0, Math.min(index, steps.length - 1));
+        const step = steps[state.currentIndex];
+        highlight();
+        if (step?.seconds) {
+          state.remaining = step.seconds;
+          timerLabel.textContent = `Step ${state.currentIndex + 1}: ${formatDuration(state.remaining)} remaining`;
+          state.interval = setInterval(() => {
+            state.remaining -= 1;
+            if (state.remaining <= 0) {
+              timerLabel.textContent = `Step ${state.currentIndex + 1}: done`;
+              stopTimer();
+              if (state.currentIndex < steps.length - 1) {
+                state.currentIndex += 1;
+                startStep(state.currentIndex);
+              }
+              return;
+            }
+            timerLabel.textContent = `Step ${state.currentIndex + 1}: ${formatDuration(state.remaining)} remaining`;
+          }, 1000);
+        } else {
+          timerLabel.textContent = `Step ${state.currentIndex + 1}: no timer`;
+        }
+      };
+      startBtn.onclick = () => startStep(state.currentIndex);
+      nextBtn.onclick = () => startStep(state.currentIndex + 1);
+      resetBtn.onclick = () => {
+        stopTimer();
+        state.currentIndex = 0;
+        timerLabel.textContent = "";
+        highlight();
+      };
+      highlight();
+      workflowState.set(wrapper, state);
+    };
+
     const selects = document.querySelectorAll(".kit-select");
     if (!selects.length) return;
     const update = (select) => {
@@ -89,6 +207,8 @@
       } else {
         block.classList.add("d-none");
       }
+      const steps = workflowSteps[select.value];
+      renderWorkflow(paramId, steps);
     };
     const remainingInputs = document.querySelectorAll(".remaining-input");
     remainingInputs.forEach((input) => {

@@ -1210,6 +1210,78 @@ def parse_conversion_table(text: str) -> List[Dict[str, float]]:
         rows.append({"remaining": float(remaining), "value": float(value)})
     return rows
 
+def parse_duration_seconds(raw: str) -> Optional[int]:
+    if not raw:
+        return None
+    cleaned = raw.strip().lower()
+    if not cleaned:
+        return None
+    if ":" in cleaned:
+        parts = [p for p in cleaned.split(":") if p.strip()]
+        if len(parts) == 2:
+            minutes = to_float(parts[0])
+            seconds = to_float(parts[1])
+            if minutes is None or seconds is None:
+                return None
+            return int(minutes * 60 + seconds)
+    match = re.match(r"^(\d+(?:\.\d+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)?$", cleaned)
+    if match:
+        value = to_float(match.group(1))
+        unit = match.group(2) or "s"
+        if value is None:
+            return None
+        if unit.startswith("m"):
+            return int(value * 60)
+        return int(value)
+    value = to_float(cleaned)
+    if value is None:
+        return None
+    return int(value)
+
+def parse_workflow_steps(text: str) -> List[Dict[str, Any]]:
+    steps: List[Dict[str, Any]] = []
+    if not text:
+        return steps
+    cleaned = text.replace("\t", " ")
+    for line in cleaned.splitlines():
+        if not line.strip():
+            continue
+        if "|" in line:
+            parts = [p.strip() for p in line.split("|", 1)]
+        elif "," in line:
+            parts = [p.strip() for p in line.split(",", 1)]
+        else:
+            parts = [line.strip()]
+        label = parts[0]
+        if not label:
+            continue
+        seconds = None
+        if len(parts) > 1 and parts[1]:
+            seconds = parse_duration_seconds(parts[1])
+        steps.append({"label": label, "seconds": seconds})
+    return steps
+
+def format_workflow_steps(steps: List[Dict[str, Any]]) -> str:
+    lines = []
+    for step in steps:
+        label = str(step.get("label") or "").strip()
+        if not label:
+            continue
+        seconds = step.get("seconds")
+        if seconds is None:
+            lines.append(label)
+            continue
+        minutes = int(seconds) // 60
+        remainder = int(seconds) % 60
+        if minutes and remainder:
+            duration = f"{minutes}m {remainder}s"
+        elif minutes:
+            duration = f"{minutes}m"
+        else:
+            duration = f"{remainder}s"
+        lines.append(f"{label} | {duration}")
+    return "\n".join(lines)
+
 def compute_conversion_value(remaining: float, table: List[Dict[str, float]]) -> Optional[float]:
     if not table:
         return None
@@ -1399,6 +1471,7 @@ class TestKit(Base, DictMixin):
     min_value = Column(Float)
     max_value = Column(Float)
     notes = Column(String)
+    workflow_data = Column(String)
     active = Column(Integer, default=1)
 
 class Additive(Base, DictMixin):
@@ -1448,7 +1521,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, manufacturer_accuracy REAL, min_value REAL, max_value REAL, notes TEXT, active INTEGER DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, manufacturer_accuracy REAL, min_value REAL, max_value REAL, notes TEXT, workflow_data TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS dosing_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, solution TEXT, daily_ml REAL, container_ml REAL, remaining_ml REAL, active INTEGER DEFAULT 1, created_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
@@ -1485,6 +1558,7 @@ def init_db() -> None:
     ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
     ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
     ensure_column(db, "test_kits", "manufacturer_accuracy", "ALTER TABLE test_kits ADD COLUMN manufacturer_accuracy REAL")
+    ensure_column(db, "test_kits", "workflow_data", "ALTER TABLE test_kits ADD COLUMN workflow_data TEXT")
     ensure_column(db, "dosing_notifications", "dismissed_at", "ALTER TABLE dosing_notifications ADD COLUMN dismissed_at TEXT")
 
     if table_exists(db, "user_tanks"):
@@ -4475,16 +4549,25 @@ def test_kit_edit(request: Request, kit_id: int):
             kit["conversion_table"] = "\n".join(
                 f"{r.get('remaining')},{r.get('value')}" for r in rows if "remaining" in r and "value" in r
             )
+        workflow_data = kit.get("workflow_data")
+        if workflow_data:
+            try:
+                workflow_rows = json.loads(workflow_data)
+            except Exception:
+                workflow_rows = []
+            kit["workflow_steps"] = format_workflow_steps(workflow_rows)
     return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": kit, "parameters": parameters})
 
 @app.post("/settings/test-kits/save")
-def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), manufacturer_accuracy: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), manufacturer_accuracy: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), workflow_steps: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
     cur = db.cursor()
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     conv_type = (conversion_type or "").strip() or None
     conversion_rows = parse_conversion_table(conversion_table or "") if conv_type else []
     conversion_json = json.dumps(conversion_rows) if conversion_rows else None
+    workflow_rows = parse_workflow_steps(workflow_steps or "")
+    workflow_json = json.dumps(workflow_rows) if workflow_rows else None
     data = (
         parameter.strip(),
         name.strip(),
@@ -4494,18 +4577,19 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
         to_float(min_value),
         to_float(max_value),
         (notes or "").strip() or None,
+        workflow_json,
         conv_type,
         conversion_json,
         is_active,
     )
     if kit_id and str(kit_id).strip().isdigit():
         cur.execute(
-            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, manufacturer_accuracy=?, min_value=?, max_value=?, notes=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
+            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, manufacturer_accuracy=?, min_value=?, max_value=?, notes=?, workflow_data=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
             (*data, int(kit_id)),
         )
     else:
         cur.execute(
-            "INSERT INTO test_kits (parameter, name, unit, resolution, manufacturer_accuracy, min_value, max_value, notes, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO test_kits (parameter, name, unit, resolution, manufacturer_accuracy, min_value, max_value, notes, workflow_data, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             data,
         )
     db.commit()
