@@ -3,8 +3,8 @@
   "short_name": "Reef Metrics",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0b233f",
+  "background_color": "#f5fbfd",
+  "theme_color": "#0f2d45",
   "icons": [
     {
       "src": "/static/logo.png",

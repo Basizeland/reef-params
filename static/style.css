@@ -1,28 +1,40 @@
 :root {
-    --reef-navy: #042f4b;      /* Brand Primary Navy */
-    --reef-cyan: #00d2d3;      /* Brand Accent Cyan */
-    --reef-teal: #1dd1a1;      /* Brand Success Teal */
-    --reef-bg: #f4f7f9;        /* Soft Background */
-    --reef-text: #2d3436;
+    --reef-navy: #0f2d45;
+    --reef-deep: #0b2438;
+    --reef-ocean: #1d4b66;
+    --reef-teal: #37c4b0;
+    --reef-mint: #7be2d4;
+    --reef-cyan: #54d6c7;
+    --reef-orange: #f39a2e;
+    --reef-bg: #f5fbfd;
+    --reef-surface: #ffffff;
+    --reef-text: #1d2b38;
+    --reef-muted: #5c6b7a;
+    --reef-border: rgba(15, 45, 69, 0.12);
 }
 
 body {
     background-color: var(--reef-bg);
+    background-image: radial-gradient(circle at top, rgba(123, 226, 212, 0.2), transparent 55%);
     color: var(--reef-text);
     font-family: 'Inter', -apple-system, system-ui, sans-serif;
 }
 
+.text-navy {
+    color: var(--reef-navy) !important;
+}
+
 /* Global Button Overrides */
 .btn-primary {
-    background-color: var(--reef-cyan) !important;
-    border-color: var(--reef-cyan) !important;
-    color: var(--reef-navy) !important;
+    background-color: var(--reef-teal) !important;
+    border-color: var(--reef-teal) !important;
+    color: white !important;
     font-weight: 600;
 }
 
 .btn-primary:hover {
-    background-color: #00b8b9 !important;
-    border-color: #00b8b9 !important;
+    background-color: #2aa894 !important;
+    border-color: #2aa894 !important;
     color: white !important;
 }
 
@@ -38,9 +50,10 @@ body {
 
 /* Card Styling */
 .card {
-    border: none;
+    border: 1px solid var(--reef-border);
     border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 10px 30px rgba(15, 45, 69, 0.08);
+    background-color: var(--reef-surface);
 }
 
 .card-hover {
@@ -50,19 +63,19 @@ body {
 
 .card-hover:hover {
     transform: translateY(-2px);
-    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+    box-shadow: 0 18px 32px rgba(15, 45, 69, 0.14);
 }
 
 .card-header {
-    background-color: white !important;
-    border-bottom: 1px solid rgba(0,0,0,0.05);
+    background-color: var(--reef-surface) !important;
+    border-bottom: 1px solid var(--reef-border);
     color: var(--reef-navy);
     font-weight: 700;
 }
 
 /* Badge Styling */
 .badge.bg-primary {
-    background-color: var(--reef-cyan) !important;
+    background-color: var(--reef-mint) !important;
     color: var(--reef-navy) !important;
 }
 
