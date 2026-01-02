@@ -158,11 +158,20 @@
         remaining: null,
         interval: null,
       };
+      const updateControls = () => {
+        const step = steps[state.currentIndex];
+        const hasTimer = Boolean(step?.seconds);
+        if (startBtn) {
+          startBtn.disabled = !hasTimer;
+          startBtn.classList.toggle("d-none", !hasTimer);
+        }
+      };
       const highlight = () => {
         const items = Array.from(list.querySelectorAll("li"));
         items.forEach((item, idx) => {
           item.classList.toggle("fw-semibold", idx === state.currentIndex);
         });
+        updateControls();
       };
       const stopTimer = () => {
         if (state.interval) {
@@ -182,16 +191,16 @@
         highlight();
         if (step?.seconds) {
           state.remaining = step.seconds;
-          timerLabel.textContent = `Step ${state.currentIndex + 1}: ${formatDuration(state.remaining)} remaining`;
+          timerLabel.textContent = `⏱️ ${formatDuration(state.remaining)} remaining`;
           state.interval = setInterval(() => {
             state.remaining -= 1;
             if (state.remaining <= 0) {
-              timerLabel.textContent = `Step ${state.currentIndex + 1}: done`;
+              timerLabel.textContent = "✅ Timer done";
               stopTimer();
               sendNotification(`${step.label} complete.`);
               return;
             }
-            timerLabel.textContent = `Step ${state.currentIndex + 1}: ${formatDuration(state.remaining)} remaining`;
+            timerLabel.textContent = `⏱️ ${formatDuration(state.remaining)} remaining`;
           }, 1000);
         } else {
           timerLabel.textContent = `Step ${state.currentIndex + 1}: no timer`;

@@ -162,11 +162,20 @@
       }
     };
 
+    const updateWorkflowControls = () => {
+      const step = workflowState.steps[workflowState.currentIndex];
+      const hasTimer = Boolean(step?.seconds);
+      if (workflowStart) {
+        workflowStart.disabled = !hasTimer;
+        workflowStart.classList.toggle("d-none", !hasTimer);
+      }
+    };
     const highlightWorkflow = () => {
       const items = workflowStepsContainer ? Array.from(workflowStepsContainer.querySelectorAll("li")) : [];
       items.forEach((item, idx) => {
         item.classList.toggle("fw-semibold", idx === workflowState.currentIndex);
       });
+      updateWorkflowControls();
     };
 
     const sendNotification = (message) => {
@@ -183,16 +192,16 @@
       highlightWorkflow();
       if (step?.seconds) {
         workflowState.remaining = step.seconds;
-        workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: ${formatDuration(workflowState.remaining)} remaining`;
+        workflowTimer.textContent = `⏱️ ${formatDuration(workflowState.remaining)} remaining`;
         workflowState.interval = setInterval(() => {
           workflowState.remaining -= 1;
           if (workflowState.remaining <= 0) {
-            workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: done`;
+            workflowTimer.textContent = "✅ Timer done";
             stopWorkflowTimer();
             sendNotification(`${step.label} complete.`);
             return;
           }
-          workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: ${formatDuration(workflowState.remaining)} remaining`;
+          workflowTimer.textContent = `⏱️ ${formatDuration(workflowState.remaining)} remaining`;
         }, 1000);
       } else {
         workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: no timer`;
