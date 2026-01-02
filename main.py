@@ -3961,6 +3961,20 @@ async def dismiss_notification(request: Request):
     db.close()
     return redirect(request.headers.get("referer") or "/")
 
+@app.get("/api/notifications")
+def api_notifications(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return JSONResponse({"alerts": []})
+    if row_get(user, "admin"):
+        alerts = collect_dosing_notifications(db, actor_user=user)
+    else:
+        alerts = collect_dosing_notifications(db, owner_user_id=user["id"], actor_user=user)
+    db.close()
+    return JSONResponse({"alerts": alerts})
+
 @app.get("/tanks/{tank_id}/add", response_class=HTMLResponse)
 def add_sample_form(request: Request, tank_id: int):
     db = get_db()
