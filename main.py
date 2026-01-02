@@ -296,11 +296,11 @@ def _tzinfo():
         return None
 
 def _to_local(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
     tz = _tzinfo()
     if tz is None:
         return dt
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=tz)
     return dt.astimezone(tz)
 
 def dtfmt(v: Any) -> str:
