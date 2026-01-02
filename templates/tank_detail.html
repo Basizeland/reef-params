@@ -585,7 +585,7 @@
              <span class="h3 mb-0 fw-bold">{{ val|fmt2 if val is not none else "-" }}</span>
              <span class="text-muted small">{{ p.unit }}</span>
           </div>
-          <div class="mt-2 d-flex flex-wrap gap-1">
+          <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
             {% if stability_score_by_param.get(p.name) is not none %}
               <span class="badge text-bg-light border">Stability {{ stability_score_by_param.get(p.name)|round(0)|int }}%</span>
             {% endif %}
@@ -594,6 +594,11 @@
             {% endif %}
             {% if overdue_by_param.get(p.id) %}
               <span class="badge text-bg-info">Overdue</span>
+            {% endif %}
+            {% if val is not none and target and target.target_low and val < target.target_low %}
+              <a class="btn btn-sm btn-outline-primary position-relative z-1" href="/tools/dose-plan?tank_id={{ tank.id }}&parameter={{ p.name|replace(' ', '%20') }}">
+                Plan dose
+              </a>
             {% endif %}
           </div>
         </div>
