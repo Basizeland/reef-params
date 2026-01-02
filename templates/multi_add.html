@@ -17,8 +17,8 @@
             <option value="{{ p.id }}" data-unit="{{ p.unit }}">{{ p.name }}</option>
           {% endfor %}
         </select>
-        <label class="form-label fw-bold mt-3">Value <span class="text-muted fw-normal" id="parameter-unit"></span></label>
-        <input type="number" step="any" name="value" class="form-control" id="value-input">
+        <label class="form-label fw-bold mt-3">Values <span class="text-muted fw-normal" id="parameter-unit"></span></label>
+        <div class="form-text">Enter a reading per tank. Leave blank to skip a tank.</div>
         <label class="form-label small mt-3">Test Kit</label>
         <select class="form-select form-select-sm" name="kit_id" id="kit-select">
           <option value="">Select kit (optional)</option>
@@ -35,23 +35,26 @@
             {% endfor %}
           {% endfor %}
         </select>
-        <div class="mt-2 d-none" id="kit-conversion">
-          <label class="form-label small">Syringe remaining (ml)</label>
-          <input class="form-control form-control-sm" name="remaining" inputmode="decimal" placeholder="e.g. 0.35" id="remaining-input">
-          <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
-        </div>
+        <div class="form-text mt-2">If your kit supports syringe conversion, the per-tank fields will appear below.</div>
       </div>
     </div>
     <div class="col-12 col-lg-6">
       <div class="card p-3 h-100">
         <label class="form-label fw-bold">Tanks</label>
-        <div class="form-text mb-2">Select one or more tanks to log this reading.</div>
-        <div class="d-flex flex-column gap-2">
+        <div class="form-text mb-2">Enter the value for each tank you tested.</div>
+        <div class="d-flex flex-column gap-3">
           {% for tank in tanks %}
-            <label class="form-check">
-              <input class="form-check-input" type="checkbox" name="tank_id" value="{{ tank.id }}">
-              <span class="form-check-label">{{ tank.name }}</span>
-            </label>
+            <div class="border rounded p-2">
+              <div class="fw-semibold">{{ tank.name }}</div>
+              <div class="mt-2">
+                <label class="form-label small">Value</label>
+                <input type="number" step="any" name="value_{{ tank.id }}" class="form-control form-control-sm tank-value" data-tank-id="{{ tank.id }}">
+              </div>
+              <div class="mt-2 d-none tank-remaining" data-tank-id="{{ tank.id }}">
+                <label class="form-label small">Syringe remaining (ml)</label>
+                <input class="form-control form-control-sm tank-remaining-input" name="remaining_{{ tank.id }}" inputmode="decimal" placeholder="e.g. 0.35" data-tank-id="{{ tank.id }}">
+              </div>
+            </div>
           {% endfor %}
         </div>
       </div>
@@ -79,10 +82,9 @@
     const kitSelect = document.getElementById("kit-select");
     const paramSelect = document.getElementById("parameter-select");
     const unitLabel = document.getElementById("parameter-unit");
-    const conversionBlock = document.getElementById("kit-conversion");
-    const remainingInput = document.getElementById("remaining-input");
-    const valueInput = document.getElementById("value-input");
     const options = Array.from(kitSelect.options);
+    const remainingBlocks = document.querySelectorAll(".tank-remaining");
+    const remainingInputs = document.querySelectorAll(".tank-remaining-input");
 
     const computeValue = (remaining, table) => {
       if (!table || !table.length || remaining === "" || remaining === null) return null;
@@ -116,26 +118,36 @@
         }
         opt.hidden = opt.dataset.param !== paramId;
       });
-      conversionBlock.classList.add("d-none");
-      remainingInput.value = "";
+      remainingBlocks.forEach((block) => block.classList.add("d-none"));
+      remainingInputs.forEach((input) => {
+        input.value = "";
+      });
     };
 
     const updateConversion = () => {
       const selected = kitSelect.options[kitSelect.selectedIndex];
       if (!selected) return;
       if (selected.dataset.conversion) {
-        conversionBlock.classList.remove("d-none");
+        remainingBlocks.forEach((block) => block.classList.remove("d-none"));
       } else {
-        conversionBlock.classList.add("d-none");
-        remainingInput.value = "";
+        remainingBlocks.forEach((block) => block.classList.add("d-none"));
+        remainingInputs.forEach((input) => {
+          input.value = "";
+        });
       }
     };
 
-    remainingInput.addEventListener("input", () => {
-      const kitId = kitSelect.value;
-      const table = conversionTables[kitId];
-      const value = computeValue(remainingInput.value, table);
-      valueInput.value = value === null ? "" : value.toFixed(2);
+    remainingInputs.forEach((input) => {
+      input.addEventListener("input", () => {
+        const kitId = kitSelect.value;
+        const table = conversionTables[kitId];
+        const value = computeValue(input.value, table);
+        const tankId = input.dataset.tankId;
+        const valueInput = document.querySelector(`.tank-value[data-tank-id="${tankId}"]`);
+        if (valueInput) {
+          valueInput.value = value === null ? "" : value.toFixed(2);
+        }
+      });
     });
 
     paramSelect.addEventListener("change", updateKits);

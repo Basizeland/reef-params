@@ -2099,14 +2099,11 @@ def multi_add_form(request: Request):
 @app.post("/tanks/multi-add")
 async def multi_add_save(request: Request):
     form = await request.form()
-    tank_ids = [int(tid) for tid in form.getlist("tank_id") if to_float(tid) is not None]
     param_id = to_float(form.get("parameter_id"))
-    value = to_float(form.get("value"))
-    remaining = to_float(form.get("remaining"))
     kit_id = to_float(form.get("kit_id"))
     notes = (form.get("notes") or "").strip() or None
     taken_at = (form.get("taken_at") or "").strip()
-    if not tank_ids or param_id is None:
+    if param_id is None:
         return redirect("/tanks/multi-add")
     db = get_db()
     user = get_current_user(db, request)
@@ -2115,17 +2112,14 @@ async def multi_add_save(request: Request):
     if not param:
         db.close()
         return redirect("/tanks/multi-add")
-    if value is None:
-        conv_type, conv_data = get_test_kit_conversion(db, int(kit_id) if kit_id else None)
-        if remaining is not None and conv_type == "syringe_remaining_ml" and conv_data:
-            try:
-                table = json.loads(conv_data)
-            except Exception:
-                table = []
-            value = compute_conversion_value(float(remaining), table)
-    if value is None:
-        db.close()
-        return redirect("/tanks/multi-add")
+    conv_type, conv_data = get_test_kit_conversion(db, int(kit_id) if kit_id else None)
+    if conv_type == "syringe_remaining_ml" and conv_data:
+        try:
+            conversion_table = json.loads(conv_data)
+        except Exception:
+            conversion_table = []
+    else:
+        conversion_table = []
     if taken_at:
         try:
             when_iso = datetime.fromisoformat(taken_at).isoformat()
@@ -2135,8 +2129,12 @@ async def multi_add_save(request: Request):
         when_iso = datetime.utcnow().isoformat()
     cur = db.cursor()
     saved_ids = []
-    for tank_id in tank_ids:
-        if allowed_ids and tank_id not in allowed_ids:
+    for tank_id in sorted(allowed_ids):
+        value = to_float(form.get(f"value_{tank_id}"))
+        remaining = to_float(form.get(f"remaining_{tank_id}"))
+        if value is None and remaining is not None and conversion_table:
+            value = compute_conversion_value(float(remaining), conversion_table)
+        if value is None:
             continue
         cur.execute(
             "INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)",
