@@ -52,8 +52,23 @@
                     <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-start">Start timer</button>
                     <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-next">Next step</button>
                     <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-reset">Reset</button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#workflowTimerModal">Open timer window</button>
                     <span class="small text-muted align-self-center" id="workflow-timer"></span>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal fade" id="workflowTimerModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title">Timer</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                  <div class="text-center display-5 fw-bold" id="workflow-timer-large">—</div>
+                  <div class="text-center text-muted mt-2" id="workflow-step-label">Start a step to begin the countdown.</div>
                 </div>
               </div>
             </div>
@@ -121,6 +136,8 @@
     const workflowBlock = document.getElementById("kit-workflow");
     const workflowStepsContainer = workflowBlock?.querySelector(".workflow-steps");
     const workflowTimer = document.getElementById("workflow-timer");
+    const workflowTimerLarge = document.getElementById("workflow-timer-large");
+    const workflowStepLabel = document.getElementById("workflow-step-label");
     const workflowStart = document.getElementById("workflow-start");
     const workflowNext = document.getElementById("workflow-next");
     const workflowReset = document.getElementById("workflow-reset");
@@ -193,18 +210,24 @@
       if (step?.seconds) {
         workflowState.remaining = step.seconds;
         workflowTimer.textContent = `⏱️ ${formatDuration(workflowState.remaining)} remaining`;
+        if (workflowTimerLarge) workflowTimerLarge.textContent = formatDuration(workflowState.remaining);
+        if (workflowStepLabel) workflowStepLabel.textContent = step.label || "Timer running";
         workflowState.interval = setInterval(() => {
           workflowState.remaining -= 1;
           if (workflowState.remaining <= 0) {
             workflowTimer.textContent = "✅ Timer done";
+            if (workflowTimerLarge) workflowTimerLarge.textContent = "Done";
             stopWorkflowTimer();
             sendNotification(`${step.label} complete.`);
             return;
           }
           workflowTimer.textContent = `⏱️ ${formatDuration(workflowState.remaining)} remaining`;
+          if (workflowTimerLarge) workflowTimerLarge.textContent = formatDuration(workflowState.remaining);
         }, 1000);
       } else {
         workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: no timer`;
+        if (workflowTimerLarge) workflowTimerLarge.textContent = "No timer";
+        if (workflowStepLabel) workflowStepLabel.textContent = step.label || "No timer";
       }
     };
 
@@ -214,6 +237,8 @@
       workflowState = { steps: steps || [], currentIndex: 0, interval: null, remaining: null };
       stopWorkflowTimer();
       workflowTimer.textContent = "";
+      if (workflowTimerLarge) workflowTimerLarge.textContent = "—";
+      if (workflowStepLabel) workflowStepLabel.textContent = "Start a step to begin the countdown.";
       if (!steps || !steps.length) {
         workflowBlock.classList.add("d-none");
         return;
@@ -293,6 +318,8 @@
         workflowState.currentIndex = Math.min(workflowState.currentIndex + 1, workflowState.steps.length - 1);
         highlightWorkflow();
         workflowTimer.textContent = "";
+        if (workflowTimerLarge) workflowTimerLarge.textContent = "—";
+        if (workflowStepLabel) workflowStepLabel.textContent = "Start a step to begin the countdown.";
       });
     }
     if (workflowReset) {
@@ -300,6 +327,8 @@
         stopWorkflowTimer();
         workflowState.currentIndex = 0;
         workflowTimer.textContent = "";
+        if (workflowTimerLarge) workflowTimerLarge.textContent = "—";
+        if (workflowStepLabel) workflowStepLabel.textContent = "Start a step to begin the countdown.";
         highlightWorkflow();
       });
     }

@@ -45,8 +45,23 @@
                       <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start timer</button>
                       <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
                       <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
+                      <button class="btn btn-outline-secondary btn-sm workflow-timer-open" type="button" data-bs-toggle="modal" data-bs-target="#workflowTimerModal-{{ p.id }}">Open timer window</button>
                       <span class="small text-muted align-self-center workflow-timer"></span>
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="modal fade" id="workflowTimerModal-{{ p.id }}" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                  <div class="modal-header">
+                    <h5 class="modal-title">Timer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body">
+                    <div class="text-center display-5 fw-bold workflow-timer-large">—</div>
+                    <div class="text-center text-muted mt-2 workflow-step-label">Start a step to begin the countdown.</div>
                   </div>
                 </div>
               </div>
@@ -127,6 +142,8 @@
       if (!wrapper) return;
       const stepsContainer = wrapper.querySelector(".workflow-steps");
       const timerLabel = wrapper.querySelector(".workflow-timer");
+      const timerLabelLarge = wrapper.querySelector(".workflow-timer-large");
+      const stepLabelLarge = wrapper.querySelector(".workflow-step-label");
       const startBtn = wrapper.querySelector(".workflow-start");
       const nextBtn = wrapper.querySelector(".workflow-next");
       const resetBtn = wrapper.querySelector(".workflow-reset");
@@ -134,6 +151,8 @@
         wrapper.classList.add("d-none");
         stepsContainer.innerHTML = "";
         timerLabel.textContent = "";
+        if (timerLabelLarge) timerLabelLarge.textContent = "—";
+        if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
         const state = workflowState.get(wrapper);
         if (state?.interval) {
           clearInterval(state.interval);
@@ -192,18 +211,24 @@
         if (step?.seconds) {
           state.remaining = step.seconds;
           timerLabel.textContent = `⏱️ ${formatDuration(state.remaining)} remaining`;
+          if (timerLabelLarge) timerLabelLarge.textContent = formatDuration(state.remaining);
+          if (stepLabelLarge) stepLabelLarge.textContent = step.label || "Timer running";
           state.interval = setInterval(() => {
             state.remaining -= 1;
             if (state.remaining <= 0) {
               timerLabel.textContent = "✅ Timer done";
+              if (timerLabelLarge) timerLabelLarge.textContent = "Done";
               stopTimer();
               sendNotification(`${step.label} complete.`);
               return;
             }
             timerLabel.textContent = `⏱️ ${formatDuration(state.remaining)} remaining`;
+            if (timerLabelLarge) timerLabelLarge.textContent = formatDuration(state.remaining);
           }, 1000);
         } else {
           timerLabel.textContent = `Step ${state.currentIndex + 1}: no timer`;
+          if (timerLabelLarge) timerLabelLarge.textContent = "No timer";
+          if (stepLabelLarge) stepLabelLarge.textContent = step.label || "No timer";
         }
       };
       startBtn.onclick = () => {
@@ -217,11 +242,15 @@
         state.currentIndex = Math.min(state.currentIndex + 1, steps.length - 1);
         highlight();
         timerLabel.textContent = "";
+        if (timerLabelLarge) timerLabelLarge.textContent = "—";
+        if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
       };
       resetBtn.onclick = () => {
         stopTimer();
         state.currentIndex = 0;
         timerLabel.textContent = "";
+        if (timerLabelLarge) timerLabelLarge.textContent = "—";
+        if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
         highlight();
       };
       highlight();
