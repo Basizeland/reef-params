@@ -37,15 +37,25 @@
         </select>
         <div class="form-text mt-2">If your kit supports syringe conversion, the per-tank fields will appear below.</div>
         <div class="mt-2 d-none" id="kit-workflow">
-          <div class="border rounded p-2 bg-light-subtle">
-            <div class="fw-semibold small text-uppercase">Test kit guide</div>
-            <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
-            <div class="workflow-steps"></div>
-            <div class="d-flex flex-wrap gap-2 mt-2">
-              <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-start">Start guide</button>
-              <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-next">Next step</button>
-              <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-reset">Reset</button>
-              <span class="small text-muted align-self-center" id="workflow-timer"></span>
+          <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#workflowModal">Open test kit guide</button>
+          <div class="modal fade" id="workflowModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title">Test kit guide</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                  <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
+                  <div class="workflow-steps"></div>
+                  <div class="d-flex flex-wrap gap-2 mt-2 align-items-center">
+                    <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-start">Start timer</button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-next">Next step</button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" id="workflow-reset">Reset</button>
+                    <span class="small text-muted align-self-center" id="workflow-timer"></span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -159,6 +169,12 @@
       });
     };
 
+    const sendNotification = (message) => {
+      if (!("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+      new Notification("Test kit timer", { body: message });
+    };
+
     const startWorkflowStep = (index) => {
       if (!workflowState.steps.length || !workflowStepsContainer) return;
       stopWorkflowTimer();
@@ -173,10 +189,7 @@
           if (workflowState.remaining <= 0) {
             workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: done`;
             stopWorkflowTimer();
-            if (workflowState.currentIndex < workflowState.steps.length - 1) {
-              workflowState.currentIndex += 1;
-              startWorkflowStep(workflowState.currentIndex);
-            }
+            sendNotification(`${step.label} complete.`);
             return;
           }
           workflowTimer.textContent = `Step ${workflowState.currentIndex + 1}: ${formatDuration(workflowState.remaining)} remaining`;
@@ -258,10 +271,20 @@
     paramSelect.addEventListener("change", updateKits);
     kitSelect.addEventListener("change", updateConversion);
     if (workflowStart) {
-      workflowStart.addEventListener("click", () => startWorkflowStep(workflowState.currentIndex));
+      workflowStart.addEventListener("click", () => {
+        if (Notification.permission === "default") {
+          Notification.requestPermission().finally(() => startWorkflowStep(workflowState.currentIndex));
+          return;
+        }
+        startWorkflowStep(workflowState.currentIndex);
+      });
     }
     if (workflowNext) {
-      workflowNext.addEventListener("click", () => startWorkflowStep(workflowState.currentIndex + 1));
+      workflowNext.addEventListener("click", () => {
+        workflowState.currentIndex = Math.min(workflowState.currentIndex + 1, workflowState.steps.length - 1);
+        highlightWorkflow();
+        workflowTimer.textContent = "";
+      });
     }
     if (workflowReset) {
       workflowReset.addEventListener("click", () => {

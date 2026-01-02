@@ -28,15 +28,27 @@
             <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
           </div>
           <div class="mt-2 kit-workflow d-none" data-param-id="{{ p.id }}">
-            <div class="border rounded p-2 bg-light-subtle">
-              <div class="fw-semibold small text-uppercase">Test kit guide</div>
-              <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
-              <div class="workflow-steps"></div>
-              <div class="d-flex flex-wrap gap-2 mt-2">
-                <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start guide</button>
-                <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
-                <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
-                <span class="small text-muted align-self-center workflow-timer"></span>
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-outline-secondary btn-sm workflow-open" type="button" data-bs-toggle="modal" data-bs-target="#workflowModal-{{ p.id }}">Open test kit guide</button>
+            </div>
+            <div class="modal fade" id="workflowModal-{{ p.id }}" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                  <div class="modal-header">
+                    <h5 class="modal-title">Test kit guide</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body">
+                    <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
+                    <div class="workflow-steps"></div>
+                    <div class="d-flex flex-wrap gap-2 mt-2 align-items-center">
+                      <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start timer</button>
+                      <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
+                      <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
+                      <span class="small text-muted align-self-center workflow-timer"></span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -158,6 +170,11 @@
           state.interval = null;
         }
       };
+      const sendNotification = (message) => {
+        if (!("Notification" in window)) return;
+        if (Notification.permission !== "granted") return;
+        new Notification("Test kit timer", { body: message });
+      };
       const startStep = (index) => {
         stopTimer();
         state.currentIndex = Math.max(0, Math.min(index, steps.length - 1));
@@ -171,10 +188,7 @@
             if (state.remaining <= 0) {
               timerLabel.textContent = `Step ${state.currentIndex + 1}: done`;
               stopTimer();
-              if (state.currentIndex < steps.length - 1) {
-                state.currentIndex += 1;
-                startStep(state.currentIndex);
-              }
+              sendNotification(`${step.label} complete.`);
               return;
             }
             timerLabel.textContent = `Step ${state.currentIndex + 1}: ${formatDuration(state.remaining)} remaining`;
@@ -183,8 +197,18 @@
           timerLabel.textContent = `Step ${state.currentIndex + 1}: no timer`;
         }
       };
-      startBtn.onclick = () => startStep(state.currentIndex);
-      nextBtn.onclick = () => startStep(state.currentIndex + 1);
+      startBtn.onclick = () => {
+        if (Notification.permission === "default") {
+          Notification.requestPermission().finally(() => startStep(state.currentIndex));
+          return;
+        }
+        startStep(state.currentIndex);
+      };
+      nextBtn.onclick = () => {
+        state.currentIndex = Math.min(state.currentIndex + 1, steps.length - 1);
+        highlight();
+        timerLabel.textContent = "";
+      };
       resetBtn.onclick = () => {
         stopTimer();
         state.currentIndex = 0;
