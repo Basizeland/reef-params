@@ -17,18 +17,11 @@
             <div id="dosing-rows" class="d-grid gap-3" data-tank-volume="{{ tank.volume_l or '' }}">
               {% for entry in dosing_entries %}
                 <div class="row g-2 align-items-end dosing-row">
-                  <div class="col-12 col-md-3">
-                    <label class="form-label fw-bold">Type</label>
-                    <select class="form-select dosing-type" name="dosing_type[]">
-                      {% for option in dosing_type_options %}
-                        <option value="{{ option.key }}" {% if entry.type_key == option.key %}selected{% endif %}>{{ option.label }}</option>
-                      {% endfor %}
-                    </select>
-                  </div>
-                  <div class="col-12 col-md-3">
+                  <div class="col-12 col-md-4">
                     <label class="form-label fw-bold">Additive</label>
                     <select class="form-select dosing-solution" name="dosing_solution[]">
                       <option value="">Select additive</option>
+                      <option value="NoPox" data-parameter="NoPox" {% if entry.solution == "NoPox" %}selected{% endif %}>NoPox</option>
                       {% for additive in additives %}
                         <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}" {% if entry.solution == additive.name %}selected{% endif %}>
                           {{ additive|additive_label }}
@@ -52,18 +45,11 @@
                 </div>
               {% endfor %}
               <div class="row g-2 align-items-end dosing-row">
-                <div class="col-12 col-md-3">
-                  <label class="form-label fw-bold">Type</label>
-                  <select class="form-select dosing-type" name="dosing_type[]">
-                    {% for option in dosing_type_options %}
-                      <option value="{{ option.key }}">{{ option.label }}</option>
-                    {% endfor %}
-                  </select>
-                </div>
-                <div class="col-12 col-md-3">
+                <div class="col-12 col-md-4">
                   <label class="form-label fw-bold">Additive</label>
                   <select class="form-select dosing-solution" name="dosing_solution[]">
                     <option value="">Select additive</option>
+                    <option value="NoPox" data-parameter="NoPox">NoPox</option>
                     {% for additive in additives %}
                       <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}">{{ additive|additive_label }}</option>
                     {% endfor %}
@@ -127,40 +113,12 @@
   const dosingRowsContainer = document.getElementById('dosing-rows');
   const addDosingRowButton = document.getElementById('addDosingRow');
 
-  function filterAdditives(row) {
-    const typeSelect = row.querySelector('.dosing-type');
-    const solutionSelect = row.querySelector('.dosing-solution');
-    if (!typeSelect || !solutionSelect) return;
-    const typeValue = typeSelect.value;
-    const typeLabel = typeSelect.options[typeSelect.selectedIndex]?.textContent || '';
-    const isNoPox = typeValue === 'nopox';
-    solutionSelect.disabled = isNoPox;
-    if (isNoPox) {
-      solutionSelect.value = '';
-    }
-    const normalizedType = typeLabel.toLowerCase().replace(/[^a-z0-9]+/g, '');
-    const options = Array.from(solutionSelect.options).filter((option) => option.value);
-    const hasMatch = options.some((option) => {
-      const optionParam = (option.dataset.parameter || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-      return optionParam && optionParam === normalizedType;
-    });
-    options.forEach((option) => {
-      const optionParam = (option.dataset.parameter || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-      option.hidden = hasMatch && optionParam && optionParam !== normalizedType;
-    });
-  }
-
   function wireDosingRow(row) {
     const removeButton = row.querySelector('.remove-dosing-row');
-    const typeSelect = row.querySelector('.dosing-type');
     if (removeButton) {
       removeButton.addEventListener('click', () => {
         row.remove();
       });
-    }
-    if (typeSelect) {
-      typeSelect.addEventListener('change', () => filterAdditives(row));
-      filterAdditives(row);
     }
   }
 

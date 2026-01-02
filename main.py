@@ -1831,7 +1831,6 @@ def logout(request: Request):
 
 @app.get("/account", response_class=HTMLResponse)
 def account_settings(request: Request):
-    db = get_db()
     user = get_current_user(db, request)
     if not user:
         db.close()
@@ -3182,11 +3181,12 @@ def tank_dosing_settings(request: Request, tank_id: int):
     for key, (label, solution_col, daily_col, container_col, remaining_col) in type_map.items():
         daily_val = row_get(profile, daily_col) if profile else None
         solution_val = row_get(profile, solution_col) if solution_col and profile else None
+        if key == "nopox" and daily_val is not None and not solution_val:
+            solution_val = "NoPox"
         if daily_val is None and not solution_val:
             continue
         dosing_entries_view.append(
             {
-                "type_key": key,
                 "label": label,
                 "solution": solution_val or "",
                 "daily_ml": daily_val,
@@ -3194,13 +3194,10 @@ def tank_dosing_settings(request: Request, tank_id: int):
                 "remaining_ml": row_get(profile, remaining_col) if profile else None,
             }
         )
-    type_key_by_label = {v[0].lower(): k for k, v in type_map.items()}
     for entry in extra_dosing_entries:
         label = (row_get(entry, "parameter") or "").strip()
-        key = type_key_by_label.get(label.lower(), "trace")
         dosing_entries_view.append(
             {
-                "type_key": key,
                 "label": label or "Trace Elements",
                 "solution": row_get(entry, "solution") or "",
                 "daily_ml": row_get(entry, "daily_ml"),
@@ -3208,7 +3205,6 @@ def tank_dosing_settings(request: Request, tank_id: int):
                 "remaining_ml": row_get(entry, "remaining_ml"),
             }
         )
-    dosing_type_options = [{"key": key, "label": label} for key, (label, *_rest) in type_map.items()]
     return templates.TemplateResponse(
         "dosing_settings.html",
         {
@@ -3219,7 +3215,6 @@ def tank_dosing_settings(request: Request, tank_id: int):
             "suggested_dosing": suggested_dosing,
             "param_limits": param_limits,
             "dosing_entries": dosing_entries_view,
-            "dosing_type_options": dosing_type_options,
         },
     )
 
@@ -3227,7 +3222,6 @@ def tank_dosing_settings(request: Request, tank_id: int):
 async def tank_dosing_settings_save(request: Request, tank_id: int):
     form = await request.form()
     dosing_mode = (form.get("dosing_mode") or "").strip() or None
-    entry_types = form.getlist("dosing_type[]")
     entry_solutions = form.getlist("dosing_solution[]")
     entry_daily_ml = form.getlist("dosing_daily_ml[]")
     entry_container_ml = form.getlist("dosing_container_ml[]")
@@ -3246,14 +3240,44 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         "trace": ("Trace Elements", "trace_solution", "trace_daily_ml", "trace_container_ml", "trace_remaining_ml", "use_trace"),
         "nopox": ("NoPox", None, "nopox_daily_ml", "nopox_container_ml", "nopox_remaining_ml", "use_nopox"),
     }
+    db = get_db()
+    additives_by_name = {
+        row_get(row, "name"): row for row in q(db, "SELECT name, parameter, group_name FROM additives")
+    }
+
+    def type_key_for_additive(solution_name: str) -> str | None:
+        if not solution_name:
+            return None
+        if solution_name == "NoPox":
+            return "nopox"
+        additive = additives_by_name.get(solution_name)
+        if not additive:
+            return None
+        group_name = (row_get(additive, "group_name") or "").lower()
+        if "all-in-one" in group_name or "all in one" in group_name:
+            return "all_in_one"
+        parameter = (row_get(additive, "parameter") or "").lower()
+        if "alk" in parameter or "kh" in parameter:
+            return "alk"
+        if "calcium" in parameter or parameter == "ca":
+            return "ca"
+        if "magnesium" in parameter or parameter == "mg":
+            return "mg"
+        if "nitrate" in parameter or "no3" in parameter:
+            return "nitrate"
+        if "phosphate" in parameter or "po4" in parameter:
+            return "phosphate"
+        if "trace" in parameter:
+            return "trace"
+        return "all_in_one"
     primary_entries = {}
     extra_entries = []
-    for idx, type_key in enumerate(entry_types):
-        type_key = (type_key or "").strip()
-        if type_key not in type_config:
+    for idx, solution in enumerate(entry_solutions):
+        solution = (solution or "").strip()
+        type_key = type_key_for_additive(solution)
+        if not type_key or type_key not in type_config:
             continue
         _, solution_col, daily_col, container_col, remaining_col, _ = type_config[type_key]
-        solution = (entry_solutions[idx] or "").strip() if idx < len(entry_solutions) else ""
         daily_val = to_float(entry_daily_ml[idx]) if idx < len(entry_daily_ml) else None
         if daily_val is None:
             continue
