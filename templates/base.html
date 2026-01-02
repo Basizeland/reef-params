@@ -131,6 +131,7 @@
                                         <i class="bi bi-database"></i> Data Center
                                     </a>
                                 </li>
+                                <li><a class="dropdown-item" href="/settings/system"><i class="bi bi-gear"></i> System Settings</a></li>
                                 <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people"></i> Users</a></li>
                                 <li><a class="dropdown-item" href="/admin/audit"><i class="bi bi-journal-text"></i> Audit Log</a></li>
                             {% else %}
@@ -192,8 +193,8 @@
                         <li class="dropdown-item">
                             <div class="d-flex align-items-center justify-content-between gap-2">
                                 <div>
-                                    <div class="fw-semibold small">Browser alerts</div>
-                                    <div class="text-muted small">Show dosing alerts as notifications.</div>
+                                    <div class="fw-semibold small">Push alerts</div>
+                                    <div class="text-muted small">Enable browser push notifications.</div>
                                 </div>
                                 <button class="btn btn-sm btn-outline-primary" type="button" id="enable-browser-alerts">
                                     <span id="browser-alerts-status">Off</span>
@@ -423,53 +424,64 @@
         document.addEventListener("DOMContentLoaded", () => {
             const toggleBtn = document.getElementById("enable-browser-alerts");
             const statusLabel = document.getElementById("browser-alerts-status");
-            const storageKey = "reef-browser-alerts";
-            const seenKey = "reef-browser-alerts-seen";
-
-            const updateStatus = () => {
+            const updateStatus = async () => {
                 if (!statusLabel) return;
-                const enabled = localStorage.getItem(storageKey) === "true";
-                statusLabel.textContent = enabled ? "On" : "Off";
-            };
-
-            const setEnabled = (enabled) => {
-                localStorage.setItem(storageKey, enabled ? "true" : "false");
-                updateStatus();
-            };
-
-            const notify = (alert) => {
-                if (!("Notification" in window)) return;
-                const title = alert?.tank_name ? `${alert.tank_name}: ${alert.label}` : alert?.label || "Dosing alert";
-                const body = alert?.days !== undefined
-                    ? `${alert.days.toFixed(1)} days remaining (≤ ${alert.threshold}).`
-                    : "Dosing alert";
-                new Notification(title, { body });
-            };
-
-            const pollAlerts = async () => {
-                if (!("Notification" in window)) return;
-                if (localStorage.getItem(storageKey) !== "true") return;
-                if (Notification.permission !== "granted") return;
-                try {
-                    const response = await fetch("/api/notifications", { credentials: "same-origin" });
-                    if (!response.ok) return;
-                    const payload = await response.json();
-                    const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
-                    const seen = JSON.parse(localStorage.getItem(seenKey) || "{}");
-                    alerts.forEach((alert) => {
-                        const key = `${alert.tank_id}-${alert.container_key}`;
-                        if (seen[key] === alert.notified_on) {
-                            return;
-                        }
-                        seen[key] = alert.notified_on;
-                        notify(alert);
-                    });
-                    localStorage.setItem(seenKey, JSON.stringify(seen));
-                } catch (err) {
-                    // ignore
+                if (!("serviceWorker" in navigator)) {
+                    statusLabel.textContent = "Unsupported";
+                    if (toggleBtn) toggleBtn.disabled = true;
+                    return;
                 }
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.getSubscription();
+                statusLabel.textContent = subscription ? "On" : "Off";
             };
-
+            const urlBase64ToUint8Array = (base64String) => {
+                const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+                const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+                const rawData = atob(base64);
+                const outputArray = new Uint8Array(rawData.length);
+                for (let i = 0; i < rawData.length; i += 1) {
+                    outputArray[i] = rawData.charCodeAt(i);
+                }
+                return outputArray;
+            };
+            const getPublicKey = async () => {
+                const response = await fetch("/api/push/public-key");
+                if (!response.ok) return null;
+                const data = await response.json();
+                return data.public_key || null;
+            };
+            const subscribePush = async () => {
+                if (!("serviceWorker" in navigator)) return;
+                const publicKey = await getPublicKey();
+                if (!publicKey) {
+                    alert("Push notifications are not configured on the server.");
+                    return;
+                }
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(publicKey),
+                });
+                await fetch("/api/push/subscribe", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(subscription),
+                });
+            };
+            const unsubscribePush = async () => {
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.getSubscription();
+                if (!subscription) return;
+                await fetch("/api/push/unsubscribe", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ endpoint: subscription.endpoint }),
+                });
+                await subscription.unsubscribe();
+            };
             if (toggleBtn) {
                 toggleBtn.addEventListener("click", async () => {
                     if (!("Notification" in window)) {
@@ -477,14 +489,21 @@
                         return;
                     }
                     const permission = await Notification.requestPermission();
-                    setEnabled(permission === "granted");
-                    pollAlerts();
+                    if (permission !== "granted") {
+                        await updateStatus();
+                        return;
+                    }
+                    const registration = await navigator.serviceWorker.ready;
+                    const subscription = await registration.pushManager.getSubscription();
+                    if (subscription) {
+                        await unsubscribePush();
+                    } else {
+                        await subscribePush();
+                    }
+                    await updateStatus();
                 });
             }
-
             updateStatus();
-            pollAlerts();
-            setInterval(pollAlerts, 5 * 60 * 1000);
         });
     </script>
 </body>

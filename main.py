@@ -3,7 +3,7 @@ import sqlite3
 import re
 import math
 import json
-import time
+import time as time_module
 import shutil
 import secrets
 import hashlib
@@ -16,11 +16,12 @@ import smtplib
 import threading
 from email.message import EmailMessage
 from io import BytesIO
-from datetime import datetime, date, time, timedelta, timezone
+from datetime import datetime, date, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
+from pywebpush import webpush, WebPushException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
@@ -313,6 +314,65 @@ def oauth_cookie_settings(request: Request) -> Dict[str, Any]:
     secure = parsed.scheme == "https"
     return {"domain": domain, "secure": secure}
 
+def get_vapid_settings() -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    public_key = os.environ.get("VAPID_PUBLIC_KEY")
+    private_key = os.environ.get("VAPID_PRIVATE_KEY")
+    subject = os.environ.get("VAPID_SUBJECT", "mailto:admin@reefmetrics.app")
+    if not public_key or not private_key:
+        return None, None, None
+    return public_key, private_key, subject
+
+def send_web_push(db: sqlite3.Connection, user_ids: List[int], payload: Dict[str, Any]) -> None:
+    public_key, private_key, subject = get_vapid_settings()
+    if not public_key or not private_key or not subject:
+        return
+    if not user_ids:
+        return
+    rows = q(
+        db,
+        "SELECT id, endpoint, subscription_json FROM push_subscriptions WHERE user_id IN ({})".format(
+            ",".join("?" for _ in user_ids)
+        ),
+        tuple(user_ids),
+    )
+    if not rows:
+        return
+    for row in rows:
+        subscription_info = None
+        try:
+            subscription_info = json.loads(row["subscription_json"])
+        except Exception:
+            subscription_info = None
+        if not subscription_info:
+            db.execute("DELETE FROM push_subscriptions WHERE id=?", (row["id"],))
+            continue
+        try:
+            webpush(
+                subscription_info=subscription_info,
+                data=json.dumps(payload),
+                vapid_private_key=private_key,
+                vapid_claims={"sub": subject},
+            )
+        except WebPushException:
+            db.execute("DELETE FROM push_subscriptions WHERE id=?", (row["id"],))
+    db.commit()
+
+def get_tank_recipient_ids(db: sqlite3.Connection, tank_id: int) -> List[int]:
+    rows = q(
+        db,
+        """SELECT DISTINCT u.id
+           FROM tanks t
+           LEFT JOIN user_tanks ut ON ut.tank_id = t.id
+           LEFT JOIN users u ON u.id = ut.user_id
+           WHERE t.id=?""",
+        (tank_id,),
+    )
+    owner = one(db, "SELECT owner_user_id FROM tanks WHERE id=?", (tank_id,))
+    recipient_ids = {row["id"] for row in rows if row.get("id") is not None}
+    if owner and owner.get("owner_user_id"):
+        recipient_ids.add(owner["owner_user_id"])
+    return sorted(recipient_ids)
+
 def dtfmt(v: Any) -> str:
     dt = parse_dt_any(v) if not isinstance(v, datetime) else v
     if dt is None: return ""
@@ -505,6 +565,18 @@ def collect_dosing_notifications(
                         },
                     )
                     db.commit()
+                    tank_id_value = int(row_get(row, "tank_id"))
+                    recipients = get_tank_recipient_ids(db, tank_id_value)
+                    send_web_push(
+                        db,
+                        recipients,
+                        {
+                            "title": f"{row_get(row, 'tank_name')}: {label}",
+                            "body": f"{days_remaining:.1f} days remaining (≤ {threshold_days})",
+                            "url": f"/tanks/{tank_id_value}",
+                            "tag": f"dosing-{tank_id_value}-{key}-{today}",
+                        },
+                    )
         for entry in extra_by_tank.get(int(row_get(row, "tank_id")), []):
             container_ml = row_get(entry, "container_ml")
             if container_ml is None:
@@ -553,6 +625,18 @@ def collect_dosing_notifications(
                         },
                     )
                     db.commit()
+                    tank_id_value = int(row_get(row, "tank_id"))
+                    recipients = get_tank_recipient_ids(db, tank_id_value)
+                    send_web_push(
+                        db,
+                        recipients,
+                        {
+                            "title": f"{row_get(row, 'tank_name')}: {solution_name}",
+                            "body": f"{days_remaining:.1f} days remaining (≤ {threshold_days})",
+                            "url": f"/tanks/{tank_id_value}",
+                            "tag": f"dosing-{tank_id_value}-{key}-{today}",
+                        },
+                    )
     return notifications
 
 def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, Any]:
@@ -831,7 +915,7 @@ def start_daily_summary_scheduler() -> None:
                 send_summaries_if_due()
             except Exception:
                 pass
-            time.sleep(3600)
+            time_module.sleep(3600)
     thread = threading.Thread(target=_loop, daemon=True)
     thread.start()
 
@@ -1009,7 +1093,7 @@ def execute_with_retry(cur: sqlite3.Cursor, sql: str, params: Tuple[Any, ...] = 
         except sqlite3.OperationalError as exc:
             if "locked" not in str(exc).lower() or idx == attempts - 1:
                 raise
-            time.sleep(0.2 * (idx + 1))
+            time_module.sleep(0.2 * (idx + 1))
 
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -1098,7 +1182,7 @@ def get_active_param_defs(db: sqlite3.Connection) -> List[sqlite3.Row]:
 def parse_dt_any(v):
     if v is None: return None
     if isinstance(v, datetime): return v
-    if isinstance(v, date) and not isinstance(v, datetime): return datetime.combine(v, time.min)
+    if isinstance(v, date) and not isinstance(v, datetime): return datetime.combine(v, datetime_time.min)
     if isinstance(v, (int, float)):
         ts = float(v)
         if ts > 1e12: ts = ts / 1000.0
@@ -1540,6 +1624,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL, FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_id, endpoint), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
@@ -3995,6 +4080,173 @@ def api_notifications(request: Request):
     db.close()
     return JSONResponse({"alerts": alerts})
 
+@app.get("/api/push/public-key")
+def push_public_key():
+    public_key, _, _ = get_vapid_settings()
+    if not public_key:
+        raise HTTPException(status_code=404, detail="Push notifications not configured.")
+    return JSONResponse({"public_key": public_key})
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    endpoint = payload.get("endpoint") if isinstance(payload, dict) else None
+    if not endpoint:
+        db.close()
+        raise HTTPException(status_code=400, detail="Missing subscription endpoint")
+    try:
+        db.execute(
+            "INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, subscription_json, created_at) VALUES (?, ?, ?, ?)",
+            (user["id"], endpoint, json.dumps(payload), datetime.utcnow().isoformat()),
+        )
+        db.commit()
+    finally:
+        db.close()
+    return JSONResponse({"ok": True})
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    endpoint = payload.get("endpoint") if isinstance(payload, dict) else None
+    if not endpoint:
+        db.close()
+        raise HTTPException(status_code=400, detail="Missing subscription endpoint")
+    try:
+        db.execute(
+            "DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?",
+            (user["id"], endpoint),
+        )
+        db.commit()
+    finally:
+        db.close()
+    return JSONResponse({"ok": True})
+
+@app.get("/api/tanks/{tank_id}/summary")
+def tank_summary(request: Request, tank_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    latest_map = get_latest_per_parameter(db, tank_id)
+    unit_by_name = {p["name"]: row_get(p, "unit") or "" for p in get_active_param_defs(db)}
+    latest_values = []
+    for name, data in latest_map.items():
+        taken_at = data.get("taken_at")
+        latest_values.append(
+            {
+                "parameter": name,
+                "value": data.get("value"),
+                "unit": unit_by_name.get(name, ""),
+                "taken_at": taken_at.isoformat() if isinstance(taken_at, datetime) else taken_at,
+                "sample_id": data.get("sample_id"),
+            }
+        )
+    profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    extra_entries = q(
+        db,
+        "SELECT id, parameter, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE tank_id=? AND active=1 ORDER BY id",
+        (tank_id,),
+    )
+    db.close()
+    dosing_entries = []
+    if profile:
+        dosing_entries = [
+            {
+                "key": "all_in_one",
+                "solution": row_get(profile, "all_in_one_solution"),
+                "daily_ml": row_get(profile, "all_in_one_daily_ml"),
+                "container_ml": row_get(profile, "all_in_one_container_ml"),
+                "remaining_ml": row_get(profile, "all_in_one_remaining_ml"),
+            },
+            {
+                "key": "alk",
+                "solution": row_get(profile, "alk_solution"),
+                "daily_ml": row_get(profile, "alk_daily_ml"),
+                "container_ml": row_get(profile, "alk_container_ml"),
+                "remaining_ml": row_get(profile, "alk_remaining_ml"),
+            },
+            {
+                "key": "kalk",
+                "solution": row_get(profile, "kalk_solution"),
+                "daily_ml": row_get(profile, "kalk_daily_ml"),
+                "container_ml": row_get(profile, "kalk_container_ml"),
+                "remaining_ml": row_get(profile, "kalk_remaining_ml"),
+            },
+            {
+                "key": "ca",
+                "solution": row_get(profile, "ca_solution"),
+                "daily_ml": row_get(profile, "ca_daily_ml"),
+                "container_ml": row_get(profile, "ca_container_ml"),
+                "remaining_ml": row_get(profile, "ca_remaining_ml"),
+            },
+            {
+                "key": "mg",
+                "solution": row_get(profile, "mg_solution"),
+                "daily_ml": row_get(profile, "mg_daily_ml"),
+                "container_ml": row_get(profile, "mg_container_ml"),
+                "remaining_ml": row_get(profile, "mg_remaining_ml"),
+            },
+            {
+                "key": "nitrate",
+                "solution": row_get(profile, "nitrate_solution"),
+                "daily_ml": row_get(profile, "nitrate_daily_ml"),
+                "container_ml": row_get(profile, "nitrate_container_ml"),
+                "remaining_ml": row_get(profile, "nitrate_remaining_ml"),
+            },
+            {
+                "key": "phosphate",
+                "solution": row_get(profile, "phosphate_solution"),
+                "daily_ml": row_get(profile, "phosphate_daily_ml"),
+                "container_ml": row_get(profile, "phosphate_container_ml"),
+                "remaining_ml": row_get(profile, "phosphate_remaining_ml"),
+            },
+            {
+                "key": "trace",
+                "solution": row_get(profile, "trace_solution"),
+                "daily_ml": row_get(profile, "trace_daily_ml"),
+                "container_ml": row_get(profile, "trace_container_ml"),
+                "remaining_ml": row_get(profile, "trace_remaining_ml"),
+            },
+            {
+                "key": "nopox",
+                "solution": row_get(profile, "nopox_solution"),
+                "daily_ml": row_get(profile, "nopox_daily_ml"),
+                "container_ml": row_get(profile, "nopox_container_ml"),
+                "remaining_ml": row_get(profile, "nopox_remaining_ml"),
+            },
+        ]
+    dosing_entries = [entry for entry in dosing_entries if entry.get("daily_ml") or entry.get("container_ml") or entry.get("remaining_ml")]
+    extra_payload = [
+        {
+            "key": f"extra_{row_get(entry, 'id')}",
+            "solution": row_get(entry, "solution") or row_get(entry, "parameter"),
+            "daily_ml": row_get(entry, "daily_ml"),
+            "container_ml": row_get(entry, "container_ml"),
+            "remaining_ml": row_get(entry, "remaining_ml"),
+        }
+        for entry in extra_entries
+    ]
+    return JSONResponse(
+        {
+            "tank": {"id": tank_id, "name": row_get(tank, "name")},
+            "latest_readings": latest_values,
+            "dosing_entries": dosing_entries,
+            "extra_dosing_entries": extra_payload,
+        }
+    )
+
 @app.get("/tanks/{tank_id}/add", response_class=HTMLResponse)
 def add_sample_form(request: Request, tank_id: int):
     db = get_db()
@@ -4557,6 +4809,26 @@ def test_kits(request: Request):
     rows = q(db, "SELECT * FROM test_kits ORDER BY parameter, name")
     db.close()
     return templates.TemplateResponse("test_kits.html", {"request": request, "kits": rows})
+
+@app.get("/settings/system", response_class=HTMLResponse)
+def system_settings(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    base_url = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or f"{base_url.rstrip('/')}/auth/google/callback"
+    vapid_public, _, _ = get_vapid_settings()
+    db.close()
+    return templates.TemplateResponse(
+        "system_settings.html",
+        {
+            "request": request,
+            "base_url": base_url,
+            "google_client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+            "google_redirect_uri": redirect_uri,
+            "vapid_public_key": vapid_public,
+        },
+    )
 
 @app.get("/settings/test-kits/new", response_class=HTMLResponse)
 @app.get("/settings/test-kits/new/", response_class=HTMLResponse, include_in_schema=False)
