@@ -612,9 +612,6 @@
   <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0 fw-bold">Trend Analysis</h5>
     <div class="d-flex align-items-center gap-2 flex-wrap">
-      <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/targets">
-        <i class="bi bi-sliders"></i> Edit Target Range
-      </a>
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% for p in params %}
           {% set param_key = p.key %}
@@ -630,20 +627,15 @@
       </div>
       <div class="text-muted small">Compare up to 3 parameters at once.</div>
     </div>
+    <a class="btn btn-outline-secondary btn-sm ms-auto" href="/tanks/{{ tank.id }}/targets">
+      <i class="bi bi-sliders"></i> Edit Target Range
+    </a>
   </div>
   <div class="card-body">
     <div style="height: 350px;">
       <canvas id="historyChart"></canvas>
     </div>
-    <div class="d-flex flex-wrap justify-content-center gap-3 text-muted small mt-3" id="historyStats" aria-live="polite">
-      <div class="d-flex align-items-center gap-2">
-        <span class="rounded-circle" style="width:10px; height:10px; background: var(--stat-color, #6c757d);"></span>
-        <span class="fw-semibold text-dark" data-stat="label">—</span>
-      </div>
-      <div><span class="fw-semibold text-dark">Min:</span> <span data-stat="min">—</span></div>
-      <div><span class="fw-semibold text-dark">Median:</span> <span data-stat="median">—</span></div>
-      <div><span class="fw-semibold text-dark">Max:</span> <span data-stat="max">—</span></div>
-    </div>
+    <div class="d-flex flex-column gap-2 text-muted small mt-3" id="historyStats" aria-live="polite"></div>
   </div>
 </div>
 
@@ -741,6 +733,7 @@
           const targets = {{ chart_targets_map|tojson|safe }};
           const paramsMeta = {{ params|tojson|safe }};
           const doseLogEvents = {{ dose_log_events|tojson|safe }};
+          const stabilityScores = {{ stability_score_by_param|tojson|safe }};
           const ctx = document.getElementById('historyChart');
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
           const showDoseToggle = document.getElementById('toggle-dose-events');
@@ -772,6 +765,12 @@
           if (Array.isArray(paramsMeta)) {
             paramsMeta.forEach((param) => {
               unitsByKey[normalizeKey(param.name)] = param.unit || '';
+            });
+          }
+          const stabilityByKey = {};
+          if (stabilityScores) {
+            Object.keys(stabilityScores).forEach((key) => {
+              stabilityByKey[normalizeKey(key)] = stabilityScores[key];
             });
           }
 
@@ -979,6 +978,12 @@
             return checked.slice(0, 3);
           }
 
+          function formatNumber(value) {
+            if (value === null || typeof value === 'undefined') return '—';
+            if (typeof value !== 'number') return value;
+            return value.toFixed(2);
+          }
+
           function renderChart() {
             const selected = selectedParams();
             const labels = buildLabels(selected);
@@ -986,12 +991,6 @@
             const datasets = buildDatasets(selected, labels, unitToAxis);
             const annotations = buildAnnotations(selected);
             const statsEl = document.getElementById('historyStats');
-            const statValues = statsEl ? {
-              min: statsEl.querySelector('[data-stat="min"]'),
-              median: statsEl.querySelector('[data-stat="median"]'),
-              max: statsEl.querySelector('[data-stat="max"]'),
-              label: statsEl.querySelector('[data-stat="label"]')
-            } : null;
 
             if (!labels.length || datasets.length === 0) {
               const c = ctx.getContext('2d');
@@ -1000,37 +999,42 @@
               c.fillStyle = "#6c757d";
               c.textAlign = "center";
               c.fillText("No data available for these parameters.", ctx.width / 2, ctx.height / 2);
-              if (statValues) {
-                statValues.min.textContent = '—';
-                statValues.median.textContent = '—';
-                statValues.max.textContent = '—';
-                statValues.label.textContent = '—';
-                statsEl.style.setProperty('--stat-color', '#6c757d');
+              if (statsEl) {
+                statsEl.innerHTML = '<div>—</div>';
               }
               return;
             }
 
-            if (statValues) {
-              const primaryDataset = datasets[0];
-              const values = (primaryDataset?.data || []).filter((v) => v !== null && typeof v !== 'undefined');
-              if (values.length) {
-                const sorted = [...values].sort((a, b) => a - b);
-                const min = sorted[0];
-                const max = sorted[sorted.length - 1];
-                const mid = Math.floor(sorted.length / 2);
-                const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-                statValues.min.textContent = min.toFixed(2);
-                statValues.median.textContent = median.toFixed(2);
-                statValues.max.textContent = max.toFixed(2);
-                statValues.label.textContent = primaryDataset?.label || '—';
-                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
-              } else {
-                statValues.min.textContent = '—';
-                statValues.median.textContent = '—';
-                statValues.max.textContent = '—';
-                statValues.label.textContent = primaryDataset?.label || '—';
-                statsEl.style.setProperty('--stat-color', primaryDataset?.borderColor || '#6c757d');
-              }
+            if (statsEl) {
+              statsEl.innerHTML = '';
+              datasets.forEach((dataset) => {
+                const values = (dataset?.data || []).filter((v) => v !== null && typeof v !== 'undefined');
+                let min = null;
+                let max = null;
+                let median = null;
+                if (values.length) {
+                  const sorted = [...values].sort((a, b) => a - b);
+                  min = sorted[0];
+                  max = sorted[sorted.length - 1];
+                  const mid = Math.floor(sorted.length / 2);
+                  median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+                }
+                const label = dataset?.label || '—';
+                const stability = stabilityByKey[normalizeKey(label)];
+                const row = document.createElement('div');
+                row.className = 'd-flex flex-wrap align-items-center gap-3';
+                row.innerHTML = `
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="rounded-circle" style="width:10px; height:10px; background: ${dataset?.borderColor || '#6c757d'};"></span>
+                    <span class="fw-semibold text-dark">${label}</span>
+                  </div>
+                  <div><span class="fw-semibold text-dark">Min:</span> ${formatNumber(min)}</div>
+                  <div><span class="fw-semibold text-dark">Median:</span> ${formatNumber(median)}</div>
+                  <div><span class="fw-semibold text-dark">Max:</span> ${formatNumber(max)}</div>
+                  <div><span class="fw-semibold text-dark">Stability:</span> ${stability !== null && typeof stability !== 'undefined' ? Math.round(stability) + '%' : '—'}</div>
+                `;
+                statsEl.appendChild(row);
+              });
             }
 
             const existingChart = window.historyChart && typeof window.historyChart.destroy === 'function'
