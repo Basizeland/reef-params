@@ -17,6 +17,16 @@
     </span>
   </div>
 </div>
+<div id="dose-plan-focus-banner" class="alert alert-primary d-none align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <div class="fw-semibold">Focused dose plan</div>
+    <div class="small text-primary-emphasis" id="dose-plan-focus-text">Showing the highlighted parameter.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button type="button" class="btn btn-outline-primary btn-sm" id="dose-plan-jump">Jump to focus</button>
+    <a class="btn btn-primary btn-sm" href="/tools/dose-plan">Clear focus</a>
+  </div>
+</div>
 
 {% if plans and plans|length %}
   {% for plan in plans %}
@@ -247,6 +257,23 @@ document.addEventListener('DOMContentLoaded', function() {
         if (targetRow) {
             targetRow.classList.add('dose-plan-focus');
             targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        const banner = document.getElementById('dose-plan-focus-banner');
+        const bannerText = document.getElementById('dose-plan-focus-text');
+        const jumpButton = document.getElementById('dose-plan-jump');
+        if (banner && bannerText) {
+            const label = targetParam.replace(/(^|\\s|_)([a-z])/g, (match, p1, p2) => `${p1}${p2.toUpperCase()}`);
+            const tankSuffix = targetTankId ? ` (Tank ${targetTankId})` : '';
+            bannerText.textContent = `Highlighting ${label}${tankSuffix}.`;
+            banner.classList.remove('d-none');
+            banner.classList.add('d-flex');
+        }
+        if (jumpButton) {
+            jumpButton.addEventListener('click', () => {
+                if (targetRow) {
+                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            });
         }
     }
 });

@@ -42,6 +42,9 @@
                     <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="ml">
                     <button type="button" class="btn btn-outline-danger btn-sm w-100 mt-2 remove-dosing-row">Remove</button>
                   </div>
+                  <div class="col-12">
+                    <div class="text-danger small d-none dosing-row-warning">Select an additive and enter a daily amount to save this row.</div>
+                  </div>
                 </div>
               {% endfor %}
               <div class="row g-2 align-items-end dosing-row">
@@ -67,6 +70,9 @@
                   <label class="form-label fw-bold">Remaining (ml)</label>
                   <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" placeholder="ml">
                   <button type="button" class="btn btn-outline-danger btn-sm w-100 mt-2 remove-dosing-row">Remove</button>
+                </div>
+                <div class="col-12">
+                  <div class="text-danger small d-none dosing-row-warning">Select an additive and enter a daily amount to save this row.</div>
                 </div>
               </div>
             </div>
@@ -101,7 +107,7 @@
 
           <div class="d-flex justify-content-between align-items-center mt-4">
             <a href="/tanks/{{ tank.id }}" class="text-decoration-none">Cancel</a>
-            <button type="submit" class="btn btn-primary px-4">Save Dosing</button>
+            <button type="submit" class="btn btn-primary px-4" id="save-dosing-button">Save Dosing</button>
           </div>
         </form>
       </div>
@@ -139,7 +145,36 @@
       });
       dosingRowsContainer.appendChild(clone);
       wireDosingRow(clone);
+      validateDosingRows();
     });
   }
+
+  const saveButton = document.getElementById('save-dosing-button');
+
+  function validateDosingRows() {
+    let hasInvalid = false;
+    document.querySelectorAll('.dosing-row').forEach((row) => {
+      const solution = row.querySelector('.dosing-solution')?.value?.trim() || '';
+      const daily = row.querySelector('input[name="dosing_daily_ml[]"]')?.value?.trim() || '';
+      const warning = row.querySelector('.dosing-row-warning');
+      const isEmpty = !solution && !daily;
+      const isValid = (solution && daily) || isEmpty;
+      if (warning) {
+        warning.classList.toggle('d-none', isValid);
+      }
+      if (!isValid) {
+        hasInvalid = true;
+      }
+    });
+    if (saveButton) {
+      saveButton.disabled = hasInvalid;
+    }
+  }
+
+  document.querySelectorAll('.dosing-solution, input[name="dosing_daily_ml[]"]').forEach((input) => {
+    input.addEventListener('input', validateDosingRows);
+    input.addEventListener('change', validateDosingRows);
+  });
+  validateDosingRows();
 </script>
 {% endblock %}

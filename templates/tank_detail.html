@@ -596,8 +596,9 @@
               <span class="badge text-bg-info">Overdue</span>
             {% endif %}
             {% if val is not none and target and target.target_low and val < target.target_low %}
-              <a class="btn btn-sm btn-outline-primary position-relative z-1" href="/tools/dose-plan?tank_id={{ tank.id }}&parameter={{ p.name|replace(' ', '%20') }}">
-                View dose plan
+              {% set deficit = target.target_low - val %}
+              <a class="badge rounded-pill bg-primary-subtle text-primary-emphasis border position-relative z-1 text-decoration-none" href="/tools/dose-plan?tank_id={{ tank.id }}&parameter={{ p.name|replace(' ', '%20') }}">
+                Dose plan: +{{ deficit|fmt2 }} {{ p.unit }}
               </a>
             {% endif %}
           </div>
