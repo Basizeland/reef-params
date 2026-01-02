@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reef Metrics</title>
-    <meta name="theme-color" content="#0b233f">
+    <meta name="theme-color" content="#0f2d45">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Reef Metrics">
@@ -16,9 +16,9 @@
     <link rel="stylesheet" href="/static/style.css">
     <style>
         /* Specific Navbar Branding Styles */
-        .navbar { 
-            background-color: var(--reef-navy) !important; 
-            border-bottom: 3px solid var(--reef-cyan);
+        .navbar {
+            background: linear-gradient(120deg, #ffffff, #f2fbfb 55%, #e9f6f6);
+            border-bottom: 2px solid var(--reef-cyan);
             padding: 0.4rem 1rem;
         }
 
@@ -40,12 +40,12 @@
         }
 
         .nav-link {
-            color: rgba(255,255,255,0.8) !important;
-            font-weight: 500;
+            color: var(--reef-navy) !important;
+            font-weight: 600;
         }
 
         .nav-link:hover {
-            color: var(--reef-cyan) !important;
+            color: var(--reef-teal) !important;
         }
 
         /* Responsive logo scaling */
@@ -71,13 +71,13 @@
                 right: 0;
                 bottom: 0;
                 z-index: 1030;
-                background: #ffffff;
-                border-top: 1px solid rgba(0, 0, 0, 0.08);
-                box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
+                background: var(--reef-surface);
+                border-top: 1px solid var(--reef-border);
+                box-shadow: 0 -6px 18px rgba(15, 45, 69, 0.08);
                 padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
             }
             .bottom-nav .nav-link {
-                color: #6b7280 !important;
+                color: var(--reef-muted) !important;
                 font-size: 0.7rem;
                 font-weight: 600;
                 text-transform: uppercase;
@@ -91,7 +91,7 @@
                 font-size: 1.2rem;
             }
             .bottom-nav .nav-link.active {
-                color: var(--reef-cyan) !important;
+                color: var(--reef-teal) !important;
             }
         }
     </style>
