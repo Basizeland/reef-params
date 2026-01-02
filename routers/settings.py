@@ -92,7 +92,11 @@ def additives_list(request: Request, db: Session = Depends(get_db)):
 @router.get("/additives/new", response_class=HTMLResponse)
 def additive_new(request: Request, db: Session = Depends(get_db)):
     app_main.require_admin(request.state.user if hasattr(request, "state") else None)
-    return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": None, "parameters": db.query(ParameterDef).all()})
+    selected_parameter = (request.query_params.get("parameter") or "").strip()
+    return templates.TemplateResponse(
+        "additive_edit.html",
+        {"request": request, "additive": None, "parameters": db.query(ParameterDef).all(), "selected_parameter": selected_parameter},
+    )
 
 @router.get("/additives/{id}/edit", response_class=HTMLResponse)
 def additive_edit(request: Request, id: int, db: Session = Depends(get_db)):

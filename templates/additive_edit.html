@@ -30,7 +30,7 @@
           <label class="form-label">Parameter</label>
           <select class="form-select" name="parameter" required>
             {% for p in parameters %}
-              <option value="{{ p.name }}" {% if additive and additive.parameter == p.name %}selected{% endif %}>{{ p.name }}</option>
+              <option value="{{ p.name }}" {% if (additive and additive.parameter == p.name) or (not additive and selected_parameter and selected_parameter == p.name) %}selected{% endif %}>{{ p.name }}</option>
             {% endfor %}
           </select>
         </div>

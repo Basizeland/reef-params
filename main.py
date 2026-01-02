@@ -4467,7 +4467,11 @@ def additive_new(request: Request):
     db = get_db()
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": None, "parameters": parameters})
+    selected_parameter = (request.query_params.get("parameter") or "").strip()
+    return templates.TemplateResponse(
+        "additive_edit.html",
+        {"request": request, "additive": None, "parameters": parameters, "selected_parameter": selected_parameter},
+    )
 
 @app.get("/additives/{additive_id}/edit", response_class=HTMLResponse)
 def additive_edit(request: Request, additive_id: int):
@@ -4839,6 +4843,28 @@ def dose_plan(request: Request):
     tanks = get_visible_tanks(db, request)
     pdefs = q(db, "SELECT name, unit, max_daily_change FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
+    all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
+    additives_by_group: Dict[str, List[sqlite3.Row]] = {}
+    def group_key(value: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+        if "alk" in cleaned or "kh" in cleaned:
+            return "alkalinity"
+        if "calcium" in cleaned or cleaned == "ca":
+            return "calcium"
+        if "magnesium" in cleaned or cleaned == "mg":
+            return "magnesium"
+        if "nitrate" in cleaned or "no3" in cleaned:
+            return "nitrate"
+        if "phosphate" in cleaned or "po4" in cleaned:
+            return "phosphate"
+        if "trace" in cleaned:
+            return "trace"
+        return cleaned
+    for additive in all_additives:
+        additives_by_group.setdefault(group_key(row_get(additive, "parameter")), []).append(additive)
+    available_parameters = set()
+    total_needed = 0
+    top_deficit = None
     plans = []
     grand_total_ml = 0.0
     for t in tanks:
@@ -4865,6 +4891,7 @@ def dose_plan(request: Request):
         for tr in targets:
             pname = tr["parameter"]
             if not pname: continue
+            available_parameters.add(pname)
             tl = tr["target_low"] if "target_low" in tr.keys() else (tr["low"] if "low" in tr.keys() else None)
             th = tr["target_high"] if "target_high" in tr.keys() else (tr["high"] if "high" in tr.keys() else None)
             target_val = None
@@ -4884,6 +4911,7 @@ def dose_plan(request: Request):
             
             delta = target_val - cur_val_f
             if delta <= 0: continue
+            total_needed += 1
             
             unit = ""
             if pname in pdef_map and pdef_map[pname]["unit"]: unit = pdef_map[pname]["unit"]
@@ -4899,8 +4927,26 @@ def dose_plan(request: Request):
             per_day_change = delta / float(days)
             adds = q(db, "SELECT * FROM additives WHERE active=1 AND parameter=? ORDER BY name", (pname,))
             if not adds:
+                suggestion = None
+                for candidate in additives_by_group.get(group_key(pname), []):
+                    suggestion = candidate
+                    break
+                if top_deficit is None or (top_deficit and delta > top_deficit["delta"]):
+                    top_deficit = {"tank": t["name"], "parameter": pname, "delta": delta, "unit": unit}
                 # Keep 'no additive' rows so user knows they need one
-                tank_rows.append({"parameter": pname, "latest": cur_val_f, "target": target_val, "change": delta, "unit": unit, "days": days, "per_day_change": per_day_change, "max_daily_change": max_change_f, "additives": [], "note": "No additive linked."})
+                tank_rows.append({
+                    "parameter": pname,
+                    "latest": cur_val_f,
+                    "target": target_val,
+                    "change": delta,
+                    "unit": unit,
+                    "days": days,
+                    "per_day_change": per_day_change,
+                    "max_daily_change": max_change_f,
+                    "additives": [],
+                    "note": "No additive linked.",
+                    "suggested_additive": suggestion,
+                })
                 continue
             
             # --- NEW LOGIC: Determine Preferred Additive ---
@@ -4960,6 +5006,8 @@ def dose_plan(request: Request):
             # If no history (or history additive deleted), default to the first one
             if not has_selected and add_rows:
                 add_rows[0]["selected"] = True
+            if top_deficit is None or (top_deficit and delta > top_deficit["delta"]):
+                top_deficit = {"tank": t["name"], "parameter": pname, "delta": delta, "unit": unit}
                 
             tank_rows.append({"parameter": pname, "latest": cur_val_f, "target": target_val, "change": delta, "unit": unit, "days": days, "per_day_change": per_day_change, "additives": add_rows, "note": ""})
             
@@ -4973,7 +5021,23 @@ def dose_plan(request: Request):
         grand_total_ml += plan_total_ml
         plans.append({"tank": t, "latest_taken": latest_taken, "eff_vol_l": eff_vol_l, "net_pct": net_pct, "rows": tank_rows, "total_ml": plan_total_ml})
     db.close()
-    return templates.TemplateResponse("dose_plan.html", {"request": request, "plans": plans, "grand_total_ml": grand_total_ml, "format_value": format_value})
+    available_parameters_sorted = sorted(available_parameters, key=lambda s: s.lower())
+    dose_plan_summary = {
+        "parameters_needing_dose": total_needed,
+        "top_deficit": top_deficit,
+    }
+    return templates.TemplateResponse(
+        "dose_plan.html",
+        {
+            "request": request,
+            "plans": plans,
+            "grand_total_ml": grand_total_ml,
+            "format_value": format_value,
+            "available_parameters": available_parameters_sorted,
+            "available_tanks": tanks,
+            "dose_plan_summary": dose_plan_summary,
+        },
+    )
 
 @app.post("/tools/dose-plan/check")
 async def dose_plan_check(request: Request):

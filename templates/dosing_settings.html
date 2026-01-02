@@ -40,7 +40,12 @@
                   <div class="col-12 col-md-2">
                     <label class="form-label fw-bold">Remaining (ml)</label>
                     <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="ml">
-                    <button type="button" class="btn btn-outline-danger btn-sm w-100 mt-2 remove-dosing-row">Remove</button>
+                    <div class="d-grid gap-1 mt-2">
+                      <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Use container</button>
+                      <button type="button" class="btn btn-outline-secondary btn-sm copy-dosing-row">Copy row</button>
+                      <button type="button" class="btn btn-outline-secondary btn-sm clear-dosing-row">Clear row</button>
+                      <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row">Remove</button>
+                    </div>
                   </div>
                   <div class="col-12">
                     <div class="text-danger small d-none dosing-row-warning">Select an additive and enter a daily amount to save this row.</div>
@@ -69,7 +74,12 @@
                 <div class="col-12 col-md-2">
                   <label class="form-label fw-bold">Remaining (ml)</label>
                   <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" placeholder="ml">
-                  <button type="button" class="btn btn-outline-danger btn-sm w-100 mt-2 remove-dosing-row">Remove</button>
+                  <div class="d-grid gap-1 mt-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Use container</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm copy-dosing-row">Copy row</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm clear-dosing-row">Clear row</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row">Remove</button>
+                  </div>
                 </div>
                 <div class="col-12">
                   <div class="text-danger small d-none dosing-row-warning">Select an additive and enter a daily amount to save this row.</div>
@@ -121,9 +131,42 @@
 
   function wireDosingRow(row) {
     const removeButton = row.querySelector('.remove-dosing-row');
+    const copyButton = row.querySelector('.copy-dosing-row');
+    const clearButton = row.querySelector('.clear-dosing-row');
+    const autofillButton = row.querySelector('.autofill-remaining');
     if (removeButton) {
       removeButton.addEventListener('click', () => {
         row.remove();
+        validateDosingRows();
+      });
+    }
+    if (copyButton && dosingRowsContainer) {
+      copyButton.addEventListener('click', () => {
+        const clone = row.cloneNode(true);
+        dosingRowsContainer.insertBefore(clone, row.nextSibling);
+        wireDosingRow(clone);
+        validateDosingRows();
+      });
+    }
+    if (clearButton) {
+      clearButton.addEventListener('click', () => {
+        row.querySelectorAll('input').forEach((input) => {
+          input.value = '';
+        });
+        row.querySelectorAll('select').forEach((select) => {
+          select.selectedIndex = 0;
+        });
+        validateDosingRows();
+      });
+    }
+    if (autofillButton) {
+      autofillButton.addEventListener('click', () => {
+        const containerInput = row.querySelector('input[name="dosing_container_ml[]"]');
+        const remainingInput = row.querySelector('input[name="dosing_remaining_ml[]"]');
+        if (containerInput && remainingInput) {
+          remainingInput.value = containerInput.value;
+          validateDosingRows();
+        }
       });
     }
   }

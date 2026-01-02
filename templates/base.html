@@ -167,12 +167,19 @@
                                             <a class="text-decoration-none text-reset small" href="/tanks/{{ alert.tank_id }}">
                                                 {{ alert.label }}: {{ alert.days|round(1) }} days remaining (≤ {{ alert.threshold }})
                                             </a>
-                                            <form method="post" action="/notifications/dismiss" class="ms-2">
-                                                <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
-                                                <input type="hidden" name="container_key" value="{{ alert.container_key }}">
-                                                <input type="hidden" name="notified_on" value="{{ alert.notified_on }}">
-                                                <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
-                                            </form>
+                                            <div class="d-flex flex-column gap-1">
+                                                <form method="post" action="/tanks/{{ alert.tank_id }}/dosing-containers">
+                                                    <input type="hidden" name="action" value="refill">
+                                                    <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                                                    <button class="btn btn-sm btn-outline-primary" type="submit">Refill</button>
+                                                </form>
+                                                <form method="post" action="/notifications/dismiss">
+                                                    <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
+                                                    <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                                                    <input type="hidden" name="notified_on" value="{{ alert.notified_on }}">
+                                                    <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
+                                                </form>
+                                            </div>
                                         </div>
                                     {% endfor %}
                                 </li>
