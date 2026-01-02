@@ -2072,9 +2072,93 @@ def add_reading_selector(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
     db.close()
-    html = """<html><head><title>Add Reading</title></head><body style="font-family: sans-serif; max-width: 720px; margin: 40px auto;"><h2>Add Reading</h2><form method="get" action="/tanks/0/add" onsubmit="event.preventDefault(); window.location = '/tanks/' + document.getElementById('tank').value + '/add';"><label>Select tank</label><br/><select id="tank" name="tank" style="width:100%; padding:10px; margin:10px 0;" required>{options}</select><button type="submit" style="padding:10px 16px;">Continue</button></form><p><a href="/">Back to dashboard</a></p></body></html>"""
+    html = """<html><head><title>Add Reading</title></head><body style="font-family: sans-serif; max-width: 720px; margin: 40px auto;"><h2>Add Reading</h2><form method="get" action="/tanks/0/add" onsubmit="event.preventDefault(); window.location = '/tanks/' + document.getElementById('tank').value + '/add';"><label>Select tank</label><br/><select id="tank" name="tank" style="width:100%; padding:10px; margin:10px 0;" required>{options}</select><button type="submit" style="padding:10px 16px;">Continue</button></form><p><a href="/tanks/multi-add">Log one parameter across multiple tanks</a></p><p><a href="/">Back to dashboard</a></p></body></html>"""
     options = "\n".join([f'<option value="{t["id"]}">{t["name"]}</option>' for t in tanks])
     return HTMLResponse(html.format(options=options))
+
+@app.get("/tanks/multi-add", response_class=HTMLResponse)
+def multi_add_form(request: Request):
+    db = get_db()
+    tanks = get_visible_tanks(db, request)
+    params_rows = get_active_param_defs(db)
+    kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
+    kits_by_param = {}
+    for k in kits:
+        kits_by_param.setdefault(k["parameter"], []).append(k)
+    db.close()
+    return templates.TemplateResponse(
+        "multi_add.html",
+        {
+            "request": request,
+            "tanks": tanks,
+            "parameters": params_rows,
+            "kits_by_param": kits_by_param,
+        },
+    )
+
+@app.post("/tanks/multi-add")
+async def multi_add_save(request: Request):
+    form = await request.form()
+    tank_ids = [int(tid) for tid in form.getlist("tank_id") if to_float(tid) is not None]
+    param_id = to_float(form.get("parameter_id"))
+    value = to_float(form.get("value"))
+    remaining = to_float(form.get("remaining"))
+    kit_id = to_float(form.get("kit_id"))
+    notes = (form.get("notes") or "").strip() or None
+    taken_at = (form.get("taken_at") or "").strip()
+    if not tank_ids or param_id is None:
+        return redirect("/tanks/multi-add")
+    db = get_db()
+    user = get_current_user(db, request)
+    allowed_ids = set(get_visible_tank_ids(db, user))
+    param = one(db, "SELECT * FROM parameter_defs WHERE id=? AND active=1", (int(param_id),))
+    if not param:
+        db.close()
+        return redirect("/tanks/multi-add")
+    if value is None:
+        conv_type, conv_data = get_test_kit_conversion(db, int(kit_id) if kit_id else None)
+        if remaining is not None and conv_type == "syringe_remaining_ml" and conv_data:
+            try:
+                table = json.loads(conv_data)
+            except Exception:
+                table = []
+            value = compute_conversion_value(float(remaining), table)
+    if value is None:
+        db.close()
+        return redirect("/tanks/multi-add")
+    if taken_at:
+        try:
+            when_iso = datetime.fromisoformat(taken_at).isoformat()
+        except ValueError:
+            when_iso = datetime.utcnow().isoformat()
+    else:
+        when_iso = datetime.utcnow().isoformat()
+    cur = db.cursor()
+    saved_ids = []
+    for tank_id in tank_ids:
+        if allowed_ids and tank_id not in allowed_ids:
+            continue
+        cur.execute(
+            "INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)",
+            (tank_id, when_iso, notes),
+        )
+        sample_id = cur.lastrowid
+        insert_sample_reading(
+            db,
+            sample_id,
+            param["name"],
+            float(value),
+            row_get(param, "unit") or "",
+            int(kit_id) if kit_id else None,
+        )
+        saved_ids.append(tank_id)
+    db.commit()
+    db.close()
+    if not saved_ids:
+        return redirect("/tanks/multi-add")
+    if len(saved_ids) == 1:
+        return redirect(f"/tanks/{saved_ids[0]}")
+    return redirect("/")
 
 @app.get("/tanks/new", response_class=HTMLResponse)
 def tank_new_form(request: Request):

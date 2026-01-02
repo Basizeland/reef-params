@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Log One Parameter Across Multiple Tanks</h2>
+<form method="post" class="mt-3">
+  <div class="mb-3">
+    <label class="form-label">Date/Time</label>
+    <input type="datetime-local" name="taken_at" class="form-control datetime-default">
+    <div class="form-text">Defaults to now if left blank.</div>
+  </div>
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card p-3 h-100">
+        <label class="form-label fw-bold">Parameter</label>
+        <select name="parameter_id" class="form-select" id="parameter-select" required>
+          <option value="">Select a parameter</option>
+          {% for p in parameters %}
+            <option value="{{ p.id }}" data-unit="{{ p.unit }}">{{ p.name }}</option>
+          {% endfor %}
+        </select>
+        <label class="form-label fw-bold mt-3">Value <span class="text-muted fw-normal" id="parameter-unit"></span></label>
+        <input type="number" step="any" name="value" class="form-control" id="value-input">
+        <label class="form-label small mt-3">Test Kit</label>
+        <select class="form-select form-select-sm" name="kit_id" id="kit-select">
+          <option value="">Select kit (optional)</option>
+          {% for p in parameters %}
+            {% set kits = kits_by_param.get(p.name, []) %}
+            {% for kit in kits %}
+              <option
+                value="{{ kit.id }}"
+                data-param="{{ p.id }}"
+                data-conversion="{{ '1' if kit.conversion_type == 'syringe_remaining_ml' else '' }}"
+              >
+                {{ kit.name }}
+              </option>
+            {% endfor %}
+          {% endfor %}
+        </select>
+        <div class="mt-2 d-none" id="kit-conversion">
+          <label class="form-label small">Syringe remaining (ml)</label>
+          <input class="form-control form-control-sm" name="remaining" inputmode="decimal" placeholder="e.g. 0.35" id="remaining-input">
+          <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card p-3 h-100">
+        <label class="form-label fw-bold">Tanks</label>
+        <div class="form-text mb-2">Select one or more tanks to log this reading.</div>
+        <div class="d-flex flex-column gap-2">
+          {% for tank in tanks %}
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="tank_id" value="{{ tank.id }}">
+              <span class="form-check-label">{{ tank.name }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mt-3 mb-3">
+    <label class="form-label">Notes</label>
+    <textarea name="notes" class="form-control" rows="2"></textarea>
+  </div>
+  <button type="submit" class="btn btn-primary btn-lg">Save Reading</button>
+</form>
+
+<script>
+  (function () {
+    const conversionTables = {
+      {% for p in parameters %}
+        {% set kits = kits_by_param.get(p.name, []) %}
+        {% for kit in kits %}
+          {% if kit.conversion_type == 'syringe_remaining_ml' and kit.conversion_data %}
+            "{{ kit.id }}": {{ kit.conversion_data|safe }},
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    };
+    const kitSelect = document.getElementById("kit-select");
+    const paramSelect = document.getElementById("parameter-select");
+    const unitLabel = document.getElementById("parameter-unit");
+    const conversionBlock = document.getElementById("kit-conversion");
+    const remainingInput = document.getElementById("remaining-input");
+    const valueInput = document.getElementById("value-input");
+    const options = Array.from(kitSelect.options);
+
+    const computeValue = (remaining, table) => {
+      if (!table || !table.length || remaining === "" || remaining === null) return null;
+      const num = parseFloat(remaining);
+      if (Number.isNaN(num)) return null;
+      const sorted = [...table].sort((a, b) => a.remaining - b.remaining);
+      if (num <= sorted[0].remaining) return sorted[0].value;
+      if (num >= sorted[sorted.length - 1].remaining) return sorted[sorted.length - 1].value;
+      for (let i = 1; i < sorted.length; i += 1) {
+        const low = sorted[i - 1];
+        const high = sorted[i];
+        if (num >= low.remaining && num <= high.remaining) {
+          const span = high.remaining - low.remaining;
+          if (span === 0) return low.value;
+          const ratio = (num - low.remaining) / span;
+          return low.value + ratio * (high.value - low.value);
+        }
+      }
+      return null;
+    };
+
+    const updateKits = () => {
+      const paramId = paramSelect.value;
+      const unit = paramSelect.options[paramSelect.selectedIndex]?.dataset?.unit;
+      unitLabel.textContent = unit ? `(${unit})` : "";
+      kitSelect.value = "";
+      options.forEach((opt) => {
+        if (!opt.value) {
+          opt.hidden = false;
+          return;
+        }
+        opt.hidden = opt.dataset.param !== paramId;
+      });
+      conversionBlock.classList.add("d-none");
+      remainingInput.value = "";
+    };
+
+    const updateConversion = () => {
+      const selected = kitSelect.options[kitSelect.selectedIndex];
+      if (!selected) return;
+      if (selected.dataset.conversion) {
+        conversionBlock.classList.remove("d-none");
+      } else {
+        conversionBlock.classList.add("d-none");
+        remainingInput.value = "";
+      }
+    };
+
+    remainingInput.addEventListener("input", () => {
+      const kitId = kitSelect.value;
+      const table = conversionTables[kitId];
+      const value = computeValue(remainingInput.value, table);
+      valueInput.value = value === null ? "" : value.toFixed(2);
+    });
+
+    paramSelect.addEventListener("change", updateKits);
+    kitSelect.addEventListener("change", updateConversion);
+    updateKits();
+    updateConversion();
+
+    const now = new Date();
+    const pad = (v) => String(v).padStart(2, "0");
+    const nowLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    document.querySelectorAll(".datetime-default").forEach((input) => {
+      if (!input.value) {
+        input.value = nowLocal;
+      }
+    });
+  })();
+</script>
+{% endblock %}
