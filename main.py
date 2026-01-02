@@ -303,6 +303,16 @@ def _to_local(dt: datetime) -> datetime:
         return dt.replace(tzinfo=tz)
     return dt.astimezone(tz)
 
+def oauth_cookie_settings(request: Request) -> Dict[str, Any]:
+    base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+    parsed = urllib.parse.urlparse(base)
+    hostname = parsed.hostname or ""
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    domain = hostname or None
+    secure = parsed.scheme == "https"
+    return {"domain": domain, "secure": secure}
+
 def dtfmt(v: Any) -> str:
     dt = parse_dt_any(v) if not isinstance(v, datetime) else v
     if dt is None: return ""
@@ -2035,7 +2045,16 @@ def google_start(request: Request):
     }
     url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     response = redirect(url)
-    response.set_cookie("oauth_state", state, httponly=True, samesite="lax")
+    cookie_settings = oauth_cookie_settings(request)
+    response.set_cookie(
+        "oauth_state",
+        state,
+        httponly=True,
+        samesite="lax",
+        secure=cookie_settings["secure"],
+        domain=cookie_settings["domain"],
+        path="/",
+    )
     return response
 
 @app.get("/auth/google/callback", name="google_callback")
@@ -2112,7 +2131,8 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     db.close()
     response = redirect("/")
     response.set_cookie("session_token", token, httponly=True, samesite="lax")
-    response.delete_cookie("oauth_state")
+    cookie_settings = oauth_cookie_settings(request)
+    response.delete_cookie("oauth_state", domain=cookie_settings["domain"], path="/")
     return response
 
 @app.get("/tanks/reorder", response_class=HTMLResponse)
