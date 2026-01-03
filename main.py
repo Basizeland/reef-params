@@ -6531,6 +6531,7 @@ def icp_import(request: Request):
             "raw_count": 0,
             "error": request.query_params.get("error"),
             "success": request.query_params.get("success"),
+            "selected_tank": "",
         },
     )
 
@@ -6539,6 +6540,7 @@ async def icp_preview(request: Request):
     form = await request.form()
     url = (form.get("icp_url") or "").strip()
     upload = form.get("icp_file")
+    selected_tank = (form.get("tank_id") or "").strip()
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     try:
@@ -6556,6 +6558,8 @@ async def icp_preview(request: Request):
                 raise ValueError("Unsupported file type. Upload CSV or PDF.")
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
+        if not results:
+            raise ValueError("No ICP values found. Please verify the URL or file.")
         mapped = map_icp_to_parameters(db, results)
     except Exception as exc:
         db.close()
@@ -6569,6 +6573,7 @@ async def icp_preview(request: Request):
                 "raw_count": 0,
                 "error": str(exc),
                 "success": None,
+                "selected_tank": selected_tank,
             },
         )
     db.close()
@@ -6582,6 +6587,7 @@ async def icp_preview(request: Request):
             "raw_count": len(results),
             "error": None,
             "success": None,
+            "selected_tank": selected_tank,
         },
     )
 

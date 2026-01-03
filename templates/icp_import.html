@@ -18,6 +18,15 @@
   <div class="card-body">
     <form method="post" action="/tools/icp/preview" enctype="multipart/form-data">
       <div class="row g-3">
+        <div class="col-lg-4">
+          <label class="form-label">Tank</label>
+          <select class="form-select" name="tank_id" required>
+            <option value="">Select tank</option>
+            {% for tank in tanks %}
+              <option value="{{ tank.id }}" {% if selected_tank == tank.id|string %}selected{% endif %}>{{ tank.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
         <div class="col-lg-8">
           <label class="form-label">Triton URL (preferred)</label>
           <input class="form-control" name="icp_url" placeholder="https://www.triton-lab.de/en/showroom/icp-oes/XXXXXX">
@@ -43,12 +52,7 @@
           <div class="text-muted small">Mapped {{ mapped|length }} of {{ raw_count }} results.</div>
         </div>
         <form method="post" action="/tools/icp/import" class="d-flex flex-wrap gap-2 align-items-end">
-          <select class="form-select" name="tank_id" required>
-            <option value="">Select tank</option>
-            {% for tank in tanks %}
-              <option value="{{ tank.id }}">{{ tank.name }}</option>
-            {% endfor %}
-          </select>
+          <input type="hidden" name="tank_id" value="{{ selected_tank }}">
           <input type="hidden" name="mapped_payload" value="{{ mapped_payload }}">
           <button class="btn btn-outline-primary" type="submit">Import Sample</button>
         </form>
