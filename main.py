@@ -1354,7 +1354,13 @@ def parse_triton_rows(rows: List[List[str]]) -> List[Dict[str, Any]]:
 def parse_triton_html(content: str) -> List[Dict[str, Any]]:
     parser = TritonTableParser()
     parser.feed(content)
-    return parse_triton_rows(parser.rows)
+    results = parse_triton_rows(parser.rows)
+    if results:
+        return results
+    results = parse_triton_json_like(content)
+    if results:
+        return results
+    return parse_triton_data_attributes(content)
 
 def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
     text = content.decode("utf-8", errors="ignore")
@@ -1404,6 +1410,32 @@ def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
             continue
         name = parts[0]
         value = parts[1]
+        numeric = extract_numeric_value(value)
+        if numeric is None:
+            continue
+        results.append({"name": name.strip(), "value": numeric, "unit": None})
+    return results
+
+def parse_triton_data_attributes(content: str) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    pattern = re.compile(
+        r'data-(?:element|name)=\"([^\"]+)\"[^>]*?data-(?:value|result)=\"([^\"]+)\"',
+        re.IGNORECASE,
+    )
+    for name, value in pattern.findall(content):
+        numeric = extract_numeric_value(value)
+        if numeric is None:
+            continue
+        results.append({"name": name.strip(), "value": numeric, "unit": None})
+    return results
+
+def parse_triton_json_like(content: str) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    pattern = re.compile(
+        r'[{,]\s*"(?:element|name)"\s*:\s*"([^"]+)"[^}]*?"(?:value|result)"\s*:\s*"?(.*?)"?(?:[},])',
+        re.IGNORECASE | re.DOTALL,
+    )
+    for name, value in pattern.findall(content):
         numeric = extract_numeric_value(value)
         if numeric is None:
             continue
