@@ -1493,6 +1493,10 @@ def map_icp_to_parameters(
 ) -> List[Dict[str, Any]]:
     params = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY name")
     param_lookup = {normalize_probe_label(row_get(p, "name")): row_get(p, "name") for p in params}
+    for param in params:
+        symbol = row_get(param, "chemical_symbol")
+        if symbol:
+            param_lookup[normalize_probe_label(symbol)] = row_get(param, "name")
     mapped: List[Dict[str, Any]] = []
     for row in results:
         raw_name = row.get("name") or ""
@@ -2324,7 +2328,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS user_tanks (user_id INTEGER NOT NULL, tank_id INTEGER NOT NULL, PRIMARY KEY (user_id, tank_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, trace_solution TEXT, trace_daily_ml REAL, nopox_daily_ml REAL, calcium_reactor_daily_ml REAL, calcium_reactor_effluent_dkh REAL, kalk_solution TEXT, kalk_daily_ml REAL, use_all_in_one INTEGER, use_alk INTEGER, use_ca INTEGER, use_mg INTEGER, use_nitrate INTEGER, use_phosphate INTEGER, use_trace INTEGER, use_nopox INTEGER, use_calcium_reactor INTEGER, use_kalkwasser INTEGER, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, trace_container_ml REAL, trace_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, kalk_container_ml REAL, kalk_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
+        CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, chemical_symbol TEXT, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, manufacturer_accuracy REAL, min_value REAL, max_value REAL, notes TEXT, workflow_data TEXT, active INTEGER DEFAULT 1);
@@ -2352,6 +2356,7 @@ def init_db() -> None:
     ensure_column(db, "users", "google_sub", "ALTER TABLE users ADD COLUMN google_sub TEXT")
     ensure_column(db, "users", "admin", "ALTER TABLE users ADD COLUMN admin INTEGER DEFAULT 0")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
+    ensure_column(db, "parameter_defs", "chemical_symbol", "ALTER TABLE parameter_defs ADD COLUMN chemical_symbol TEXT")
     ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
     ensure_column(db, "additives", "brand", "ALTER TABLE additives ADD COLUMN brand TEXT")
     ensure_column(db, "additives", "group_name", "ALTER TABLE additives ADD COLUMN group_name TEXT")
@@ -5540,6 +5545,7 @@ def parameter_save(
     request: Request,
     param_id: Optional[str] = Form(None), 
     name: str = Form(...), 
+    chemical_symbol: Optional[str] = Form(None),
     unit: Optional[str] = Form(None), 
     sort_order: Optional[str] = Form(None), 
     max_daily_change: Optional[str] = Form(None), 
@@ -5569,7 +5575,19 @@ def parameter_save(
         db.close()
         return redirect("/settings/parameters")
 
-    data = (clean_name, (unit or "").strip() or None, mdc, interval, order, is_active, dt_low, dt_high, da_low, da_high)
+    data = (
+        clean_name,
+        (chemical_symbol or "").strip() or None,
+        (unit or "").strip() or None,
+        mdc,
+        interval,
+        order,
+        is_active,
+        dt_low,
+        dt_high,
+        da_low,
+        da_high,
+    )
 
     try:
         # 2. Logic for Update/Merge
@@ -5597,7 +5615,7 @@ def parameter_save(
                     cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, existing_id))
                     
@@ -5609,14 +5627,14 @@ def parameter_save(
                             
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, pid))
             else:
                 # SIMPLE UPDATE
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                     WHERE id=?""", (*data, pid))
         
@@ -5626,14 +5644,14 @@ def parameter_save(
             if existing:
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                    SET chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], existing["id"]))
+                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
             else:
                 cur.execute("""
                     INSERT INTO parameter_defs 
-                    (name, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
+                    (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
 
         db.commit()
         
