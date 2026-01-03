@@ -5,7 +5,8 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+import time
 
 
 @dataclass
@@ -43,12 +44,17 @@ class ApexClient:
         headers = {"Accept": "application/json"}
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
-        elif self.username and self.password:
-            token = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("utf-8")
-            headers["Authorization"] = f"Basic {token}"
+        auth_cookie = None
+        auth_basic = None
+        if not self.api_token:
+            auth_cookie, auth_basic = _resolve_auth(urls, self.username, self.password)
+        if auth_cookie:
+            headers["Cookie"] = auth_cookie
+        if auth_basic and "Authorization" not in headers:
+            headers["Authorization"] = auth_basic
         last_error: Optional[Exception] = None
         for url in urls:
-            req = urllib.request.Request(url, headers=headers)
+            req = urllib.request.Request(_add_cache_buster(url), headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     content = resp.read().decode("utf-8")
@@ -158,6 +164,63 @@ def _build_urls(host: str) -> List[str]:
     return [f"http://{trimmed}{endpoint}" for endpoint in endpoints] + [
         f"https://{trimmed}{endpoint}" for endpoint in endpoints
     ]
+
+def _resolve_auth(
+    urls: Sequence[str], username: Optional[str], password: Optional[str]
+) -> Tuple[Optional[str], Optional[str]]:
+    if not username or not password:
+        return None, None
+    for url in urls:
+        root = _root_url(url)
+        if not root:
+            continue
+        try:
+            cookie = _login_for_sid(root, username, password)
+            if cookie:
+                return cookie, None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                break
+            if exc.code in (401, 403):
+                break
+        except Exception:
+            continue
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("utf-8")
+    return None, f"Basic {token}"
+
+def _login_for_sid(root: str, username: str, password: str) -> Optional[str]:
+    payload = json.dumps({"login": username, "password": password, "remember_me": False}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{root}/rest/login",
+        data=payload,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        content = resp.read().decode("utf-8")
+    data = json.loads(content)
+    sid = data.get("connect.sid")
+    if not sid:
+        return None
+    return f"connect.sid={sid}"
+
+def _root_url(url: str) -> str:
+    split = urllib.parse.urlsplit(url)
+    if not split.scheme or not split.netloc:
+        return ""
+    return f"{split.scheme}://{split.netloc}"
+
+def _add_cache_buster(url: str) -> str:
+    split = urllib.parse.urlsplit(url)
+    query = split.query
+    if "_=" in query:
+        return url
+    stamp = str(int(time.time()))
+    if query:
+        query = f"{query}&_={stamp}"
+    else:
+        query = f"_={stamp}"
+    return urllib.parse.urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
 
 def _parse_payload(content: str) -> Any:
