@@ -290,6 +290,21 @@ h1, h2, h3, h4, h5 {
     box-shadow: 0 12px 28px rgba(9, 28, 48, 0.08);
 }
 
+[data-skeleton] {
+    position: relative;
+    color: transparent !important;
+    background: linear-gradient(100deg, #e6eef3 30%, #f4f8fb 45%, #e6eef3 60%);
+    background-size: 200% 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    animation: shimmer 1.4s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
 .reef-add-card {
     min-height: 250px;
     border: 2px dashed rgba(12, 40, 64, 0.2);

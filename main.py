@@ -2495,6 +2495,10 @@ def tank_snapshot(request: Request, tank_id: int):
         },
     )
 
+@app.get("/pwa/checklist", response_class=HTMLResponse)
+def pwa_checklist(request: Request):
+    return templates.TemplateResponse("pwa_checklist.html", {"request": request})
+
 @app.get("/auth/login", response_class=HTMLResponse)
 def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})

@@ -15,6 +15,9 @@
     <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}">
       <i class="bi bi-arrow-left"></i> Back to tank
     </a>
+    <button class="btn btn-outline-secondary" type="button" data-share-url="{{ request.url }}" data-share-title="{{ tank.name }} Snapshot" data-share-text="Latest Reef Metrics snapshot for {{ tank.name }}.">
+      <i class="bi bi-share"></i> Share
+    </button>
     <button class="btn btn-outline-secondary" onclick="window.print()">
       <i class="bi bi-printer"></i> Print
     </button>
