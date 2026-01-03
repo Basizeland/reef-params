@@ -19,6 +19,8 @@ from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from integrations.apex import ApexClient
+
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1088,6 +1090,60 @@ def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
     )
     db.commit()
 
+APEX_SETTINGS_KEY = "apex_integration_settings"
+
+def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
+    raw = get_setting(db, APEX_SETTINGS_KEY)
+    settings: Dict[str, Any] = {
+        "enabled": False,
+        "host": "",
+        "username": "",
+        "password": "",
+        "api_token": "",
+        "poll_interval_minutes": 15,
+        "mapping": {},
+        "tank_id": None,
+    }
+    if raw:
+        try:
+            stored = json.loads(raw)
+            if isinstance(stored, dict):
+                settings.update(stored)
+        except Exception:
+            pass
+    if not isinstance(settings.get("mapping"), dict):
+        settings["mapping"] = {}
+    return settings
+
+def save_apex_settings(db: sqlite3.Connection, settings: Dict[str, Any]) -> None:
+    set_setting(db, APEX_SETTINGS_KEY, json.dumps(settings))
+
+def parse_apex_mapping(mapping_text: str) -> Dict[str, str]:
+    if not mapping_text:
+        return {}
+    try:
+        payload = json.loads(mapping_text)
+    except Exception as exc:
+        raise ValueError("Mapping JSON must be valid JSON.") from exc
+    if isinstance(payload, dict):
+        return {str(k): str(v) for k, v in payload.items() if k and v}
+    if isinstance(payload, list):
+        mapping: Dict[str, str] = {}
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            probe = item.get("probe") or item.get("name")
+            param = item.get("parameter") or item.get("param")
+            if probe and param:
+                mapping[str(probe)] = str(param)
+        return mapping
+    return {}
+
+def apex_mapping_text(mapping: Dict[str, str]) -> str:
+    if not mapping:
+        return ""
+    return json.dumps(mapping, indent=2, sort_keys=True)
+
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
     return bool(row and row["count"] > 0)
@@ -1211,6 +1267,26 @@ def parse_dt_any(v):
         except ValueError: continue
     return None
 
+def fetch_apex_readings(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    client = ApexClient(
+        host=settings.get("host", ""),
+        username=settings.get("username") or None,
+        password=settings.get("password") or None,
+        api_token=settings.get("api_token") or None,
+    )
+    readings = client.fetch_readings()
+    normalized: List[Dict[str, Any]] = []
+    for reading in readings:
+        normalized.append(
+            {
+                "name": reading.name,
+                "value": reading.value,
+                "unit": reading.unit or "",
+                "timestamp": reading.timestamp,
+            }
+        )
+    return normalized
+
 def values_mode(db: sqlite3.Connection) -> str:
     try:
         cur = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('sample_values','parameter_defs')")
@@ -1273,6 +1349,53 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
             )
     else:
         cur.execute("INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)", (sample_id, pname, value, unit or None, test_kit_id))
+
+def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: Optional[sqlite3.Row]) -> Dict[str, Any]:
+    if not settings.get("host"):
+        raise ValueError("Apex host is required.")
+    mapping_raw = settings.get("mapping") or {}
+    if not mapping_raw:
+        raise ValueError("Apex mapping is required.")
+    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
+    if not mapping:
+        raise ValueError("Apex mapping is required.")
+    readings = fetch_apex_readings(settings)
+    mapped: List[Tuple[str, Dict[str, Any]]] = []
+    for reading in readings:
+        probe_name = str(reading.get("name", "")).strip()
+        if not probe_name:
+            continue
+        param_name = mapping.get(probe_name.lower())
+        if not param_name:
+            continue
+        mapped.append((param_name, reading))
+    if not mapped:
+        raise ValueError("No Apex probes matched the mapping.")
+    tank_id = settings.get("tank_id")
+    if tank_id:
+        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+    else:
+        tank = one(db, "SELECT * FROM tanks ORDER BY id LIMIT 1")
+    if not tank:
+        raise ValueError("No tank available to import Apex readings.")
+    taken_at = None
+    for _, reading in mapped:
+        dt = parse_dt_any(reading.get("timestamp"))
+        if dt:
+            taken_at = dt
+            break
+    when_iso = (taken_at or datetime.utcnow()).isoformat()
+    cur = db.cursor()
+    cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank["id"], when_iso, "Imported from Apex"))
+    sample_id = cur.lastrowid
+    for param_name, reading in mapped:
+        value = reading.get("value")
+        if value is None:
+            continue
+        insert_sample_reading(db, sample_id, param_name, float(value), reading.get("unit", ""))
+    db.commit()
+    log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
+    return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped)}
 
 def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
     mode = values_mode(db)
@@ -4836,6 +4959,96 @@ def system_settings(request: Request):
             "vapid_public_key": vapid_public,
         },
     )
+
+@app.get("/settings/integrations/apex", response_class=HTMLResponse)
+def apex_settings(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db)
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    db.close()
+    return templates.TemplateResponse(
+        "apex_settings.html",
+        {
+            "request": request,
+            "settings": settings,
+            "mapping_json": apex_mapping_text(settings.get("mapping", {})),
+            "tanks": tanks,
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+@app.post("/settings/integrations/apex/save")
+async def apex_settings_save(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    form = await request.form()
+    settings = get_apex_settings(db)
+    host = (form.get("host") or "").strip()
+    username = (form.get("username") or "").strip()
+    password = (form.get("password") or "").strip() or settings.get("password", "")
+    api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
+    poll_interval = int(to_float(form.get("poll_interval_minutes")) or 15)
+    mapping_text = (form.get("mapping_json") or "").strip()
+    try:
+        mapping = parse_apex_mapping(mapping_text)
+    except ValueError as exc:
+        db.close()
+        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+    tank_id = form.get("tank_id")
+    settings.update(
+        {
+            "enabled": form.get("enabled") in ("on", "true", "1", True),
+            "host": host,
+            "username": username,
+            "password": password,
+            "api_token": api_token,
+            "poll_interval_minutes": poll_interval,
+            "mapping": mapping,
+            "tank_id": int(tank_id) if tank_id and str(tank_id).isdigit() else None,
+        }
+    )
+    save_apex_settings(db, settings)
+    db.close()
+    return redirect("/settings/integrations/apex?success=Saved Apex settings.")
+
+@app.post("/settings/integrations/apex/test")
+async def apex_settings_test(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    form = await request.form()
+    settings = get_apex_settings(db)
+    settings["host"] = (form.get("host") or "").strip()
+    settings["username"] = (form.get("username") or "").strip()
+    settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
+    settings["api_token"] = (form.get("api_token") or "").strip() or settings.get("api_token", "")
+    try:
+        readings = fetch_apex_readings(settings)
+        message = f"Connected successfully. Found {len(readings)} probes."
+        db.close()
+        return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
+    except Exception as exc:
+        db.close()
+        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+
+@app.post("/settings/integrations/apex/import")
+async def apex_settings_import(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db)
+    try:
+        result = import_apex_sample(db, settings, current_user)
+        message = f"Imported {result['mapped_count']} readings into sample {result['sample_id']}."
+        db.close()
+        return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
+    except Exception as exc:
+        db.close()
+        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
 
 @app.get("/settings/test-kits/new", response_class=HTMLResponse)
 @app.get("/settings/test-kits/new/", response_class=HTMLResponse, include_in_schema=False)
