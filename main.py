@@ -1389,7 +1389,7 @@ def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
     try:
         PdfReader = importlib.import_module("PyPDF2").PdfReader
     except Exception as exc:
-        raise ValueError("PDF parsing requires PyPDF2. Install it and retry.") from exc
+        raise ValueError("PDF parsing requires PyPDF2. Install it and rebuild the container.") from exc
     reader = PdfReader(BytesIO(content))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
     results: List[Dict[str, Any]] = []
