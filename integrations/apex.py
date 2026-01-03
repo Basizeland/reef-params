@@ -140,7 +140,7 @@ def _build_urls(host: str) -> List[str]:
     trimmed = host.strip()
     if not trimmed:
         return []
-    endpoints = ["/rest/status", "/rest/status.json", "/rest/"]
+    endpoints = ["/cgi-bin/status.xml", "/rest/status", "/rest/status.json", "/rest/"]
     if "://" in trimmed:
         split = urllib.parse.urlsplit(trimmed)
         netloc = split.netloc or split.path.split("/")[0]
