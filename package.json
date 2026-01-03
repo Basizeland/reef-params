@@ -10,7 +10,9 @@
     "cap:ios": "cap open ios"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.2.1",
     "@capacitor/cli": "^6.0.0",
-    "@capacitor/core": "^6.0.0"
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.2.1"
   }
 }
