@@ -2863,41 +2863,49 @@ def tank_detail(request: Request, tank_id: int):
     overdue_by_param = {}
     mode = values_mode(db)
 
+    def normalize_key(value: str) -> str:
+        return re.sub(r"[\s/_-]+", "", str(value or "").lower())
+
     def recent_param_values(param_name: str) -> List[float]:
+        normalized_param = normalize_key(param_name)
         if mode == "sample_values":
             rows = q(
                 db,
                 """
-                SELECT sv.value
+                SELECT sv.value, pd.name AS name
                 FROM sample_values sv
                 JOIN parameter_defs pd ON pd.id = sv.parameter_id
                 JOIN samples s ON s.id = sv.sample_id
-                WHERE s.tank_id=? AND pd.name=?
+                WHERE s.tank_id=?
                 ORDER BY s.taken_at DESC
-                LIMIT 10
+                LIMIT 200
                 """,
-                (tank_id, param_name),
+                (tank_id,),
             )
         else:
             rows = q(
                 db,
                 """
-                SELECT p.value
+                SELECT p.value, p.name AS name
                 FROM parameters p
                 JOIN samples s ON s.id = p.sample_id
-                WHERE s.tank_id=? AND p.name=?
+                WHERE s.tank_id=?
                 ORDER BY s.taken_at DESC
-                LIMIT 10
+                LIMIT 200
                 """,
-                (tank_id, param_name),
+                (tank_id,),
             )
         values = []
         for row in rows:
+            if normalize_key(row.get("name")) != normalized_param:
+                continue
             try:
                 val = float(row["value"])
             except Exception:
                 continue
             values.append(val)
+            if len(values) >= 10:
+                break
         return values
     for pname in available_params:
         data = latest_by_param_id.get(pname)
