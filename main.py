@@ -20,7 +20,6 @@ from datetime import datetime, date, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from integrations.apex import ApexClient
-from PyPDF2 import PdfReader
 from html.parser import HTMLParser
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
@@ -1387,6 +1386,10 @@ def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
     return results
 
 def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
+    try:
+        PdfReader = importlib.import_module("PyPDF2").PdfReader
+    except Exception as exc:
+        raise ValueError("PDF parsing requires PyPDF2. Install it and retry.") from exc
     reader = PdfReader(BytesIO(content))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
     results: List[Dict[str, Any]] = []
