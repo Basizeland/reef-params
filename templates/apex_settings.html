@@ -61,9 +61,44 @@
         </div>
       </div>
 
+      {% if probes %}
+        <div class="mt-4">
+          <h3 class="h6 text-uppercase text-muted">Probe Mapping</h3>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Probe</th>
+                  <th>Parameter</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for probe in probes %}
+                  <tr>
+                    <td class="fw-semibold">{{ probe }}</td>
+                    <td>
+                      <input type="hidden" name="probe_name" value="{{ probe }}" />
+                      <select class="form-select form-select-sm" name="param_name">
+                        <option value="">Select parameter</option>
+                        {% for param in parameters %}
+                          <option value="{{ param.name }}" {% if mapping.get(probe) == param.name %}selected{% endif %}>
+                            {{ param.name }}
+                          </option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+
       <div class="d-flex flex-wrap gap-2 mt-4">
         <button class="btn btn-primary" type="submit">Save Settings</button>
         <button class="btn btn-outline-secondary" type="submit" formaction="/settings/integrations/apex/test" formmethod="post">Test Connection</button>
+        <button class="btn btn-outline-secondary" type="submit" formaction="/settings/integrations/apex/probes" formmethod="post">Load Probes</button>
       </div>
     </form>
 

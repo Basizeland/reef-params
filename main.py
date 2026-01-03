@@ -4986,6 +4986,7 @@ def apex_settings(request: Request):
     require_admin(current_user)
     settings = get_apex_settings(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    parameters = list_parameters(db)
     mapping = settings.get("mapping") or {}
     db.close()
     return templates.TemplateResponse(
@@ -4994,6 +4995,9 @@ def apex_settings(request: Request):
             "request": request,
             "settings": settings,
             "mapping_json": apex_mapping_text(mapping or DEFAULT_APEX_MAPPING),
+            "parameters": parameters,
+            "probes": [],
+            "mapping": mapping,
             "tanks": tanks,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
@@ -5013,11 +5017,19 @@ async def apex_settings_save(request: Request):
     api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
     poll_interval = int(to_float(form.get("poll_interval_minutes")) or 15)
     mapping_text = (form.get("mapping_json") or "").strip()
-    try:
-        mapping = parse_apex_mapping(mapping_text)
-    except ValueError as exc:
-        db.close()
-        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+    if mapping_text:
+        try:
+            mapping = parse_apex_mapping(mapping_text)
+        except ValueError as exc:
+            db.close()
+            return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+    else:
+        mapping = {}
+        probe_names = form.getlist("probe_name")
+        param_names = form.getlist("param_name")
+        for probe_name, param_name in zip(probe_names, param_names):
+            if probe_name and param_name:
+                mapping[str(probe_name)] = str(param_name)
     tank_id = form.get("tank_id")
     settings.update(
         {
@@ -5069,6 +5081,51 @@ async def apex_settings_import(request: Request):
     except Exception as exc:
         db.close()
         return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+
+@app.post("/settings/integrations/apex/probes", response_class=HTMLResponse)
+async def apex_settings_probes(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    form = await request.form()
+    settings = get_apex_settings(db)
+    settings["host"] = clean_apex_host(form.get("host") or "")
+    settings["username"] = (form.get("username") or "").strip()
+    settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
+    settings["api_token"] = (form.get("api_token") or "").strip() or settings.get("api_token", "")
+    settings["poll_interval_minutes"] = int(to_float(form.get("poll_interval_minutes")) or 15)
+    settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
+    tank_id = form.get("tank_id")
+    settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
+    mapping_text = (form.get("mapping_json") or "").strip()
+    try:
+        mapping = parse_apex_mapping(mapping_text) if mapping_text else settings.get("mapping") or {}
+    except ValueError:
+        mapping = settings.get("mapping") or {}
+    parameters = list_parameters(db)
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    probes: List[str] = []
+    error = None
+    try:
+        readings = fetch_apex_readings(settings)
+        probes = sorted({str(r["name"]) for r in readings if r.get("name")})
+    except Exception as exc:
+        error = str(exc)
+    db.close()
+    return templates.TemplateResponse(
+        "apex_settings.html",
+        {
+            "request": request,
+            "settings": settings,
+            "mapping_json": apex_mapping_text(mapping or DEFAULT_APEX_MAPPING),
+            "parameters": parameters,
+            "probes": probes,
+            "mapping": mapping,
+            "tanks": tanks,
+            "success": None,
+            "error": error,
+        },
+    )
 
 @app.get("/settings/test-kits/new", response_class=HTMLResponse)
 @app.get("/settings/test-kits/new/", response_class=HTMLResponse, include_in_schema=False)
