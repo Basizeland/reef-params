@@ -1411,10 +1411,15 @@ def parse_triton_html(content: str) -> List[Dict[str, Any]]:
 def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
     text = content.decode("utf-8", errors="ignore")
     sniffer = csv.Sniffer()
+    sample = "\n".join(text.splitlines()[:20])
     try:
-        dialect = sniffer.sniff(text.splitlines()[0])
+        dialect = sniffer.sniff(sample, delimiters=",;\t")
     except Exception:
-        dialect = csv.excel
+        if ";" in sample and "," not in sample:
+            dialect = csv.excel
+            dialect.delimiter = ";"
+        else:
+            dialect = csv.excel
     reader = csv.reader(text.splitlines(), dialect)
     rows = list(reader)
     if not rows:
@@ -1427,20 +1432,15 @@ def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
             name_idx = idx
         if col in {"value", "result", "measured"}:
             value_idx = idx
-    data_rows = rows[1:] if name_idx is not None and value_idx is not None else rows
-    results: List[Dict[str, Any]] = []
-    for row in data_rows:
-        if len(row) < 2:
-            continue
-        name = row[name_idx] if name_idx is not None else row[0]
-        value = row[value_idx] if value_idx is not None else row[1]
-        if not name or not value:
-            continue
-        numeric = extract_numeric_value(value)
-        if numeric is None:
-            continue
-        results.append({"name": name.strip(), "value": numeric, "unit": None})
-    return results
+    if name_idx is not None and value_idx is not None:
+        data_rows = rows[1:]
+        slim_rows = [
+            [row[name_idx], row[value_idx]]
+            for row in data_rows
+            if len(row) > max(name_idx, value_idx)
+        ]
+        return parse_triton_rows(slim_rows)
+    return parse_triton_rows(rows)
 
 def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
     try:
@@ -1454,12 +1454,7 @@ def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
         parts = [p for p in line.split() if p]
         if len(parts) < 2:
             continue
-        name = parts[0]
-        value = parts[1]
-        numeric = extract_numeric_value(value)
-        if numeric is None:
-            continue
-        results.append({"name": name.strip(), "value": numeric, "unit": None})
+        results.extend(parse_triton_rows([parts]))
     return results
 
 def parse_triton_data_attributes(content: str) -> List[Dict[str, Any]]:
