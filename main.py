@@ -1156,7 +1156,7 @@ def clean_apex_host(host: str) -> str:
         if split.path and split.path != "/":
             return f"{split.scheme}://{netloc}{split.path}"
         return f"{split.scheme}://{netloc}"
-    return trimmed.split("?", 1)[0]
+    return f"http://{trimmed.split('?', 1)[0]}"
 
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
