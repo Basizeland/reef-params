@@ -1,5 +1,48 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .workflow-timer-display {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .workflow-stopwatch {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #6c757d;
+    border-radius: 50%;
+    position: relative;
+  }
+
+  .workflow-stopwatch::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    width: 14px;
+    height: 6px;
+    background: #6c757d;
+    border-radius: 3px;
+    transform: translateX(-50%);
+  }
+
+  .workflow-stopwatch-hand {
+    position: absolute;
+    width: 2px;
+    height: 14px;
+    background: #0d6efd;
+    top: 7px;
+    left: 50%;
+    transform-origin: bottom center;
+    animation: workflow-timer-spin 1s linear infinite;
+  }
+
+  @keyframes workflow-timer-spin {
+    from { transform: translateX(-50%) rotate(0deg); }
+    to { transform: translateX(-50%) rotate(360deg); }
+  }
+</style>
 <h2>Add Reading: {{ tank.name }}</h2>
 <form method="post" class="mt-3">
   <div class="mb-3">
@@ -45,23 +88,17 @@
                       <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start timer</button>
                       <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
                       <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
-                      <button class="btn btn-outline-secondary btn-sm workflow-timer-open" type="button" data-bs-toggle="modal" data-bs-target="#workflowTimerModal-{{ p.id }}">Open timer window</button>
-                      <span class="small text-muted align-self-center workflow-timer"></span>
                     </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="modal fade" id="workflowTimerModal-{{ p.id }}" tabindex="-1" aria-hidden="true">
-              <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content">
-                  <div class="modal-header">
-                    <h5 class="modal-title">Timer</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                  </div>
-                  <div class="modal-body">
-                    <div class="text-center display-5 fw-bold workflow-timer-large">—</div>
-                    <div class="text-center text-muted mt-2 workflow-step-label">Start a step to begin the countdown.</div>
+                    <div class="workflow-timer-display mt-2" aria-live="polite">
+                      <div class="workflow-stopwatch" aria-hidden="true">
+                        <span class="workflow-stopwatch-hand"></span>
+                      </div>
+                      <div>
+                        <div class="small text-muted workflow-timer">Start a step to begin the countdown.</div>
+                        <div class="fw-semibold workflow-timer-large">—</div>
+                        <div class="small text-muted workflow-step-label">—</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -150,7 +187,7 @@
       if (!steps || !steps.length) {
         wrapper.classList.add("d-none");
         stepsContainer.innerHTML = "";
-        timerLabel.textContent = "";
+        timerLabel.textContent = "Start a step to begin the countdown.";
         if (timerLabelLarge) timerLabelLarge.textContent = "—";
         if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
         const state = workflowState.get(wrapper);
@@ -226,7 +263,7 @@
             if (timerLabelLarge) timerLabelLarge.textContent = formatDuration(state.remaining);
           }, 1000);
         } else {
-          timerLabel.textContent = `Step ${state.currentIndex + 1}: no timer`;
+          timerLabel.textContent = "No timer for this step.";
           if (timerLabelLarge) timerLabelLarge.textContent = "No timer";
           if (stepLabelLarge) stepLabelLarge.textContent = step.label || "No timer";
         }
@@ -241,14 +278,14 @@
       nextBtn.onclick = () => {
         state.currentIndex = Math.min(state.currentIndex + 1, steps.length - 1);
         highlight();
-        timerLabel.textContent = "";
+        timerLabel.textContent = "Start a step to begin the countdown.";
         if (timerLabelLarge) timerLabelLarge.textContent = "—";
         if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
       };
       resetBtn.onclick = () => {
         stopTimer();
         state.currentIndex = 0;
-        timerLabel.textContent = "";
+        timerLabel.textContent = "Start a step to begin the countdown.";
         if (timerLabelLarge) timerLabelLarge.textContent = "—";
         if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
         highlight();
