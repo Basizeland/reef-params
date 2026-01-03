@@ -1102,6 +1102,8 @@ def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
         "poll_interval_minutes": 15,
         "mapping": {},
         "tank_id": None,
+        "last_probe_list": [],
+        "last_probe_loaded_at": None,
     }
     if raw:
         try:
@@ -1112,6 +1114,8 @@ def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
             pass
     if not isinstance(settings.get("mapping"), dict):
         settings["mapping"] = {}
+    if not isinstance(settings.get("last_probe_list"), list):
+        settings["last_probe_list"] = []
     return settings
 
 def save_apex_settings(db: sqlite3.Connection, settings: Dict[str, Any]) -> None:
@@ -1156,6 +1160,198 @@ def clean_apex_host(host: str) -> str:
             return f"{split.scheme}://{netloc}{split.path}"
         return f"{split.scheme}://{netloc}"
     return f"http://{trimmed.split('?', 1)[0]}"
+
+def normalize_probe_label(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(label).lower())
+
+def infer_apex_auto_mapping(probes: List[str], parameters: List[sqlite3.Row]) -> Dict[str, str]:
+    param_by_key = {
+        normalize_probe_label(row_get(p, "name")): row_get(p, "name")
+        for p in parameters
+        if row_get(p, "name")
+    }
+    mapping_rules = {
+        "temp": "Temperature",
+        "temperature": "Temperature",
+        "ph": "pH",
+        "alk": "Alkalinity/KH",
+        "alkalinity": "Alkalinity/KH",
+        "dkh": "Alkalinity/KH",
+        "calcium": "Calcium",
+        "ca": "Calcium",
+        "magnesium": "Magnesium",
+        "mg": "Magnesium",
+        "nitrate": "Nitrate",
+        "no3": "Nitrate",
+        "phosphate": "Phosphate",
+        "po4": "Phosphate",
+        "salinity": "Salinity",
+        "sg": "Salinity",
+        "orp": "ORP",
+        "oxygen": "Oxygen",
+        "o2": "Oxygen",
+        "ammonia": "Ammonia",
+        "nh3": "Ammonia",
+        "nitrite": "Nitrite",
+        "no2": "Nitrite",
+    }
+    auto_mapping: Dict[str, str] = {}
+    for probe in probes:
+        key = normalize_probe_label(probe)
+        if not key:
+            continue
+        matched = None
+        for rule_key, param_name in mapping_rules.items():
+            if key == rule_key or key.startswith(rule_key):
+                matched = param_name
+                break
+        if not matched:
+            continue
+        param_key = normalize_probe_label(matched)
+        if param_key in param_by_key:
+            auto_mapping[probe] = param_by_key[param_key]
+    return auto_mapping
+
+def build_apex_mapping_from_form(form: Any, fallback: Dict[str, str]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    probe_names = form.getlist("probe_name")
+    param_names = form.getlist("param_name")
+    for probe_name, param_name in zip(probe_names, param_names):
+        if probe_name and param_name:
+            mapping[str(probe_name)] = str(param_name)
+    if mapping:
+        return mapping
+    return fallback or {}
+
+def build_sparkline_points(values: List[float], width: int = 84, height: int = 24) -> str:
+    if len(values) < 2:
+        return ""
+    min_val = min(values)
+    max_val = max(values)
+    span = max(max_val - min_val, 1e-6)
+    points = []
+    for idx, value in enumerate(values):
+        x = round((idx / (len(values) - 1)) * width, 1)
+        y = round(height - ((value - min_val) / span) * height, 1)
+        points.append(f"{x},{y}")
+    return " ".join(points)
+
+TRACE_ELEMENT_NAMES = {
+    "iron",
+    "iodine",
+    "strontium",
+    "potassium",
+    "boron",
+    "fluoride",
+    "manganese",
+    "molybdenum",
+    "zinc",
+    "cobalt",
+}
+
+def is_trace_element(name: str) -> bool:
+    if not name:
+        return False
+    return normalize_probe_label(name) in TRACE_ELEMENT_NAMES
+
+def filter_trace_parameters(parameters: List[sqlite3.Row]) -> List[sqlite3.Row]:
+    return [p for p in parameters if not is_trace_element(row_get(p, "name"))]
+
+def get_recent_param_values(
+    db: sqlite3.Connection,
+    tank_id: int,
+    param_names: List[str],
+    limit: int = 6,
+) -> Dict[str, List[float]]:
+    if not param_names:
+        return {}
+    samples = q(
+        db,
+        """
+        SELECT id
+        FROM samples
+        WHERE tank_id=?
+        ORDER BY taken_at DESC, id DESC
+        LIMIT ?
+        """,
+        (tank_id, limit),
+    )
+    if not samples:
+        return {}
+    sample_ids = [row["id"] for row in samples]
+    mode = values_mode(db)
+    placeholders = ",".join("?" for _ in sample_ids)
+    param_placeholders = ",".join("?" for _ in param_names)
+    if mode == "sample_values":
+        rows = q(
+            db,
+            f"""
+            SELECT sv.sample_id, pd.name AS name, sv.value
+            FROM sample_values sv
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE sv.sample_id IN ({placeholders}) AND pd.name IN ({param_placeholders})
+            """,
+            (*sample_ids, *param_names),
+        )
+    else:
+        rows = q(
+            db,
+            f"""
+            SELECT p.sample_id, p.name AS name, p.value
+            FROM parameters p
+            WHERE p.sample_id IN ({placeholders}) AND p.name IN ({param_placeholders})
+            """,
+            (*sample_ids, *param_names),
+        )
+    values_by_param: Dict[str, Dict[int, float]] = {name: {} for name in param_names}
+    for row in rows:
+        name = row_get(row, "name")
+        value = row_get(row, "value")
+        sample_id = row_get(row, "sample_id")
+        if name is None or value is None or sample_id is None:
+            continue
+        try:
+            values_by_param[str(name)][int(sample_id)] = float(value)
+        except Exception:
+            continue
+    ordered_ids = list(reversed(sample_ids))
+    series: Dict[str, List[float]] = {}
+    for name, values_map in values_by_param.items():
+        series_values = [values_map[sid] for sid in ordered_ids if sid in values_map]
+        if series_values:
+            series[name] = series_values
+    return series
+
+def get_overdue_tests(db: sqlite3.Connection, tank_id: int) -> List[Dict[str, Any]]:
+    now = datetime.now()
+    overdue: List[Dict[str, Any]] = []
+    pdefs = get_active_param_defs(db)
+    latest_map = get_latest_and_previous_per_parameter(db, tank_id)
+    for p in pdefs:
+        name = row_get(p, "name")
+        if not name:
+            continue
+        interval_days = row_get(p, "test_interval_days")
+        if not interval_days:
+            continue
+        data = latest_map.get(name)
+        if not data or not data.get("latest"):
+            continue
+        latest_taken = data["latest"].get("taken_at")
+        if not latest_taken:
+            continue
+        try:
+            if (now - latest_taken).days >= int(interval_days):
+                overdue.append(
+                    {
+                        "parameter": name,
+                        "last_tested": latest_taken,
+                        "days_overdue": (now - latest_taken).days,
+                    }
+                )
+        except Exception:
+            continue
+    return overdue
 
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
@@ -1300,6 +1496,34 @@ def fetch_apex_readings(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
     return normalized
 
+def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) -> List[Dict[str, Any]]:
+    if not settings.get("host"):
+        raise ValueError("Apex host is required.")
+    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
+    if not mapping:
+        raise ValueError("Apex mapping is required.")
+    readings = fetch_apex_readings(settings)
+    preview: List[Dict[str, Any]] = []
+    for reading in readings:
+        probe_name = str(reading.get("name", "")).strip()
+        if not probe_name:
+            continue
+        param_name = mapping.get(probe_name.lower())
+        if not param_name:
+            continue
+        preview.append(
+            {
+                "probe": probe_name,
+                "parameter": param_name,
+                "value": reading.get("value"),
+                "unit": reading.get("unit", ""),
+                "timestamp": reading.get("timestamp"),
+            }
+        )
+    if not preview:
+        raise ValueError("No Apex probes matched the mapping.")
+    return preview
+
 def values_mode(db: sqlite3.Connection) -> str:
     try:
         cur = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('sample_values','parameter_defs')")
@@ -1363,6 +1587,76 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
     else:
         cur.execute("INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)", (sample_id, pname, value, unit or None, test_kit_id))
 
+def get_latest_sample_values(db: sqlite3.Connection, tank_id: int, param_names: List[str]) -> Dict[str, float]:
+    if not param_names:
+        return {}
+    mode = values_mode(db)
+    latest = one(db, "SELECT id FROM samples WHERE tank_id=? ORDER BY taken_at DESC, id DESC LIMIT 1", (tank_id,))
+    if not latest:
+        return {}
+    sample_id = latest["id"]
+    if mode == "sample_values":
+        placeholders = ",".join("?" for _ in param_names)
+        rows = q(
+            db,
+            f"""
+            SELECT pd.name AS name, sv.value AS value
+            FROM sample_values sv
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE sv.sample_id=? AND pd.name IN ({placeholders})
+            """,
+            (sample_id, *param_names),
+        )
+    else:
+        placeholders = ",".join("?" for _ in param_names)
+        rows = q(
+            db,
+            f"""
+            SELECT name, value
+            FROM parameters
+            WHERE sample_id=? AND name IN ({placeholders})
+            """,
+            (sample_id, *param_names),
+        )
+    latest_values: Dict[str, float] = {}
+    for row in rows:
+        name = row_get(row, "name")
+        value = row_get(row, "value")
+        if name is None or value is None:
+            continue
+        try:
+            latest_values[str(name)] = float(value)
+        except Exception:
+            continue
+    return latest_values
+
+def should_import_apex_sample(
+    db: sqlite3.Connection,
+    tank_id: int,
+    mapped: List[Tuple[str, Dict[str, Any]]],
+) -> Tuple[bool, str]:
+    tracked_params = {"Alkalinity/KH", "Calcium", "Magnesium"}
+    tracked_readings = [(param, reading) for param, reading in mapped if param in tracked_params]
+    if not tracked_readings:
+        return True, ""
+    latest_values = get_latest_sample_values(db, tank_id, list(tracked_params))
+    if not latest_values:
+        return True, ""
+    for param_name, reading in tracked_readings:
+        value = reading.get("value")
+        if value is None:
+            continue
+        try:
+            current_value = float(value)
+        except Exception:
+            continue
+        previous_value = latest_values.get(param_name)
+        if previous_value is None:
+            return True, ""
+        if abs(current_value - previous_value) > 1e-6:
+            return True, ""
+    return False, "Alkalinity, Calcium, and Magnesium unchanged from last sample."
+
 def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: Optional[sqlite3.Row]) -> Dict[str, Any]:
     if not settings.get("host"):
         raise ValueError("Apex host is required.")
@@ -1391,6 +1685,9 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
         tank = one(db, "SELECT * FROM tanks ORDER BY id LIMIT 1")
     if not tank:
         raise ValueError("No tank available to import Apex readings.")
+    should_import, reason = should_import_apex_sample(db, tank["id"], mapped)
+    if not should_import:
+        return {"skipped": True, "reason": reason, "mapped_count": len(mapped)}
     taken_at = None
     for _, reading in mapped:
         dt = parse_dt_any(reading.get("timestamp"))
@@ -1408,7 +1705,26 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
         insert_sample_reading(db, sample_id, param_name, float(value), reading.get("unit", ""))
     db.commit()
     log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
-    return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped)}
+    return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped), "skipped": False}
+
+def apex_polling_loop() -> None:
+    while True:
+        db = get_db()
+        settings = get_apex_settings(db)
+        enabled = bool(settings.get("enabled"))
+        interval = int(to_float(settings.get("poll_interval_minutes")) or 15)
+        interval = max(interval, 1)
+        if enabled and settings.get("host") and settings.get("mapping"):
+            try:
+                import_apex_sample(db, settings, None)
+            except Exception as exc:
+                print(f"Apex polling error: {exc}")
+        db.close()
+        time_module.sleep(interval * 60)
+
+def start_apex_polling() -> None:
+    thread = threading.Thread(target=apex_polling_loop, name="apex-poller", daemon=True)
+    thread.start()
 
 def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
     mode = values_mode(db)
@@ -1944,6 +2260,7 @@ init_db()
 @app.on_event("startup")
 def start_background_jobs() -> None:
     start_daily_summary_scheduler()
+    start_apex_polling()
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -1974,11 +2291,13 @@ def dashboard(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
     tank_cards = []
+    reminders: List[Dict[str, Any]] = []
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
         targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
+        history_map = get_recent_param_values(db, t["id"], list(pdefs.keys()))
         
         readings = []
         out_of_range = 0
@@ -2033,6 +2352,15 @@ def dashboard(request: Request):
                 out_of_range += 1
             if overdue:
                 overdue_count += 1
+                reminders.append(
+                    {
+                        "tank_id": t["id"],
+                        "tank_name": t["name"],
+                        "parameter": pname,
+                        "last_tested": latest_taken,
+                    }
+                )
+            sparkline_values = history_map.get(pname, [])
             readings.append({
                 "name": pname,
                 "value": latest_val,
@@ -2042,6 +2370,7 @@ def dashboard(request: Request):
                 "trend_warning": trend_warning,
                 "delta_per_day": delta_per_day,
                 "overdue": overdue,
+                "sparkline": build_sparkline_points(sparkline_values),
             })
         
         tank_data = dict(t)
@@ -2061,7 +2390,135 @@ def dashboard(request: Request):
             },
         })
     db.close()
-    return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "tank_cards": tank_cards,
+            "reminders": reminders,
+            "extra_css": ["/static/dashboard.css"],
+        },
+    )
+
+@app.get("/insights", response_class=HTMLResponse)
+def insights(request: Request):
+    db = get_db()
+    tanks = get_visible_tanks(db, request)
+    tank_ids = [t["id"] for t in tanks]
+    total_tanks = len(tanks)
+    total_samples_week = 0
+    overdue_items: List[Dict[str, Any]] = []
+    volatility: List[Dict[str, Any]] = []
+    if tank_ids:
+        placeholders = ",".join("?" for _ in tank_ids)
+        week_start = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        total_samples_week = one(
+            db,
+            f"SELECT COUNT(*) AS count FROM samples WHERE tank_id IN ({placeholders}) AND taken_at>=?",
+            (*tank_ids, week_start),
+        )["count"]
+        for tank in tanks:
+            overdue_items.extend(
+                [
+                    {
+                        "tank_id": tank["id"],
+                        "tank_name": tank["name"],
+                        **item,
+                    }
+                    for item in get_overdue_tests(db, tank["id"])
+                ]
+            )
+            latest_map = get_latest_and_previous_per_parameter(db, tank["id"])
+            for param_name, data in latest_map.items():
+                latest = data.get("latest")
+                previous = data.get("previous")
+                if not latest or not previous:
+                    continue
+                latest_taken = latest.get("taken_at")
+                previous_taken = previous.get("taken_at")
+                if not latest_taken or not previous_taken:
+                    continue
+                try:
+                    delta = float(latest.get("value")) - float(previous.get("value"))
+                    days = max((latest_taken - previous_taken).total_seconds() / 86400.0, 1e-6)
+                    volatility.append(
+                        {
+                            "tank_id": tank["id"],
+                            "tank_name": tank["name"],
+                            "parameter": param_name,
+                            "delta_per_day": delta / days,
+                        }
+                    )
+                except Exception:
+                    continue
+    volatility_sorted = sorted(volatility, key=lambda v: abs(v["delta_per_day"]), reverse=True)[:5]
+    db.close()
+    return templates.TemplateResponse(
+        "insights.html",
+        {
+            "request": request,
+            "total_tanks": total_tanks,
+            "total_samples_week": total_samples_week,
+            "overdue_items": overdue_items,
+            "volatility": volatility_sorted,
+        },
+    )
+
+@app.get("/alerts", response_class=HTMLResponse)
+def alerts_center(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    if row_get(user, "admin"):
+        alerts = collect_dosing_notifications(db, actor_user=user)
+    else:
+        alerts = collect_dosing_notifications(db, owner_user_id=user["id"], actor_user=user)
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    db.close()
+    return templates.TemplateResponse(
+        "alerts.html",
+        {
+            "request": request,
+            "alerts": alerts,
+            "tanks": tanks,
+        },
+    )
+
+@app.get("/tanks/{tank_id}/snapshot", response_class=HTMLResponse)
+def tank_snapshot(request: Request, tank_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    latest_sample = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
+    readings: List[Dict[str, Any]] = []
+    if latest_sample:
+        for row in get_sample_readings(db, latest_sample["id"]):
+            readings.append(
+                {
+                    "name": row_get(row, "name"),
+                    "value": row_get(row, "value"),
+                    "unit": row_get(row, "unit"),
+                }
+            )
+    db.close()
+    return templates.TemplateResponse(
+        "tank_snapshot.html",
+        {
+            "request": request,
+            "tank": tank,
+            "latest_sample": latest_sample,
+            "readings": readings,
+        },
+    )
+
+@app.get("/pwa/checklist", response_class=HTMLResponse)
+def pwa_checklist(request: Request):
+    return templates.TemplateResponse("pwa_checklist.html", {"request": request})
 
 @app.get("/auth/login", response_class=HTMLResponse)
 def login_form(request: Request):
@@ -4398,10 +4855,13 @@ def add_sample_form(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    params_rows = get_active_param_defs(db)
+    params_rows = filter_trace_parameters(get_active_param_defs(db))
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
-    for k in kits: kits_by_param.setdefault(k["parameter"], []).append(k)
+    for k in kits:
+        if is_trace_element(row_get(k, "parameter") or ""):
+            continue
+        kits_by_param.setdefault(k["parameter"], []).append(k)
     db.close()
     return templates.TemplateResponse("add_sample.html", {"request": request, "tank_id": tank_id, "tank": tank, "parameters": params_rows, "kits_by_param": kits_by_param, "kits": kits})
 
@@ -4423,7 +4883,7 @@ async def add_sample(request: Request, tank_id: int):
     else: when_iso = datetime.utcnow().isoformat()
     cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank_id, when_iso, notes))
     sample_id = cur.lastrowid
-    pdefs = get_active_param_defs(db)
+    pdefs = filter_trace_parameters(get_active_param_defs(db))
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
@@ -4945,6 +5405,42 @@ def parameter_delete(request: Request, param_id: int):
     db.close()
     return redirect("/settings/parameters")
 
+@app.post("/settings/parameters/bulk-add")
+async def parameter_bulk_add(request: Request):
+    form = await request.form()
+    raw = (form.get("bulk_parameters") or "").strip()
+    default_unit = (form.get("bulk_unit") or "").strip() or None
+    if not raw:
+        return redirect("/settings/parameters")
+    db = get_db()
+    cur = db.cursor()
+    for line in raw.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        parts = [p.strip() for p in cleaned.split(",", 1)]
+        name = parts[0]
+        if not name:
+            continue
+        unit = parts[1] if len(parts) > 1 and parts[1] else default_unit
+        existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (name,))
+        if existing:
+            cur.execute(
+                "UPDATE parameter_defs SET unit=COALESCE(unit, ?) WHERE id=?",
+                (unit, existing["id"]),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO parameter_defs (name, unit, active, sort_order)
+                VALUES (?, ?, 1, 0)
+                """,
+                (name, unit),
+            )
+    db.commit()
+    db.close()
+    return redirect("/settings/parameters")
+
 @app.get("/settings/test-kits", response_class=HTMLResponse)
 @app.get("/settings/test-kits/", response_class=HTMLResponse, include_in_schema=False)
 def test_kits(request: Request):
@@ -4982,6 +5478,9 @@ def apex_settings(request: Request):
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = list_parameters(db)
     mapping = settings.get("mapping") or {}
+    probes = settings.get("last_probe_list") or []
+    auto_mapping = infer_apex_auto_mapping(probes, parameters)
+    last_probe_loaded_at = settings.get("last_probe_loaded_at")
     db.close()
     return templates.TemplateResponse(
         "apex_settings.html",
@@ -4989,8 +5488,11 @@ def apex_settings(request: Request):
             "request": request,
             "settings": settings,
             "parameters": parameters,
-            "probes": [],
+            "probes": probes,
             "mapping": mapping,
+            "auto_mapping": auto_mapping,
+            "last_probe_loaded_at": last_probe_loaded_at,
+            "preview": [],
             "tanks": tanks,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
@@ -5009,12 +5511,7 @@ async def apex_settings_save(request: Request):
     password = (form.get("password") or "").strip() or settings.get("password", "")
     api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
     poll_interval = int(to_float(form.get("poll_interval_minutes")) or 15)
-    mapping = {}
-    probe_names = form.getlist("probe_name")
-    param_names = form.getlist("param_name")
-    for probe_name, param_name in zip(probe_names, param_names):
-        if probe_name and param_name:
-            mapping[str(probe_name)] = str(param_name)
+    mapping = build_apex_mapping_from_form(form, settings.get("mapping") or {})
     tank_id = form.get("tank_id")
     settings.update(
         {
@@ -5060,7 +5557,10 @@ async def apex_settings_import(request: Request):
     settings = get_apex_settings(db)
     try:
         result = import_apex_sample(db, settings, current_user)
-        message = f"Imported {result['mapped_count']} readings into sample {result['sample_id']}."
+        if result.get("skipped"):
+            message = result.get("reason") or "No changes detected; import skipped."
+        else:
+            message = f"Imported {result['mapped_count']} readings into sample {result['sample_id']}."
         db.close()
         return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
     except Exception as exc:
@@ -5090,6 +5590,55 @@ async def apex_settings_probes(request: Request):
     try:
         readings = fetch_apex_readings(settings)
         probes = sorted({str(r["name"]) for r in readings if r.get("name")})
+        settings["last_probe_list"] = probes
+        settings["last_probe_loaded_at"] = datetime.utcnow().isoformat()
+        save_apex_settings(db, settings)
+    except Exception as exc:
+        error = str(exc)
+    auto_mapping = infer_apex_auto_mapping(probes, parameters)
+    last_probe_loaded_at = settings.get("last_probe_loaded_at")
+    db.close()
+    return templates.TemplateResponse(
+        "apex_settings.html",
+        {
+            "request": request,
+            "settings": settings,
+            "parameters": parameters,
+            "probes": probes,
+            "mapping": mapping,
+            "auto_mapping": auto_mapping,
+            "last_probe_loaded_at": last_probe_loaded_at,
+            "preview": [],
+            "tanks": tanks,
+            "success": None,
+            "error": error,
+        },
+    )
+
+@app.post("/settings/integrations/apex/preview", response_class=HTMLResponse)
+async def apex_settings_preview(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    form = await request.form()
+    settings = get_apex_settings(db)
+    settings["host"] = clean_apex_host(form.get("host") or "")
+    settings["username"] = (form.get("username") or "").strip()
+    settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
+    settings["api_token"] = (form.get("api_token") or "").strip() or settings.get("api_token", "")
+    settings["poll_interval_minutes"] = int(to_float(form.get("poll_interval_minutes")) or 15)
+    settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
+    tank_id = form.get("tank_id")
+    settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
+    parameters = list_parameters(db)
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    probes = settings.get("last_probe_list") or []
+    auto_mapping = infer_apex_auto_mapping(probes, parameters)
+    mapping = build_apex_mapping_from_form(form, settings.get("mapping") or {})
+    preview: List[Dict[str, Any]] = []
+    error = None
+    try:
+        preview = preview_apex_mapping(settings, mapping or auto_mapping)
     except Exception as exc:
         error = str(exc)
     db.close()
@@ -5101,6 +5650,9 @@ async def apex_settings_probes(request: Request):
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
+            "auto_mapping": auto_mapping,
+            "last_probe_loaded_at": settings.get("last_probe_loaded_at"),
+            "preview": preview,
             "tanks": tanks,
             "success": None,
             "error": error,

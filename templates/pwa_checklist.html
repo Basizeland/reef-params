@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">PWA QA Checklist</h1>
+    <div class="text-muted small">Validate install, offline, and notification behavior across devices.</div>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0">
+  <div class="card-body">
+    <h2 class="h6 text-uppercase text-muted mb-3">Install & offline</h2>
+    <ul class="list-group list-group-flush">
+      <li class="list-group-item">Android Chrome: install prompt appears and app launches in standalone mode.</li>
+      <li class="list-group-item">iOS Safari: “Add to Home Screen” flow works and app opens without browser chrome.</li>
+      <li class="list-group-item">Offline: navigating to dashboard shows offline page and cached UI loads.</li>
+    </ul>
+
+    <h2 class="h6 text-uppercase text-muted mt-4 mb-3">Push notifications</h2>
+    <ul class="list-group list-group-flush">
+      <li class="list-group-item">Enable push on desktop/Android and confirm status badge shows “On”.</li>
+      <li class="list-group-item">Trigger a test alert and verify notification arrives.</li>
+      <li class="list-group-item">Disable push and confirm subscriptions are removed.</li>
+    </ul>
+
+    <h2 class="h6 text-uppercase text-muted mt-4 mb-3">Performance</h2>
+    <ul class="list-group list-group-flush">
+      <li class="list-group-item">Lighthouse PWA score ≥ 90 for mobile and desktop.</li>
+      <li class="list-group-item">Dashboard load feels responsive; skeleton placeholders appear briefly.</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
