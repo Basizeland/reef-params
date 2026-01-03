@@ -118,7 +118,7 @@
                                     <div class="fw-semibold small">Push alerts</div>
                                     <div class="text-muted small">Enable browser push notifications.</div>
                                 </div>
-                                <button class="btn btn-sm btn-outline-primary" type="button" id="enable-browser-alerts">
+                                <button class="btn btn-sm btn-outline-primary js-enable-browser-alerts" type="button" data-status-target="browser-alerts-status">
                                     <span id="browser-alerts-status">Off</span>
                                 </button>
                             </div>
@@ -131,6 +131,30 @@
             </div>
         </div>
     </nav>
+
+    <div class="container">
+        <div class="alert alert-info d-none pwa-banner" role="alert" id="pwa-install-banner">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <strong>Install Reef Metrics</strong>
+                    <div class="small text-muted">Add this app to your home screen for quick access.</div>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary btn-sm" type="button" id="pwa-install-btn">Install</button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" id="pwa-install-dismiss">Not now</button>
+                </div>
+            </div>
+        </div>
+        <div class="alert alert-info d-none pwa-banner" role="alert" id="pwa-ios-banner">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <strong>Add to Home Screen</strong>
+                    <div class="small text-muted">Tap Share → Add to Home Screen in Safari.</div>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" type="button" id="pwa-ios-dismiss">Got it</button>
+            </div>
+        </div>
+    </div>
 
     <div class="container pb-5 mobile-content-pad">
         {% block content %}{% endblock %}
@@ -344,18 +368,24 @@
         });
 
         document.addEventListener("DOMContentLoaded", () => {
-            const toggleBtn = document.getElementById("enable-browser-alerts");
-            const statusLabel = document.getElementById("browser-alerts-status");
+            const toggleButtons = Array.from(document.querySelectorAll(".js-enable-browser-alerts"));
             const updateStatus = async () => {
-                if (!statusLabel) return;
                 if (!("serviceWorker" in navigator)) {
-                    statusLabel.textContent = "Unsupported";
-                    if (toggleBtn) toggleBtn.disabled = true;
+                    toggleButtons.forEach((btn) => {
+                        const targetId = btn.getAttribute("data-status-target");
+                        const label = targetId ? document.getElementById(targetId) : null;
+                        if (label) label.textContent = "Unsupported";
+                        btn.disabled = true;
+                    });
                     return;
                 }
                 const registration = await navigator.serviceWorker.ready;
                 const subscription = await registration.pushManager.getSubscription();
-                statusLabel.textContent = subscription ? "On" : "Off";
+                toggleButtons.forEach((btn) => {
+                    const targetId = btn.getAttribute("data-status-target");
+                    const label = targetId ? document.getElementById(targetId) : null;
+                    if (label) label.textContent = subscription ? "On" : "Off";
+                });
             };
             const urlBase64ToUint8Array = (base64String) => {
                 const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -404,8 +434,8 @@
                 });
                 await subscription.unsubscribe();
             };
-            if (toggleBtn) {
-                toggleBtn.addEventListener("click", async () => {
+            toggleButtons.forEach((btn) => {
+                btn.addEventListener("click", async () => {
                     if (!("Notification" in window)) {
                         alert("Browser notifications are not supported on this device.");
                         return;
@@ -424,7 +454,7 @@
                     }
                     await updateStatus();
                 });
-            }
+            });
             updateStatus();
         });
 
@@ -432,6 +462,46 @@
             const tooltipTriggers = Array.from(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
             tooltipTriggers.forEach((trigger) => {
                 new bootstrap.Tooltip(trigger);
+            });
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const installBanner = document.getElementById("pwa-install-banner");
+            const installBtn = document.getElementById("pwa-install-btn");
+            const installDismiss = document.getElementById("pwa-install-dismiss");
+            const iosBanner = document.getElementById("pwa-ios-banner");
+            const iosDismiss = document.getElementById("pwa-ios-dismiss");
+            let deferredPrompt = null;
+
+            window.addEventListener("beforeinstallprompt", (event) => {
+                event.preventDefault();
+                deferredPrompt = event;
+                if (installBanner) {
+                    installBanner.classList.remove("d-none");
+                }
+            });
+
+            if (installBtn) {
+                installBtn.addEventListener("click", async () => {
+                    if (!deferredPrompt) return;
+                    deferredPrompt.prompt();
+                    await deferredPrompt.userChoice;
+                    deferredPrompt = null;
+                    installBanner?.classList.add("d-none");
+                });
+            }
+
+            installDismiss?.addEventListener("click", () => {
+                installBanner?.classList.add("d-none");
+            });
+
+            const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+            const isStandalone = window.navigator.standalone === true;
+            if (isIos && !isStandalone && iosBanner) {
+                iosBanner.classList.remove("d-none");
+            }
+            iosDismiss?.addEventListener("click", () => {
+                iosBanner?.classList.add("d-none");
             });
         });
     </script>
