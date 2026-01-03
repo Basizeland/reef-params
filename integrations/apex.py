@@ -37,7 +37,7 @@ class ApexClient:
         return readings
 
     def _fetch_payload(self) -> Any:
-        base = _normalize_host(self.host)
+        bases = _normalize_host(self.host)
         endpoints = ["/rest/status", "/rest/status.json", "/rest/"]
         headers = {"Accept": "application/json"}
         if self.api_token:
@@ -46,19 +46,27 @@ class ApexClient:
             token = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("utf-8")
             headers["Authorization"] = f"Basic {token}"
         last_error: Optional[Exception] = None
-        for endpoint in endpoints:
-            url = f"{base}{endpoint}"
-            req = urllib.request.Request(url, headers=headers)
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    content = resp.read().decode("utf-8")
-                return json.loads(content)
-            except urllib.error.HTTPError as exc:
-                last_error = exc
-            except json.JSONDecodeError as exc:
-                last_error = exc
-            except Exception as exc:
-                last_error = exc
+        for base in bases:
+            for endpoint in endpoints:
+                url = f"{base}{endpoint}"
+                req = urllib.request.Request(url, headers=headers)
+                try:
+                    with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                        content = resp.read().decode("utf-8")
+                    return json.loads(content)
+                except urllib.error.HTTPError as exc:
+                    last_error = exc
+                except urllib.error.URLError as exc:
+                    if getattr(getattr(exc, "reason", None), "errno", None) == 113:
+                        last_error = ValueError(
+                            "Unable to reach Apex host. Verify the IP/port and that this server can reach it on the network."
+                        )
+                    else:
+                        last_error = exc
+                except json.JSONDecodeError as exc:
+                    last_error = exc
+                except Exception as exc:
+                    last_error = exc
         if last_error:
             raise last_error
         raise RuntimeError("Unable to fetch Apex payload")
@@ -126,10 +134,10 @@ def _to_float(value: Any) -> Optional[float]:
             return None
 
 
-def _normalize_host(host: str) -> str:
+def _normalize_host(host: str) -> List[str]:
     trimmed = host.strip()
     if not trimmed:
-        return ""
-    if "://" not in trimmed:
-        trimmed = f"http://{trimmed}"
-    return trimmed.rstrip("/")
+        return []
+    if "://" in trimmed:
+        return [trimmed.rstrip("/")]
+    return [f"http://{trimmed.rstrip('/')}", f"https://{trimmed.rstrip('/')}"]
