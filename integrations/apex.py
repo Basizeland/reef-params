@@ -85,7 +85,7 @@ def _extract_probe_list(payload: Any) -> Sequence[Dict[str, Any]]:
         return [p for p in payload if isinstance(p, dict)]
     if not isinstance(payload, dict):
         return []
-    for key in ("probes", "probe", "items", "data"):
+    for key in ("probes", "probe", "items", "data", "status", "status_list", "statusList"):
         val = payload.get(key)
         if isinstance(val, list):
             return [p for p in val if isinstance(p, dict)]
@@ -95,6 +95,8 @@ def _extract_probe_list(payload: Any) -> Sequence[Dict[str, Any]]:
                 return nested
     for key in ("status", "response", "result"):
         val = payload.get(key)
+        if isinstance(val, list):
+            return [p for p in val if isinstance(p, dict)]
         if isinstance(val, dict):
             nested = _extract_probe_list(val)
             if nested:

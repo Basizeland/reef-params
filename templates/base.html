@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reef Metrics</title>
-    <meta name="theme-color" content="#0f2d45">
+    <meta name="theme-color" content="#0b1f33">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Reef Metrics">
@@ -13,98 +13,20 @@
     <link rel="apple-touch-icon" href="/static/logo.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="/static/style.css">
-    <style>
-        /* Specific Navbar Branding Styles */
-        .navbar {
-            background: linear-gradient(120deg, #ffffff, #f2fbfb 55%, #e9f6f6);
-            border-bottom: 2px solid var(--reef-cyan);
-            padding: 0.4rem 1rem;
-        }
-
-        .navbar-brand { 
-            display: flex;
-            align-items: center;
-            padding: 0;
-        }
-
-        /* Container for your logo.png */
-        .brand-logo-img {
-            height: 55px;
-            width: auto;
-            transition: transform 0.2s ease;
-        }
-
-        .navbar-brand:hover .brand-logo-img {
-            transform: scale(1.03);
-        }
-
-        .nav-link {
-            color: var(--reef-navy) !important;
-            font-weight: 600;
-        }
-
-        .nav-link:hover {
-            color: var(--reef-teal) !important;
-        }
-
-        /* Responsive logo scaling */
-        @media (max-width: 576px) {
-            .brand-logo-img { height: 40px; }
-            .notification-menu {
-                position: fixed !important;
-                top: 72px !important;
-                left: 0.75rem !important;
-                right: 0.75rem !important;
-                width: auto;
-                max-width: calc(100vw - 1.5rem);
-                min-width: auto;
-                margin: 0 auto;
-                transform: none !important;
-            }
-            .mobile-content-pad {
-                padding-bottom: 5.5rem;
-            }
-            .bottom-nav {
-                position: fixed;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                z-index: 1030;
-                background: var(--reef-surface);
-                border-top: 1px solid var(--reef-border);
-                box-shadow: 0 -6px 18px rgba(15, 45, 69, 0.08);
-                padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
-            }
-            .bottom-nav .nav-link {
-                color: var(--reef-muted) !important;
-                font-size: 0.7rem;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.04em;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                gap: 0.2rem;
-            }
-            .bottom-nav .nav-link i {
-                font-size: 1.2rem;
-            }
-            .bottom-nav .nav-link.active {
-                color: var(--reef-teal) !important;
-            }
-        }
-    </style>
+    <link rel="preload" href="/static/style.css?v=4" as="style">
+    <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark mb-4 sticky-top shadow-sm">
+    <nav class="navbar navbar-expand-lg navbar-light mb-4 sticky-top">
         <div class="container">
             <a class="navbar-brand" href="/">
-                <img src="/static/logo-light.png" alt="Reef Metrics" class="brand-logo-img">
+                <img src="/static/logo-light.png" alt="Reef Metrics" class="brand-logo-img" height="36" width="150">
             </a>
             <div class="collapse navbar-collapse me-auto" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/insights"><i class="bi bi-graph-up-arrow"></i> Insights</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/alerts"><i class="bi bi-bell"></i> Alerts</a></li>
                     
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
@@ -113,6 +35,7 @@
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
                             <li><a class="dropdown-item" href="/tools/calculators"><i class="bi bi-calculator"></i> Dosing Calculator</a></li>
                             <li><a class="dropdown-item" href="/tools/dose-plan"><i class="bi bi-calendar-check"></i> Dose Planner</a></li>
+                            <li><a class="dropdown-item" href="/tools/icp"><i class="bi bi-file-earmark-spreadsheet"></i> ICP Import</a></li>
                         </ul>
                     </li>
 
@@ -135,6 +58,7 @@
                                 <li><a class="dropdown-item" href="/settings/integrations/apex"><i class="bi bi-plug"></i> Apex Integration</a></li>
                                 <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people"></i> Users</a></li>
                                 <li><a class="dropdown-item" href="/admin/audit"><i class="bi bi-journal-text"></i> Audit Log</a></li>
+                                <li><a class="dropdown-item" href="/pwa/checklist"><i class="bi bi-check2-square"></i> PWA Checklist</a></li>
                             {% else %}
                                 <li>
                                     <span class="dropdown-item text-muted">
@@ -197,7 +121,7 @@
                                     <div class="fw-semibold small">Push alerts</div>
                                     <div class="text-muted small">Enable browser push notifications.</div>
                                 </div>
-                                <button class="btn btn-sm btn-outline-primary" type="button" id="enable-browser-alerts">
+                                <button class="btn btn-sm btn-outline-primary js-enable-browser-alerts" type="button" data-status-target="browser-alerts-status">
                                     <span id="browser-alerts-status">Off</span>
                                 </button>
                             </div>
@@ -210,6 +134,30 @@
             </div>
         </div>
     </nav>
+
+    <div class="container">
+        <div class="alert alert-info d-none pwa-banner" role="alert" id="pwa-install-banner">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <strong>Install Reef Metrics</strong>
+                    <div class="small text-muted">Add this app to your home screen for quick access.</div>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary btn-sm" type="button" id="pwa-install-btn">Install</button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" id="pwa-install-dismiss">Not now</button>
+                </div>
+            </div>
+        </div>
+        <div class="alert alert-info d-none pwa-banner" role="alert" id="pwa-ios-banner">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <strong>Add to Home Screen</strong>
+                    <div class="small text-muted">Tap Share → Add to Home Screen in Safari.</div>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" type="button" id="pwa-ios-dismiss">Got it</button>
+            </div>
+        </div>
+    </div>
 
     <div class="container pb-5 mobile-content-pad">
         {% block content %}{% endblock %}
@@ -423,18 +371,33 @@
         });
 
         document.addEventListener("DOMContentLoaded", () => {
-            const toggleBtn = document.getElementById("enable-browser-alerts");
-            const statusLabel = document.getElementById("browser-alerts-status");
+            const toggleButtons = Array.from(document.querySelectorAll(".js-enable-browser-alerts"));
             const updateStatus = async () => {
-                if (!statusLabel) return;
                 if (!("serviceWorker" in navigator)) {
-                    statusLabel.textContent = "Unsupported";
-                    if (toggleBtn) toggleBtn.disabled = true;
+                    toggleButtons.forEach((btn) => {
+                        const targetId = btn.getAttribute("data-status-target");
+                        const label = targetId ? document.getElementById(targetId) : null;
+                        if (label) label.textContent = "Unsupported";
+                        btn.disabled = true;
+                    });
                     return;
                 }
                 const registration = await navigator.serviceWorker.ready;
                 const subscription = await registration.pushManager.getSubscription();
-                statusLabel.textContent = subscription ? "On" : "Off";
+                const permission = Notification?.permission || "default";
+                toggleButtons.forEach((btn) => {
+                    const targetId = btn.getAttribute("data-status-target");
+                    const label = targetId ? document.getElementById(targetId) : null;
+                    if (label) {
+                        if (subscription) {
+                            label.textContent = "On";
+                        } else if (permission === "denied") {
+                            label.textContent = "Blocked";
+                        } else {
+                            label.textContent = "Off";
+                        }
+                    }
+                });
             };
             const urlBase64ToUint8Array = (base64String) => {
                 const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -457,7 +420,7 @@
                 const publicKey = await getPublicKey();
                 if (!publicKey) {
                     alert("Push notifications are not configured on the server.");
-                    return;
+                    return null;
                 }
                 const registration = await navigator.serviceWorker.ready;
                 const subscription = await registration.pushManager.subscribe({
@@ -470,6 +433,7 @@
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(subscription),
                 });
+                return subscription;
             };
             const unsubscribePush = async () => {
                 const registration = await navigator.serviceWorker.ready;
@@ -483,8 +447,8 @@
                 });
                 await subscription.unsubscribe();
             };
-            if (toggleBtn) {
-                toggleBtn.addEventListener("click", async () => {
+            toggleButtons.forEach((btn) => {
+                btn.addEventListener("click", async () => {
                     if (!("Notification" in window)) {
                         alert("Browser notifications are not supported on this device.");
                         return;
@@ -499,11 +463,18 @@
                     if (subscription) {
                         await unsubscribePush();
                     } else {
-                        await subscribePush();
+                        const newSubscription = await subscribePush();
+                        if (newSubscription) {
+                            toggleButtons.forEach((button) => {
+                                const targetId = button.getAttribute("data-status-target");
+                                const label = targetId ? document.getElementById(targetId) : null;
+                                if (label) label.textContent = "On";
+                            });
+                        }
                     }
                     await updateStatus();
                 });
-            }
+            });
             updateStatus();
         });
 
@@ -511,6 +482,74 @@
             const tooltipTriggers = Array.from(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
             tooltipTriggers.forEach((trigger) => {
                 new bootstrap.Tooltip(trigger);
+            });
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const skeletons = Array.from(document.querySelectorAll("[data-skeleton]"));
+            if (!skeletons.length) return;
+            setTimeout(() => {
+                skeletons.forEach((el) => el.removeAttribute("data-skeleton"));
+            }, 200);
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const installBanner = document.getElementById("pwa-install-banner");
+            const installBtn = document.getElementById("pwa-install-btn");
+            const installDismiss = document.getElementById("pwa-install-dismiss");
+            const iosBanner = document.getElementById("pwa-ios-banner");
+            const iosDismiss = document.getElementById("pwa-ios-dismiss");
+            let deferredPrompt = null;
+
+            window.addEventListener("beforeinstallprompt", (event) => {
+                event.preventDefault();
+                deferredPrompt = event;
+                if (installBanner) {
+                    installBanner.classList.remove("d-none");
+                }
+            });
+
+            if (installBtn) {
+                installBtn.addEventListener("click", async () => {
+                    if (!deferredPrompt) return;
+                    deferredPrompt.prompt();
+                    await deferredPrompt.userChoice;
+                    deferredPrompt = null;
+                    installBanner?.classList.add("d-none");
+                });
+            }
+
+            installDismiss?.addEventListener("click", () => {
+                installBanner?.classList.add("d-none");
+            });
+
+            const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+            const isStandalone = window.navigator.standalone === true;
+            if (isIos && !isStandalone && iosBanner) {
+                iosBanner.classList.remove("d-none");
+            }
+            iosDismiss?.addEventListener("click", () => {
+                iosBanner?.classList.add("d-none");
+            });
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const shareButtons = Array.from(document.querySelectorAll("[data-share-url]"));
+            shareButtons.forEach((btn) => {
+                btn.addEventListener("click", async () => {
+                    if (!navigator.share) {
+                        alert("Sharing is not supported on this device.");
+                        return;
+                    }
+                    const title = btn.getAttribute("data-share-title") || "Reef Metrics";
+                    const text = btn.getAttribute("data-share-text") || "";
+                    const url = btn.getAttribute("data-share-url") || window.location.href;
+                    try {
+                        await navigator.share({ title, text, url });
+                    } catch (err) {
+                        return;
+                    }
+                });
             });
         });
     </script>
