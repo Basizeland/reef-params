@@ -1,0 +1,16 @@
+{
+  "name": "reef-metrics",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Capacitor wrapper for Reef Metrics",
+  "scripts": {
+    "cap:init": "cap init ReefMetrics com.reefmetrics.app --web-dir static",
+    "cap:sync": "cap sync",
+    "cap:android": "cap open android",
+    "cap:ios": "cap open ios"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0"
+  }
+}

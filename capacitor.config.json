@@ -1,0 +1,10 @@
+{
+  "appId": "com.reefmetrics.app",
+  "appName": "Reef Metrics",
+  "webDir": "static",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "http://localhost:8000",
+    "cleartext": true
+  }
+}
