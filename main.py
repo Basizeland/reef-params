@@ -6559,17 +6559,17 @@ async def icp_preview(request: Request):
         mapped = map_icp_to_parameters(db, results)
     except Exception as exc:
         db.close()
-    return templates.TemplateResponse(
-        "icp_import.html",
-        {
-            "request": request,
-            "tanks": tanks,
-            "mapped": [],
-            "mapped_payload": "",
-            "raw_count": 0,
-            "error": str(exc),
-            "success": None,
-        },
+        return templates.TemplateResponse(
+            "icp_import.html",
+            {
+                "request": request,
+                "tanks": tanks,
+                "mapped": [],
+                "mapped_payload": "",
+                "raw_count": 0,
+                "error": str(exc),
+                "success": None,
+            },
         )
     db.close()
     return templates.TemplateResponse(
