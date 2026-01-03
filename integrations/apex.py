@@ -1,6 +1,7 @@
 import base64
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
@@ -139,5 +140,12 @@ def _normalize_host(host: str) -> List[str]:
     if not trimmed:
         return []
     if "://" in trimmed:
-        return [trimmed.rstrip("/")]
-    return [f"http://{trimmed.rstrip('/')}", f"https://{trimmed.rstrip('/')}"]
+        split = urllib.parse.urlsplit(trimmed)
+        netloc = split.netloc or split.path.split("/")[0]
+        if not netloc:
+            return []
+        return [f"{split.scheme}://{netloc}"]
+    host_only = trimmed.split("/", 1)[0]
+    if not host_only:
+        return []
+    return [f"http://{host_only}", f"https://{host_only}"]

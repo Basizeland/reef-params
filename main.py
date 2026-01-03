@@ -1144,6 +1144,18 @@ def apex_mapping_text(mapping: Dict[str, str]) -> str:
         return ""
     return json.dumps(mapping, indent=2, sort_keys=True)
 
+def clean_apex_host(host: str) -> str:
+    trimmed = host.strip()
+    if not trimmed:
+        return ""
+    if "://" in trimmed:
+        split = urllib.parse.urlsplit(trimmed)
+        netloc = split.netloc or split.path.split("/")[0]
+        if not netloc:
+            return ""
+        return f"{split.scheme}://{netloc}"
+    return trimmed.split("/", 1)[0]
+
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
     return bool(row and row["count"] > 0)
@@ -4987,7 +4999,7 @@ async def apex_settings_save(request: Request):
     require_admin(current_user)
     form = await request.form()
     settings = get_apex_settings(db)
-    host = (form.get("host") or "").strip()
+    host = clean_apex_host(form.get("host") or "")
     username = (form.get("username") or "").strip()
     password = (form.get("password") or "").strip() or settings.get("password", "")
     api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
@@ -5022,7 +5034,7 @@ async def apex_settings_test(request: Request):
     require_admin(current_user)
     form = await request.form()
     settings = get_apex_settings(db)
-    settings["host"] = (form.get("host") or "").strip()
+    settings["host"] = clean_apex_host(form.get("host") or "")
     settings["username"] = (form.get("username") or "").strip()
     settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
     settings["api_token"] = (form.get("api_token") or "").strip() or settings.get("api_token", "")
