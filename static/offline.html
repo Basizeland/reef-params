@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reef Metrics Offline</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --reef-navy: #0b1f33;
+        --reef-teal: #1bb6ad;
+        --reef-bg: #eef6f9;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", -apple-system, system-ui, sans-serif;
+        background: var(--reef-bg);
+        color: var(--reef-navy);
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+      }
+      .card {
+        background: white;
+        border-radius: 18px;
+        padding: 2rem;
+        max-width: 420px;
+        box-shadow: 0 20px 45px rgba(9, 28, 48, 0.12);
+        text-align: center;
+      }
+      h1 {
+        margin: 0 0 0.75rem;
+        font-size: 1.5rem;
+      }
+      p {
+        margin: 0 0 1.5rem;
+        color: #5e6f7f;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.35rem 0.8rem;
+        border-radius: 999px;
+        background: rgba(27, 182, 173, 0.15);
+        color: var(--reef-navy);
+        font-weight: 600;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="badge">Offline mode</div>
+      <h1>You’re offline</h1>
+      <p>Reconnect to the internet to load fresh tank data. Previously cached pages may still be available.</p>
+    </div>
+  </body>
+</html>
