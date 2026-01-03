@@ -62,6 +62,9 @@
                   <div class="modal-body">
                     <div class="text-center display-5 fw-bold workflow-timer-large">—</div>
                     <div class="text-center text-muted mt-2 workflow-step-label">Start a step to begin the countdown.</div>
+                    <div class="progress mt-3 workflow-progress" role="progressbar" aria-label="Timer progress">
+                      <div class="progress-bar" style="width: 0%"></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -144,6 +147,7 @@
       const timerLabel = wrapper.querySelector(".workflow-timer");
       const timerLabelLarge = wrapper.querySelector(".workflow-timer-large");
       const stepLabelLarge = wrapper.querySelector(".workflow-step-label");
+      const timerProgress = wrapper.querySelector(".workflow-progress .progress-bar");
       const startBtn = wrapper.querySelector(".workflow-start");
       const nextBtn = wrapper.querySelector(".workflow-next");
       const resetBtn = wrapper.querySelector(".workflow-reset");
@@ -153,6 +157,10 @@
         timerLabel.textContent = "";
         if (timerLabelLarge) timerLabelLarge.textContent = "—";
         if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
+        if (timerProgress) {
+          timerProgress.style.transition = "none";
+          timerProgress.style.width = "0%";
+        }
         const state = workflowState.get(wrapper);
         if (state?.interval) {
           clearInterval(state.interval);
@@ -192,11 +200,26 @@
         });
         updateControls();
       };
+      const resetProgress = () => {
+        if (!timerProgress) return;
+        timerProgress.style.transition = "none";
+        timerProgress.style.width = "0%";
+      };
+      const startProgress = (seconds) => {
+        if (!timerProgress) return;
+        timerProgress.style.transition = "none";
+        timerProgress.style.width = "100%";
+        requestAnimationFrame(() => {
+          timerProgress.style.transition = `width ${seconds}s linear`;
+          timerProgress.style.width = "0%";
+        });
+      };
       const stopTimer = () => {
         if (state.interval) {
           clearInterval(state.interval);
           state.interval = null;
         }
+        resetProgress();
       };
       const sendNotification = (message) => {
         if (!("Notification" in window)) return;
@@ -213,6 +236,7 @@
           timerLabel.textContent = `⏱️ ${formatDuration(state.remaining)} remaining`;
           if (timerLabelLarge) timerLabelLarge.textContent = formatDuration(state.remaining);
           if (stepLabelLarge) stepLabelLarge.textContent = step.label || "Timer running";
+          startProgress(step.seconds);
           state.interval = setInterval(() => {
             state.remaining -= 1;
             if (state.remaining <= 0) {
@@ -229,6 +253,7 @@
           timerLabel.textContent = `Step ${state.currentIndex + 1}: no timer`;
           if (timerLabelLarge) timerLabelLarge.textContent = "No timer";
           if (stepLabelLarge) stepLabelLarge.textContent = step.label || "No timer";
+          resetProgress();
         }
       };
       startBtn.onclick = () => {
@@ -244,6 +269,7 @@
         timerLabel.textContent = "";
         if (timerLabelLarge) timerLabelLarge.textContent = "—";
         if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
+        resetProgress();
       };
       resetBtn.onclick = () => {
         stopTimer();
@@ -255,6 +281,10 @@
       };
       highlight();
       workflowState.set(wrapper, state);
+      if (timerProgress) {
+        timerProgress.style.transition = "none";
+        timerProgress.style.width = "0%";
+      }
     };
 
     const selects = document.querySelectorAll(".kit-select");
