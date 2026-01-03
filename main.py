@@ -1236,6 +1236,27 @@ def build_sparkline_points(values: List[float], width: int = 84, height: int = 2
         points.append(f"{x},{y}")
     return " ".join(points)
 
+TRACE_ELEMENT_NAMES = {
+    "iron",
+    "iodine",
+    "strontium",
+    "potassium",
+    "boron",
+    "fluoride",
+    "manganese",
+    "molybdenum",
+    "zinc",
+    "cobalt",
+}
+
+def is_trace_element(name: str) -> bool:
+    if not name:
+        return False
+    return normalize_probe_label(name) in TRACE_ELEMENT_NAMES
+
+def filter_trace_parameters(parameters: List[sqlite3.Row]) -> List[sqlite3.Row]:
+    return [p for p in parameters if not is_trace_element(row_get(p, "name"))]
+
 def get_recent_param_values(
     db: sqlite3.Connection,
     tank_id: int,
@@ -4834,10 +4855,13 @@ def add_sample_form(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    params_rows = get_active_param_defs(db)
+    params_rows = filter_trace_parameters(get_active_param_defs(db))
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
-    for k in kits: kits_by_param.setdefault(k["parameter"], []).append(k)
+    for k in kits:
+        if is_trace_element(row_get(k, "parameter") or ""):
+            continue
+        kits_by_param.setdefault(k["parameter"], []).append(k)
     db.close()
     return templates.TemplateResponse("add_sample.html", {"request": request, "tank_id": tank_id, "tank": tank, "parameters": params_rows, "kits_by_param": kits_by_param, "kits": kits})
 
@@ -4859,7 +4883,7 @@ async def add_sample(request: Request, tank_id: int):
     else: when_iso = datetime.utcnow().isoformat()
     cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank_id, when_iso, notes))
     sample_id = cur.lastrowid
-    pdefs = get_active_param_defs(db)
+    pdefs = filter_trace_parameters(get_active_param_defs(db))
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
