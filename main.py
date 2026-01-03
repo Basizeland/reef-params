@@ -2861,6 +2861,44 @@ def tank_detail(request: Request, tank_id: int):
     trend_warning_by_param = {}
     stability_score_by_param = {}
     overdue_by_param = {}
+    mode = values_mode(db)
+
+    def recent_param_values(param_name: str) -> List[float]:
+        if mode == "sample_values":
+            rows = q(
+                db,
+                """
+                SELECT sv.value
+                FROM sample_values sv
+                JOIN parameter_defs pd ON pd.id = sv.parameter_id
+                JOIN samples s ON s.id = sv.sample_id
+                WHERE s.tank_id=? AND pd.name=?
+                ORDER BY s.taken_at DESC
+                LIMIT 10
+                """,
+                (tank_id, param_name),
+            )
+        else:
+            rows = q(
+                db,
+                """
+                SELECT p.value
+                FROM parameters p
+                JOIN samples s ON s.id = p.sample_id
+                WHERE s.tank_id=? AND p.name=?
+                ORDER BY s.taken_at DESC
+                LIMIT 10
+                """,
+                (tank_id, param_name),
+            )
+        values = []
+        for row in rows:
+            try:
+                val = float(row["value"])
+            except Exception:
+                continue
+            values.append(val)
+        return values
     for pname in available_params:
         data = latest_by_param_id.get(pname)
         v = data.get("value") if data else None
@@ -2893,8 +2931,7 @@ def tank_detail(request: Request, tank_id: int):
                     trend_warning_by_param[pname] = True
             except Exception:
                 trend_warning_by_param[pname] = False
-        series_vals = [point.get("y") for point in series_map.get(pname, [])][-10:]
-        series_vals = [float(val) for val in series_vals if val is not None]
+        series_vals = recent_param_values(pname)
         if len(series_vals) >= 2:
             mean_val = sum(series_vals) / len(series_vals)
             if mean_val != 0:
