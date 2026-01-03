@@ -3,6 +3,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -38,8 +39,7 @@ class ApexClient:
         return readings
 
     def _fetch_payload(self) -> Any:
-        bases = _normalize_host(self.host)
-        endpoints = ["/rest/status", "/rest/status.json", "/rest/"]
+        urls = _build_urls(self.host)
         headers = {"Accept": "application/json"}
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
@@ -47,32 +47,28 @@ class ApexClient:
             token = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("utf-8")
             headers["Authorization"] = f"Basic {token}"
         last_error: Optional[Exception] = None
-        for base in bases:
-            for endpoint in endpoints:
-                url = f"{base}{endpoint}"
-                req = urllib.request.Request(url, headers=headers)
-                try:
-                    with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                        content = resp.read().decode("utf-8")
-                    return json.loads(content)
-                except urllib.error.HTTPError as exc:
-                    if exc.code == 401:
-                        last_error = ValueError(
-                            "Apex authentication failed (401). Check username/password or API token."
-                        )
-                    else:
-                        last_error = exc
-                except urllib.error.URLError as exc:
-                    if getattr(getattr(exc, "reason", None), "errno", None) == 113:
-                        last_error = ValueError(
-                            "Unable to reach Apex host. Verify the IP/port and that this server can reach it on the network."
-                        )
-                    else:
-                        last_error = exc
-                except json.JSONDecodeError as exc:
+        for url in urls:
+            req = urllib.request.Request(url, headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    content = resp.read().decode("utf-8")
+                return _parse_payload(content)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401:
+                    last_error = ValueError(
+                        "Apex authentication failed (401). Check username/password or API token."
+                    )
+                else:
                     last_error = exc
-                except Exception as exc:
+            except urllib.error.URLError as exc:
+                if getattr(getattr(exc, "reason", None), "errno", None) == 113:
+                    last_error = ValueError(
+                        "Unable to reach Apex host. Verify the IP/port and that this server can reach it on the network."
+                    )
+                else:
                     last_error = exc
+            except Exception as exc:
+                last_error = exc
         if last_error:
             raise last_error
         raise RuntimeError("Unable to fetch Apex payload")
@@ -140,17 +136,54 @@ def _to_float(value: Any) -> Optional[float]:
             return None
 
 
-def _normalize_host(host: str) -> List[str]:
+def _build_urls(host: str) -> List[str]:
     trimmed = host.strip()
     if not trimmed:
         return []
+    endpoints = ["/rest/status", "/rest/status.json", "/rest/"]
     if "://" in trimmed:
         split = urllib.parse.urlsplit(trimmed)
         netloc = split.netloc or split.path.split("/")[0]
         if not netloc:
             return []
-        return [f"{split.scheme}://{netloc}"]
-    host_only = trimmed.split("/", 1)[0]
-    if not host_only:
-        return []
-    return [f"http://{host_only}", f"https://{host_only}"]
+        if split.path and split.path != "/":
+            return [urllib.parse.urlunsplit((split.scheme, netloc, split.path, split.query, ""))]
+        return [f"{split.scheme}://{netloc}{endpoint}" for endpoint in endpoints]
+    if "/" in trimmed:
+        host_only, path = trimmed.split("/", 1)
+        if not host_only:
+            return []
+        path = f"/{path}"
+        return [f"http://{host_only}{path}", f"https://{host_only}{path}"]
+    return [f"http://{trimmed}{endpoint}" for endpoint in endpoints] + [
+        f"https://{trimmed}{endpoint}" for endpoint in endpoints
+    ]
+
+
+def _parse_payload(content: str) -> Any:
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return _parse_xml_payload(content)
+
+
+def _parse_xml_payload(content: str) -> Dict[str, Any]:
+    root = ET.fromstring(content)
+    probes: List[Dict[str, Any]] = []
+    for elem in root.iter():
+        attrib = elem.attrib or {}
+        name = _first_value(attrib, ["name", "probe", "label", "title", "type"])
+        value = _first_value(attrib, ["value", "reading", "state", "current", "val"])
+        if name is None or value is None:
+            continue
+        probes.append(
+            {
+                "name": name,
+                "value": value,
+                "unit": _first_value(attrib, ["unit", "units", "uom", "measure"]) or "",
+                "timestamp": _first_value(attrib, ["timestamp", "time", "updated_at", "updated", "last_updated"]),
+            }
+        )
+    if not probes:
+        raise ValueError("No probe readings found in Apex XML response.")
+    return {"probes": probes}
