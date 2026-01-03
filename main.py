@@ -1328,6 +1328,14 @@ def fetch_triton_html(url: str) -> str:
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8", errors="ignore")
 
+def extract_numeric_value(raw: str) -> Optional[float]:
+    if raw is None:
+        return None
+    match = re.search(r"-?\d+(?:[.,]\d+)?", str(raw))
+    if not match:
+        return None
+    return float(match.group(0).replace(",", "."))
+
 def parse_triton_rows(rows: List[List[str]]) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for row in rows:
@@ -1337,10 +1345,8 @@ def parse_triton_rows(rows: List[List[str]]) -> List[Dict[str, Any]]:
         value = row[1].strip()
         if not name or not value:
             continue
-        value = value.replace(",", ".")
-        try:
-            numeric = float(value)
-        except Exception:
+        numeric = extract_numeric_value(value)
+        if numeric is None:
             continue
         results.append({"name": name, "value": numeric, "unit": None})
     return results
@@ -1378,9 +1384,8 @@ def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
         value = row[value_idx] if value_idx is not None else row[1]
         if not name or not value:
             continue
-        try:
-            numeric = float(str(value).replace(",", "."))
-        except Exception:
+        numeric = extract_numeric_value(value)
+        if numeric is None:
             continue
         results.append({"name": name.strip(), "value": numeric, "unit": None})
     return results
@@ -1399,9 +1404,8 @@ def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
             continue
         name = parts[0]
         value = parts[1]
-        try:
-            numeric = float(value.replace(",", "."))
-        except Exception:
+        numeric = extract_numeric_value(value)
+        if numeric is None:
             continue
         results.append({"name": name.strip(), "value": numeric, "unit": None})
     return results
