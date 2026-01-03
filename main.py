@@ -6612,6 +6612,7 @@ def icp_import(request: Request):
             "mapped": [],
             "mapped_payload": "",
             "raw_count": 0,
+            "raw_preview": [],
             "error": request.query_params.get("error"),
             "success": request.query_params.get("success"),
             "selected_tank": "",
@@ -6654,6 +6655,7 @@ async def icp_preview(request: Request):
                 )
             raise ValueError("No ICP values found. Please verify the URL or file.")
         mapped = map_icp_to_parameters(db, results)
+        raw_preview = results[:10]
     except Exception as exc:
         db.close()
         return templates.TemplateResponse(
@@ -6662,14 +6664,15 @@ async def icp_preview(request: Request):
                 "request": request,
                 "tanks": tanks,
                 "mapped": [],
-            "mapped_payload": "",
-            "raw_count": 0,
-            "error": str(exc),
-            "success": None,
-            "selected_tank": selected_tank,
-            "pdf_available": pdf_available,
-        },
-    )
+                "mapped_payload": "",
+                "raw_count": 0,
+                "raw_preview": [],
+                "error": str(exc),
+                "success": None,
+                "selected_tank": selected_tank,
+                "pdf_available": pdf_available,
+            },
+        )
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
@@ -6679,6 +6682,7 @@ async def icp_preview(request: Request):
             "mapped": mapped,
             "mapped_payload": json.dumps(mapped),
             "raw_count": len(results),
+            "raw_preview": raw_preview,
             "error": None,
             "success": None,
             "selected_tank": selected_tank,

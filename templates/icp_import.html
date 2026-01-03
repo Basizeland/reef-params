@@ -48,6 +48,13 @@
   </div>
 </div>
 
+{% if raw_count and not mapped %}
+  <div class="alert alert-info">
+    Parsed {{ raw_count }} ICP results but none matched existing parameters.
+    Review the raw preview below to confirm the page parsed correctly.
+  </div>
+{% endif %}
+
 {% if mapped %}
   <div class="card shadow-sm border-0">
     <div class="card-body">
@@ -77,6 +84,37 @@
                 <td class="fw-semibold">{{ row.parameter }}</td>
                 <td>{{ row.value }} {{ row.unit }}</td>
                 <td class="text-muted small">{{ row.source }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+{% if raw_count and not mapped %}
+  <div class="card shadow-sm border-0 mt-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div>
+          <h5 class="mb-1">Raw preview</h5>
+          <div class="text-muted small">Showing up to 10 parsed entries.</div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Source name</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in raw_preview %}
+              <tr>
+                <td class="fw-semibold">{{ row.name }}</td>
+                <td>{{ row.value }}</td>
               </tr>
             {% endfor %}
           </tbody>
