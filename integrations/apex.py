@@ -233,17 +233,19 @@ def _parse_payload(content: str) -> Any:
 def _parse_xml_payload(content: str) -> Dict[str, Any]:
     root = ET.fromstring(content)
     probes: List[Dict[str, Any]] = []
-    for elem in root.iter():
-        attrib = elem.attrib or {}
-        name = _first_value(attrib, ["name", "probe", "label", "title", "type"])
-        value = _first_value(attrib, ["value", "reading", "state", "current", "val"])
+    for probe in root.findall(".//probe"):
+        attrib = probe.attrib or {}
+        name = _first_value(attrib, ["name", "probe", "label", "title", "type"]) or probe.findtext("name")
+        value = _first_value(attrib, ["value", "reading", "state", "current", "val"]) or probe.findtext("value")
+        if value is None and probe.text:
+            value = probe.text.strip()
         if name is None or value is None:
             continue
         probes.append(
             {
                 "name": name,
                 "value": value,
-                "unit": _first_value(attrib, ["unit", "units", "uom", "measure"]) or "",
+                "unit": _first_value(attrib, ["unit", "units", "uom", "measure"]) or probe.findtext("unit") or "",
                 "timestamp": _first_value(attrib, ["timestamp", "time", "updated_at", "updated", "last_updated"]),
             }
         )
