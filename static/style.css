@@ -1,46 +1,116 @@
 :root {
-    --reef-navy: #0f2d45;
-    --reef-deep: #0b2438;
-    --reef-ocean: #1d4b66;
-    --reef-teal: #37c4b0;
-    --reef-mint: #7be2d4;
-    --reef-cyan: #54d6c7;
-    --reef-orange: #f39a2e;
-    --reef-bg: #f5fbfd;
+    --reef-navy: #0b1f33;
+    --reef-deep: #081624;
+    --reef-ocean: #114366;
+    --reef-teal: #1bb6ad;
+    --reef-mint: #7ce7db;
+    --reef-cyan: #45d1d8;
+    --reef-coral: #ff9c2a;
+    --reef-sand: #ffe8c6;
+    --reef-bg: #eef6f9;
     --reef-surface: #ffffff;
-    --reef-text: #1d2b38;
-    --reef-muted: #5c6b7a;
-    --reef-border: rgba(15, 45, 69, 0.12);
+    --reef-text: #1a2a3a;
+    --reef-muted: #5e6f7f;
+    --reef-border: rgba(12, 40, 64, 0.14);
+    --reef-shadow: 0 20px 45px rgba(9, 28, 48, 0.12);
 }
 
 body {
     background-color: var(--reef-bg);
-    background-image: radial-gradient(circle at top, rgba(123, 226, 212, 0.2), transparent 55%);
+    background-image:
+        radial-gradient(circle at 8% 12%, rgba(69, 209, 216, 0.18), transparent 40%),
+        radial-gradient(circle at 80% 0%, rgba(124, 231, 219, 0.2), transparent 38%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(238, 246, 249, 0.9));
     color: var(--reef-text);
-    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-family: 'Inter', 'Plus Jakarta Sans', -apple-system, system-ui, sans-serif;
+}
+
+h1, h2, h3, h4, h5 {
+    color: var(--reef-navy);
+    font-weight: 700;
 }
 
 .text-navy {
     color: var(--reef-navy) !important;
 }
 
+.text-muted {
+    color: var(--reef-muted) !important;
+}
+
+/* Navigation */
+.navbar {
+    background: rgba(255, 255, 255, 0.86);
+    border-bottom: 1px solid rgba(12, 40, 64, 0.08);
+    box-shadow: 0 12px 28px rgba(10, 34, 54, 0.1);
+    backdrop-filter: blur(16px);
+    padding: 0.6rem 1.1rem;
+}
+
+.navbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0;
+}
+
+.brand-logo-img {
+    height: 54px;
+    width: auto;
+    transition: transform 0.2s ease;
+}
+
+.navbar-brand:hover .brand-logo-img {
+    transform: translateY(-1px) scale(1.02);
+}
+
+.nav-link {
+    color: var(--reef-navy) !important;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 0.45rem 0.9rem !important;
+    transition: all 0.2s ease;
+}
+
+.nav-link:hover,
+.nav-link:focus {
+    color: var(--reef-ocean) !important;
+    background-color: rgba(27, 182, 173, 0.12);
+}
+
+.dropdown-menu {
+    border-radius: 16px;
+    border: 1px solid rgba(12, 40, 64, 0.08);
+    box-shadow: 0 18px 30px rgba(12, 40, 64, 0.12);
+}
+
+.dropdown-item {
+    font-weight: 500;
+}
+
 /* Global Button Overrides */
 .btn-primary {
-    background-color: var(--reef-teal) !important;
-    border-color: var(--reef-teal) !important;
+    background: linear-gradient(135deg, #21c0b6 0%, #1698b5 100%) !important;
+    border: none !important;
     color: white !important;
     font-weight: 600;
+    border-radius: 999px;
+    padding: 0.55rem 1.2rem;
+    box-shadow: 0 12px 22px rgba(27, 182, 173, 0.25);
 }
 
 .btn-primary:hover {
-    background-color: #2aa894 !important;
-    border-color: #2aa894 !important;
+    background: linear-gradient(135deg, #18a99f 0%, #117f97 100%) !important;
     color: white !important;
+    transform: translateY(-1px);
+    box-shadow: 0 16px 28px rgba(17, 127, 151, 0.3);
 }
 
 .btn-outline-secondary {
     color: var(--reef-navy);
-    border-color: var(--reef-navy);
+    border-color: rgba(12, 40, 64, 0.25);
+    border-radius: 999px;
+    font-weight: 600;
 }
 
 .btn-outline-secondary:hover {
@@ -48,39 +118,240 @@ body {
     color: white;
 }
 
+.btn-outline-primary {
+    border-radius: 999px;
+}
+
 /* Card Styling */
 .card {
     border: 1px solid var(--reef-border);
-    border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(15, 45, 69, 0.08);
+    border-radius: 18px;
+    box-shadow: var(--reef-shadow);
     background-color: var(--reef-surface);
 }
 
 .card-hover {
     cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .card-hover:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 18px 32px rgba(15, 45, 69, 0.14);
+    transform: translateY(-3px);
+    box-shadow: 0 26px 40px rgba(9, 28, 48, 0.16);
 }
 
 .card-header {
-    background-color: var(--reef-surface) !important;
-    border-bottom: 1px solid var(--reef-border);
+    background-color: transparent !important;
+    border-bottom: 1px solid rgba(12, 40, 64, 0.08);
     color: var(--reef-navy);
     font-weight: 700;
 }
 
+.card-title a {
+    color: var(--reef-navy);
+}
+
+.card-title a:hover {
+    color: var(--reef-ocean);
+}
+
 /* Badge Styling */
+.badge {
+    border-radius: 999px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
 .badge.bg-primary {
-    background-color: var(--reef-mint) !important;
+    background-color: rgba(27, 182, 173, 0.18) !important;
     color: var(--reef-navy) !important;
+}
+
+.badge.text-bg-success,
+.badge.text-bg-warning,
+.badge.text-bg-info {
+    color: var(--reef-navy);
+}
+
+.badge.text-bg-success {
+    background-color: rgba(124, 231, 219, 0.4) !important;
+}
+
+.badge.text-bg-warning {
+    background-color: rgba(255, 156, 42, 0.25) !important;
+}
+
+.badge.text-bg-info {
+    background-color: rgba(69, 209, 216, 0.24) !important;
 }
 
 /* Alert/Status Indicators */
 .bg-danger-subtle {
     background-color: #fff5f5 !important;
     border: 1px solid #feb2b2 !important;
+}
+
+.bg-warning-subtle {
+    background-color: #fff7e8 !important;
+    border: 1px solid rgba(255, 156, 42, 0.3) !important;
+}
+
+.bg-success-subtle {
+    background-color: #f0fffb !important;
+    border: 1px solid rgba(27, 182, 173, 0.3) !important;
+}
+
+/* Forms */
+.form-control,
+.form-select {
+    border-radius: 14px;
+    border: 1px solid rgba(12, 40, 64, 0.18);
+    padding: 0.6rem 0.75rem;
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: rgba(27, 182, 173, 0.6);
+    box-shadow: 0 0 0 0.2rem rgba(27, 182, 173, 0.2);
+}
+
+/* Hero + Dashboard */
+.reef-hero {
+    background: linear-gradient(120deg, rgba(17, 67, 102, 0.12), rgba(27, 182, 173, 0.2));
+    border: 1px solid rgba(27, 182, 173, 0.18);
+    border-radius: 24px;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.reef-hero::after {
+    content: "";
+    position: absolute;
+    width: 240px;
+    height: 240px;
+    right: -80px;
+    top: -80px;
+    background: radial-gradient(circle, rgba(124, 231, 219, 0.5), transparent 70%);
+    pointer-events: none;
+}
+
+.reef-hero .reef-eyebrow {
+    font-size: 0.85rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--reef-ocean);
+    font-weight: 700;
+}
+
+.reef-hero .reef-heading {
+    font-size: clamp(2rem, 4vw, 2.75rem);
+    margin-bottom: 0.75rem;
+}
+
+.reef-hero .reef-subtitle {
+    font-size: 1rem;
+    color: var(--reef-muted);
+    max-width: 32rem;
+}
+
+.reef-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.8rem;
+}
+
+.reef-stat {
+    background: white;
+    border-radius: 16px;
+    padding: 0.9rem 1rem;
+    border: 1px solid rgba(12, 40, 64, 0.08);
+    box-shadow: 0 12px 24px rgba(12, 40, 64, 0.08);
+}
+
+.reef-stat .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--reef-muted);
+}
+
+.reef-stat .value {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--reef-navy);
+}
+
+.reef-add-card {
+    min-height: 250px;
+    border: 2px dashed rgba(12, 40, 64, 0.2);
+    background: linear-gradient(160deg, rgba(27, 182, 173, 0.08), rgba(69, 209, 216, 0.12));
+    color: var(--reef-navy);
+}
+
+.reef-add-card .display-4 {
+    color: var(--reef-ocean);
+}
+
+/* Utility */
+.shadow-soft {
+    box-shadow: 0 18px 32px rgba(12, 40, 64, 0.12);
+}
+
+@media (max-width: 576px) {
+    .brand-logo-img {
+        height: 40px;
+    }
+
+    .notification-menu {
+        position: fixed !important;
+        top: 72px !important;
+        left: 0.75rem !important;
+        right: 0.75rem !important;
+        width: auto;
+        max-width: calc(100vw - 1.5rem);
+        min-width: auto;
+        margin: 0 auto;
+        transform: none !important;
+    }
+
+    .mobile-content-pad {
+        padding-bottom: 5.5rem;
+    }
+
+    .bottom-nav {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1030;
+        background: var(--reef-surface);
+        border-top: 1px solid var(--reef-border);
+        box-shadow: 0 -6px 18px rgba(15, 45, 69, 0.08);
+        padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
+    }
+
+    .bottom-nav .nav-link {
+        color: var(--reef-muted) !important;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.2rem;
+    }
+
+    .bottom-nav .nav-link i {
+        font-size: 1.2rem;
+    }
+
+    .bottom-nav .nav-link.active {
+        color: var(--reef-teal) !important;
+    }
+
+    .reef-hero {
+        padding: 1.5rem;
+    }
 }
