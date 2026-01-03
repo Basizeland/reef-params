@@ -1091,12 +1091,6 @@ def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
     db.commit()
 
 APEX_SETTINGS_KEY = "apex_integration_settings"
-DEFAULT_APEX_MAPPING = {
-    "Alk": "Alkalinity",
-    "Ca": "Calcium",
-    "Mg": "Magnesium",
-}
-
 def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
     raw = get_setting(db, APEX_SETTINGS_KEY)
     settings: Dict[str, Any] = {
@@ -4994,7 +4988,6 @@ def apex_settings(request: Request):
         {
             "request": request,
             "settings": settings,
-            "mapping_json": apex_mapping_text(mapping or DEFAULT_APEX_MAPPING),
             "parameters": parameters,
             "probes": [],
             "mapping": mapping,
@@ -5016,20 +5009,12 @@ async def apex_settings_save(request: Request):
     password = (form.get("password") or "").strip() or settings.get("password", "")
     api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
     poll_interval = int(to_float(form.get("poll_interval_minutes")) or 15)
-    mapping_text = (form.get("mapping_json") or "").strip()
-    if mapping_text:
-        try:
-            mapping = parse_apex_mapping(mapping_text)
-        except ValueError as exc:
-            db.close()
-            return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
-    else:
-        mapping = {}
-        probe_names = form.getlist("probe_name")
-        param_names = form.getlist("param_name")
-        for probe_name, param_name in zip(probe_names, param_names):
-            if probe_name and param_name:
-                mapping[str(probe_name)] = str(param_name)
+    mapping = {}
+    probe_names = form.getlist("probe_name")
+    param_names = form.getlist("param_name")
+    for probe_name, param_name in zip(probe_names, param_names):
+        if probe_name and param_name:
+            mapping[str(probe_name)] = str(param_name)
     tank_id = form.get("tank_id")
     settings.update(
         {
@@ -5097,11 +5082,7 @@ async def apex_settings_probes(request: Request):
     settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
     tank_id = form.get("tank_id")
     settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
-    mapping_text = (form.get("mapping_json") or "").strip()
-    try:
-        mapping = parse_apex_mapping(mapping_text) if mapping_text else settings.get("mapping") or {}
-    except ValueError:
-        mapping = settings.get("mapping") or {}
+    mapping = settings.get("mapping") or {}
     parameters = list_parameters(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     probes: List[str] = []
@@ -5117,7 +5098,6 @@ async def apex_settings_probes(request: Request):
         {
             "request": request,
             "settings": settings,
-            "mapping_json": apex_mapping_text(mapping or DEFAULT_APEX_MAPPING),
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
