@@ -1367,13 +1367,31 @@ def extract_numeric_value(raw: str) -> Optional[float]:
 def parse_triton_rows(rows: List[List[str]]) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for row in rows:
-        if len(row) < 2:
+        cleaned = [cell.strip() for cell in row if cell and cell.strip()]
+        if len(cleaned) < 2:
             continue
-        name = row[0].strip()
-        value = row[1].strip()
-        if not name or not value:
+        name_idx = None
+        for idx, cell in enumerate(cleaned):
+            if re.search(r"[A-Za-z]", cell):
+                name_idx = idx
+                break
+        if name_idx is None:
+            name_idx = 0
+        name = cleaned[name_idx]
+        if not name:
             continue
-        numeric = extract_numeric_value(value)
+        numeric = None
+        for cell in cleaned[name_idx + 1 :]:
+            numeric = extract_numeric_value(cell)
+            if numeric is not None:
+                break
+        if numeric is None:
+            for idx, cell in enumerate(cleaned):
+                if idx == name_idx:
+                    continue
+                numeric = extract_numeric_value(cell)
+                if numeric is not None:
+                    break
         if numeric is None:
             continue
         results.append({"name": name, "value": numeric, "unit": None})
