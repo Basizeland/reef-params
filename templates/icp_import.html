@@ -33,8 +33,12 @@
         </div>
         <div class="col-lg-4">
           <label class="form-label">CSV/PDF upload</label>
-          <input class="form-control" type="file" name="icp_file" accept=".csv,.pdf">
-          <div class="form-text">PDF parsing requires PyPDF2 installed in the backend image.</div>
+          <input class="form-control" type="file" name="icp_file" accept="{% if pdf_available %}.csv,.pdf{% else %}.csv{% endif %}">
+          {% if pdf_available %}
+            <div class="form-text">PDF parsing requires PyPDF2 installed in the backend image.</div>
+          {% else %}
+            <div class="form-text text-warning">PDF parsing is disabled until PyPDF2 is installed.</div>
+          {% endif %}
         </div>
       </div>
       <div class="mt-3">

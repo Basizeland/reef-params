@@ -6520,6 +6520,7 @@ def dose_plan(request: Request):
 def icp_import(request: Request):
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    pdf_available = importlib.util.find_spec("PyPDF2") is not None
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
@@ -6532,6 +6533,7 @@ def icp_import(request: Request):
             "error": request.query_params.get("error"),
             "success": request.query_params.get("success"),
             "selected_tank": "",
+            "pdf_available": pdf_available,
         },
     )
 
@@ -6543,6 +6545,7 @@ async def icp_preview(request: Request):
     selected_tank = (form.get("tank_id") or "").strip()
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    pdf_available = importlib.util.find_spec("PyPDF2") is not None
     try:
         if url:
             content = fetch_triton_html(url)
@@ -6553,6 +6556,8 @@ async def icp_preview(request: Request):
             if filename.endswith(".csv"):
                 results = parse_triton_csv(data)
             elif filename.endswith(".pdf"):
+                if not pdf_available:
+                    raise ValueError("PDF parsing requires PyPDF2. Install it and rebuild the container.")
                 results = parse_triton_pdf(data)
             else:
                 raise ValueError("Unsupported file type. Upload CSV or PDF.")
@@ -6569,13 +6574,14 @@ async def icp_preview(request: Request):
                 "request": request,
                 "tanks": tanks,
                 "mapped": [],
-                "mapped_payload": "",
-                "raw_count": 0,
-                "error": str(exc),
-                "success": None,
-                "selected_tank": selected_tank,
-            },
-        )
+            "mapped_payload": "",
+            "raw_count": 0,
+            "error": str(exc),
+            "success": None,
+            "selected_tank": selected_tank,
+            "pdf_available": pdf_available,
+        },
+    )
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
@@ -6588,6 +6594,7 @@ async def icp_preview(request: Request):
             "error": None,
             "success": None,
             "selected_tank": selected_tank,
+            "pdf_available": pdf_available,
         },
     )
 
