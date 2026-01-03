@@ -105,6 +105,7 @@
     position: relative;
     width: 140px;
     height: 140px;
+    border-radius: 999px;
   }
   .workflow-timer-svg {
     width: 140px;
@@ -129,6 +130,24 @@
     font-size: 2.25rem;
     font-weight: 600;
     color: #1f2937;
+  }
+  .workflow-timer-circle.is-complete {
+    box-shadow: 0 0 0 0 rgba(41, 179, 106, 0.6);
+    animation: workflow-timer-flash 0.75s ease-in-out 3;
+  }
+  @keyframes workflow-timer-flash {
+    0% {
+      box-shadow: 0 0 0 0 rgba(41, 179, 106, 0.6);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow: 0 0 0 12px rgba(41, 179, 106, 0);
+      transform: scale(1.02);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(41, 179, 106, 0);
+      transform: scale(1);
+    }
   }
 </style>
 
@@ -166,6 +185,7 @@
     const workflowTimerLarge = document.getElementById("workflow-timer-large");
     const workflowStepLabel = document.getElementById("workflow-step-label");
     const workflowProgress = document.querySelector(".workflow-timer-progress");
+    const workflowCircle = document.querySelector(".workflow-timer-circle");
     const progressLength = workflowProgress ? workflowProgress.getTotalLength() : 0;
     const workflowStart = document.getElementById("workflow-start");
     const workflowNext = document.getElementById("workflow-next");
@@ -212,12 +232,14 @@
       workflowProgress.style.transition = "none";
       workflowProgress.style.strokeDasharray = `${progressLength}`;
       workflowProgress.style.strokeDashoffset = `${progressLength}`;
+      if (workflowCircle) workflowCircle.classList.remove("is-complete");
     };
     const startWorkflowProgress = (seconds) => {
       if (!workflowProgress) return;
       workflowProgress.style.transition = "none";
       workflowProgress.style.strokeDasharray = `${progressLength}`;
       workflowProgress.style.strokeDashoffset = "0";
+      if (workflowCircle) workflowCircle.classList.remove("is-complete");
       requestAnimationFrame(() => {
         workflowProgress.style.transition = `stroke-dashoffset ${seconds}s linear`;
         workflowProgress.style.strokeDashoffset = `${progressLength}`;
@@ -270,6 +292,7 @@
           if (workflowState.remaining <= 0) {
             workflowTimer.textContent = "✅ Timer done";
             if (workflowTimerLarge) workflowTimerLarge.textContent = "0:00";
+            if (workflowCircle) workflowCircle.classList.add("is-complete");
             stopWorkflowTimer();
             sendNotification(`${step.label} complete.`);
             return;

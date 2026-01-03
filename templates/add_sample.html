@@ -79,6 +79,7 @@
     position: relative;
     width: 140px;
     height: 140px;
+    border-radius: 999px;
   }
   .workflow-timer-svg {
     width: 140px;
@@ -103,6 +104,24 @@
     font-size: 2.25rem;
     font-weight: 600;
     color: #1f2937;
+  }
+  .workflow-timer-circle.is-complete {
+    box-shadow: 0 0 0 0 rgba(41, 179, 106, 0.6);
+    animation: workflow-timer-flash 0.75s ease-in-out 3;
+  }
+  @keyframes workflow-timer-flash {
+    0% {
+      box-shadow: 0 0 0 0 rgba(41, 179, 106, 0.6);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow: 0 0 0 12px rgba(41, 179, 106, 0);
+      transform: scale(1.02);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(41, 179, 106, 0);
+      transform: scale(1);
+    }
   }
 </style>
 
@@ -178,6 +197,7 @@
       const timerLabelLarge = wrapper.querySelector(".workflow-timer-value");
       const stepLabelLarge = wrapper.querySelector(".workflow-step-label");
       const timerProgress = wrapper.querySelector(".workflow-timer-progress");
+      const timerCircle = wrapper.querySelector(".workflow-timer-circle");
       const progressLength = timerProgress ? timerProgress.getTotalLength() : 0;
       const startBtn = wrapper.querySelector(".workflow-start");
       const nextBtn = wrapper.querySelector(".workflow-next");
@@ -188,6 +208,7 @@
         timerLabel.textContent = "";
         if (timerLabelLarge) timerLabelLarge.textContent = "—";
         if (stepLabelLarge) stepLabelLarge.textContent = "Start a step to begin the countdown.";
+        if (timerCircle) timerCircle.classList.remove("is-complete");
         if (timerProgress) {
           timerProgress.style.transition = "none";
           timerProgress.style.strokeDasharray = `${progressLength}`;
@@ -236,12 +257,14 @@
         if (!timerProgress) return;
         timerProgress.style.transition = "none";
         timerProgress.style.strokeDashoffset = `${progressLength}`;
+        if (timerCircle) timerCircle.classList.remove("is-complete");
       };
       const startProgress = (seconds) => {
         if (!timerProgress) return;
         timerProgress.style.transition = "none";
         timerProgress.style.strokeDasharray = `${progressLength}`;
         timerProgress.style.strokeDashoffset = "0";
+        if (timerCircle) timerCircle.classList.remove("is-complete");
         requestAnimationFrame(() => {
           timerProgress.style.transition = `stroke-dashoffset ${seconds}s linear`;
           timerProgress.style.strokeDashoffset = `${progressLength}`;
@@ -275,6 +298,7 @@
             if (state.remaining <= 0) {
               timerLabel.textContent = "✅ Timer done";
               if (timerLabelLarge) timerLabelLarge.textContent = "0:00";
+              if (timerCircle) timerCircle.classList.add("is-complete");
               stopTimer();
               sendNotification(`${step.label} complete.`);
               return;
