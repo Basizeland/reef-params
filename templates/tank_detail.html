@@ -587,9 +587,9 @@
           </div>
           <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
             {% if stability_score_by_param.get(p.name) is not none %}
-              <span class="badge text-bg-light border" title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability {{ stability_score_by_param.get(p.name)|round(0)|int }}%</span>
+              <span class="badge text-bg-light border" data-bs-toggle="tooltip" data-bs-title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability {{ stability_score_by_param.get(p.name)|round(0)|int }}%</span>
             {% else %}
-              <span class="badge text-bg-light border" title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability —</span>
+              <span class="badge text-bg-light border" data-bs-toggle="tooltip" data-bs-title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability —</span>
             {% endif %}
             {% if trend_warning_by_param.get(p.id) %}
               <span class="badge text-bg-warning">Rapid change</span>
@@ -611,8 +611,13 @@
 </div>
 
 <div class="card shadow-sm mb-4">
-  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <h5 class="card-title mb-0 fw-bold">Trend Analysis</h5>
+  <div class="card-header bg-white py-3 d-flex flex-column gap-2">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 w-100">
+      <h5 class="card-title mb-0 fw-bold">Trend Analysis</h5>
+      <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/targets">
+        <i class="bi bi-sliders"></i> Edit Target Range
+      </a>
+    </div>
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% for p in params %}
@@ -629,9 +634,6 @@
       </div>
       <div class="text-muted small">Compare up to 3 parameters at once.</div>
     </div>
-    <a class="btn btn-outline-secondary btn-sm ms-auto" href="/tanks/{{ tank.id }}/targets">
-      <i class="bi bi-sliders"></i> Edit Target Range
-    </a>
   </div>
   <div class="card-body">
     <div style="height: 350px;">
