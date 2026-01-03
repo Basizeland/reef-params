@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Alert Center</h1>
+    <div class="text-muted small">All active dosing alerts across your tanks.</div>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0">
+  <div class="card-body">
+    {% if alerts %}
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th>Tank</th>
+              <th>Alert</th>
+              <th>Remaining</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for alert in alerts %}
+              <tr>
+                <td class="fw-semibold">{{ alert.tank_name }}</td>
+                <td>{{ alert.label }}</td>
+                <td>{{ alert.days|round(1) }} days</td>
+                <td class="text-end">
+                  <div class="d-flex flex-column flex-sm-row gap-2 justify-content-end">
+                    <form method="post" action="/tanks/{{ alert.tank_id }}/dosing-containers">
+                      <input type="hidden" name="action" value="refill">
+                      <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                      <button class="btn btn-sm btn-outline-primary" type="submit">Refill</button>
+                    </form>
+                    <form method="post" action="/notifications/dismiss">
+                      <input type="hidden" name="tank_id" value="{{ alert.tank_id }}">
+                      <input type="hidden" name="container_key" value="{{ alert.container_key }}">
+                      <input type="hidden" name="notified_on" value="{{ alert.notified_on }}">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted small">No alerts right now.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,11 +1,12 @@
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open("reef-metrics-v2").then((cache) => cache.addAll([
+    caches.open("reef-metrics-v5").then((cache) => cache.addAll([
       "/",
-      "/static/style.css",
+      "/static/style.css?v=4",
       "/static/logo.png",
       "/static/logo-light.png",
-      "/static/manifest.json"
+      "/static/manifest.json",
+      "/static/offline.html"
     ]))
   );
   self.skipWaiting();
@@ -17,6 +18,12 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") {
+    return;
+  }
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match("/static/offline.html"))
+    );
     return;
   }
   event.respondWith(

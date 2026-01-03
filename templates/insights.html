@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Insights</h1>
+    <div class="text-muted small">Trends and reminders across all tanks.</div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card h-100 shadow-sm border-0">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small">Active tanks</div>
+        <div class="display-6 fw-bold">{{ total_tanks }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100 shadow-sm border-0">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small">Samples (7 days)</div>
+        <div class="display-6 fw-bold">{{ total_samples_week }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100 shadow-sm border-0">
+      <div class="card-body">
+        <div class="text-muted text-uppercase small">Overdue tests</div>
+        <div class="display-6 fw-bold">{{ overdue_items|length }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-body">
+        <h2 class="h6 text-uppercase text-muted mb-3">Most volatile readings</h2>
+        {% if volatility %}
+          <ul class="list-group list-group-flush">
+            {% for item in volatility %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="fw-semibold">{{ item.parameter }}</div>
+                  <div class="small text-muted">{{ item.tank_name }}</div>
+                </div>
+                <span class="badge bg-light text-secondary border">
+                  {{ item.delta_per_day|round(2) }}/day
+                </span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted small">Not enough data yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm border-0 h-100">
+      <div class="card-body">
+        <h2 class="h6 text-uppercase text-muted mb-3">Overdue tests</h2>
+        {% if overdue_items %}
+          <ul class="list-group list-group-flush">
+            {% for item in overdue_items[:8] %}
+              <li class="list-group-item">
+                <div class="fw-semibold">{{ item.parameter }}</div>
+                <div class="small text-muted">
+                  {{ item.tank_name }} · {{ item.last_tested|time_ago }}
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted small">All caught up 🎉</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

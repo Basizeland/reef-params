@@ -1,9 +1,78 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set stats = namespace(readings=0, alerts=0) %}
+{% for c in tank_cards %}
+  {% if c.readings is defined and c.readings %}
+    {% set stats.readings = stats.readings + (c.readings|length) %}
+  {% endif %}
+  {% set summary = c.summary if c.summary is defined else {} %}
+  {% if summary.out_of_range %}
+    {% set stats.alerts = stats.alerts + summary.out_of_range %}
+  {% endif %}
+{% endfor %}
+
+<section class="reef-hero mb-4">
+  <div class="row align-items-center gy-4 position-relative">
+    <div class="col-lg-7">
+      <div class="reef-eyebrow" data-skeleton>Reef Metrics</div>
+      <h1 class="reef-heading" data-skeleton>Advanced analytics for your aquarium.</h1>
+      <p class="reef-subtitle">
+        Monitor water quality, spot trends, and stay ahead of dosing alerts with a calm, focused workspace.
+      </p>
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        <a class="btn btn-primary" href="/tanks/new">Add a new tank</a>
+        <a class="btn btn-outline-secondary" href="/tools/calculators">Open dosing tools</a>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="reef-stat-grid">
+        <div class="reef-stat">
+          <div class="label">Active tanks</div>
+          <div class="value">{{ tank_cards|length }}</div>
+        </div>
+        <div class="reef-stat">
+          <div class="label">Latest readings</div>
+          <div class="value">{{ stats.readings }}</div>
+        </div>
+        <div class="reef-stat">
+          <div class="label">Alerts to review</div>
+          <div class="value">{{ stats.alerts }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if reminders %}
+  <div class="card shadow-sm border-0 mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+          <h2 class="h6 text-uppercase text-muted mb-1">Testing Reminders</h2>
+          <div class="small text-muted">Parameters that are overdue for testing.</div>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm" href="/insights">View insights</a>
+      </div>
+      <div class="row g-3">
+        {% for item in reminders[:6] %}
+          <div class="col-md-4">
+            <div class="border rounded-3 p-3 h-100 bg-light">
+              <div class="fw-semibold">{{ item.parameter }}</div>
+              <div class="small text-muted">
+                {{ item.tank_name }} · Last test {{ item.last_tested|time_ago }}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endif %}
+
 <div class="d-flex align-items-center justify-content-between mb-4">
   <div>
-    <h1 class="h3 mb-0">Dashboard</h1>
+    <h2 class="h5 mb-1">Tank overview</h2>
     <div class="text-muted small">Latest readings per tank</div>
   </div>
   <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
@@ -91,6 +160,14 @@
                       {% endif %}
                       <span class="text-muted fw-normal fs-6">{{ (r.unit if r.unit is defined else r.get('unit')) or "" }}</span>
                     </div>
+                    {% set sparkline = r.sparkline if r.sparkline is defined else "" %}
+                    {% if sparkline %}
+                      <div class="mt-2 sparkline">
+                        <svg viewBox="0 0 84 24" width="84" height="24" aria-hidden="true" focusable="false">
+                          <polyline fill="none" stroke="currentColor" stroke-width="2" points="{{ sparkline }}"></polyline>
+                        </svg>
+                      </div>
+                    {% endif %}
                     <div class="mt-1 d-flex flex-wrap gap-1">
                       {% if r.trend_warning %}
                         <span class="badge text-bg-warning">Rapid change</span>
@@ -118,10 +195,11 @@
   {% endfor %}
 
   <div class="col">
-    <a href="/tanks/new" class="card h-100 shadow-sm border-0 text-decoration-none text-center d-flex align-items-center justify-content-center bg-light text-muted p-5 card-hover" style="min-height: 250px; border: 2px dashed #dee2e6 !important;">
+    <a href="/tanks/new" class="card h-100 text-decoration-none text-center d-flex align-items-center justify-content-center p-5 card-hover reef-add-card">
         <div>
             <div class="display-4 mb-2">+</div>
             <div class="fw-medium">Add New Tank</div>
+            <div class="small text-muted">Start tracking a new aquarium.</div>
         </div>
     </a>
   </div>

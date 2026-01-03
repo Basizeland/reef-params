@@ -57,6 +57,9 @@
         <div class="col-12">
           <div class="alert alert-secondary small mb-0">
             Load probes to map them to your parameters using the table below.
+            {% if last_probe_loaded_at %}
+              <span class="ms-2 text-muted">Last loaded at {{ last_probe_loaded_at }}.</span>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -81,7 +84,8 @@
                       <select class="form-select form-select-sm" name="param_name">
                         <option value="">Select parameter</option>
                         {% for param in parameters %}
-                          <option value="{{ param.name }}" {% if mapping.get(probe) == param.name %}selected{% endif %}>
+                          {% set selected_param = mapping.get(probe) or auto_mapping.get(probe) %}
+                          <option value="{{ param.name }}" {% if selected_param == param.name %}selected{% endif %}>
                             {{ param.name }}
                           </option>
                         {% endfor %}
@@ -99,8 +103,37 @@
         <button class="btn btn-primary" type="submit">Save Settings</button>
         <button class="btn btn-outline-secondary" type="submit" formaction="/settings/integrations/apex/test" formmethod="post">Test Connection</button>
         <button class="btn btn-outline-secondary" type="submit" formaction="/settings/integrations/apex/probes" formmethod="post">Load Probes</button>
+        <button class="btn btn-outline-secondary" type="submit" formaction="/settings/integrations/apex/preview" formmethod="post">Preview Mapping</button>
       </div>
     </form>
+
+    {% if preview %}
+      <div class="mt-4">
+        <h3 class="h6 text-uppercase text-muted">Preview</h3>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>Probe</th>
+                <th>Parameter</th>
+                <th>Value</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in preview %}
+                <tr>
+                  <td class="fw-semibold">{{ row.probe }}</td>
+                  <td>{{ row.parameter }}</td>
+                  <td>{{ row.value }} {{ row.unit }}</td>
+                  <td class="text-muted small">{{ row.timestamp }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
 
     <form class="mt-4" method="post" action="/settings/integrations/apex/import">
       <button class="btn btn-outline-primary" type="submit">Import Now</button>
