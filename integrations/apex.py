@@ -56,7 +56,12 @@ class ApexClient:
                         content = resp.read().decode("utf-8")
                     return json.loads(content)
                 except urllib.error.HTTPError as exc:
-                    last_error = exc
+                    if exc.code == 401:
+                        last_error = ValueError(
+                            "Apex authentication failed (401). Check username/password or API token."
+                        )
+                    else:
+                        last_error = exc
                 except urllib.error.URLError as exc:
                     if getattr(getattr(exc, "reason", None), "errno", None) == 113:
                         last_error = ValueError(
