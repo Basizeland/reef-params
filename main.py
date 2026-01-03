@@ -5381,6 +5381,42 @@ def parameter_delete(request: Request, param_id: int):
     db.close()
     return redirect("/settings/parameters")
 
+@app.post("/settings/parameters/bulk-add")
+async def parameter_bulk_add(request: Request):
+    form = await request.form()
+    raw = (form.get("bulk_parameters") or "").strip()
+    default_unit = (form.get("bulk_unit") or "").strip() or None
+    if not raw:
+        return redirect("/settings/parameters")
+    db = get_db()
+    cur = db.cursor()
+    for line in raw.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        parts = [p.strip() for p in cleaned.split(",", 1)]
+        name = parts[0]
+        if not name:
+            continue
+        unit = parts[1] if len(parts) > 1 and parts[1] else default_unit
+        existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (name,))
+        if existing:
+            cur.execute(
+                "UPDATE parameter_defs SET unit=COALESCE(unit, ?) WHERE id=?",
+                (unit, existing["id"]),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO parameter_defs (name, unit, active, sort_order)
+                VALUES (?, ?, 1, 0)
+                """,
+                (name, unit),
+            )
+    db.commit()
+    db.close()
+    return redirect("/settings/parameters")
+
 @app.get("/settings/test-kits", response_class=HTMLResponse)
 @app.get("/settings/test-kits/", response_class=HTMLResponse, include_in_schema=False)
 def test_kits(request: Request):

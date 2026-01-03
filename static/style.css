@@ -290,6 +290,20 @@ h1, h2, h3, h4, h5 {
     box-shadow: 0 12px 28px rgba(9, 28, 48, 0.08);
 }
 
+.parameter-card {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(12, 40, 64, 0.12);
+}
+
+.parameter-search .input-group-text {
+    background: #fff;
+    border-right: 0;
+}
+
+.parameter-search .form-control {
+    border-left: 0;
+}
+
 [data-skeleton] {
     position: relative;
     color: transparent !important;
