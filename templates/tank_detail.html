@@ -587,9 +587,9 @@
           </div>
           <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
             {% if stability_score_by_param.get(p.name) is not none %}
-              <span class="badge text-bg-light border" data-bs-toggle="tooltip" data-bs-title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability {{ stability_score_by_param.get(p.name)|round(0)|int }}%</span>
+              <span class="badge text-bg-light border position-relative z-2" data-bs-toggle="tooltip" data-bs-title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability {{ stability_score_by_param.get(p.name)|round(0)|int }}%</span>
             {% else %}
-              <span class="badge text-bg-light border" data-bs-toggle="tooltip" data-bs-title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability —</span>
+              <span class="badge text-bg-light border position-relative z-2" data-bs-toggle="tooltip" data-bs-title="Stability is calculated from the last 10 readings. At least two readings are required.">Stability — (need 2 readings)</span>
             {% endif %}
             {% if trend_warning_by_param.get(p.id) %}
               <span class="badge text-bg-warning">Rapid change</span>

@@ -1,5 +1,55 @@
 {% extends "base.html" %}
 {% block content %}
+{% macro render_additive_options(selected_solution="") %}
+  {% set groups = namespace(major=[], nutrient=[], trace=[], other=[]) %}
+  {% for additive in additives %}
+    {% set param = (additive.parameter or "")|lower %}
+    {% if "alk" in param or "calcium" in param or "magnesium" in param or "salinity" in param or param in ["k", "potassium"] %}
+      {% set _ = groups.major.append(additive) %}
+    {% elif "nitrate" in param or "phosphate" in param or "nopox" in param or "nutrient" in param %}
+      {% set _ = groups.nutrient.append(additive) %}
+    {% elif "trace" in param %}
+      {% set _ = groups.trace.append(additive) %}
+    {% else %}
+      {% set _ = groups.other.append(additive) %}
+    {% endif %}
+  {% endfor %}
+  {% if groups.major %}
+    <optgroup label="Major Elements">
+      {% for additive in groups.major %}
+        <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}" {% if selected_solution == additive.name %}selected{% endif %}>
+          {{ additive|additive_label }}
+        </option>
+      {% endfor %}
+    </optgroup>
+  {% endif %}
+  <optgroup label="Nutrients">
+    <option value="NoPox" data-parameter="NoPox" {% if selected_solution == "NoPox" %}selected{% endif %}>NoPox</option>
+    {% for additive in groups.nutrient %}
+      <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}" {% if selected_solution == additive.name %}selected{% endif %}>
+        {{ additive|additive_label }}
+      </option>
+    {% endfor %}
+  </optgroup>
+  {% if groups.trace %}
+    <optgroup label="Trace Elements">
+      {% for additive in groups.trace %}
+        <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}" {% if selected_solution == additive.name %}selected{% endif %}>
+          {{ additive|additive_label }}
+        </option>
+      {% endfor %}
+    </optgroup>
+  {% endif %}
+  {% if groups.other %}
+    <optgroup label="Other">
+      {% for additive in groups.other %}
+        <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}" {% if selected_solution == additive.name %}selected{% endif %}>
+          {{ additive|additive_label }}
+        </option>
+      {% endfor %}
+    </optgroup>
+  {% endif %}
+{% endmacro %}
 <div class="row justify-content-center">
   <div class="col-md-9 col-lg-8">
     <div class="card shadow-sm">
@@ -21,12 +71,7 @@
                     <label class="form-label fw-bold">Additive</label>
                     <select class="form-select dosing-solution" name="dosing_solution[]">
                       <option value="">Select additive</option>
-                      <option value="NoPox" data-parameter="NoPox" {% if entry.solution == "NoPox" %}selected{% endif %}>NoPox</option>
-                      {% for additive in additives %}
-                        <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}" {% if entry.solution == additive.name %}selected{% endif %}>
-                          {{ additive|additive_label }}
-                        </option>
-                      {% endfor %}
+                      {{ render_additive_options(entry.solution) }}
                     </select>
                   </div>
                   <div class="col-12 col-md-2">
@@ -41,9 +86,6 @@
                     <label class="form-label fw-bold">Remaining (ml)</label>
                     <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="ml">
                     <div class="d-grid gap-1 mt-2">
-                      <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Use container</button>
-                      <button type="button" class="btn btn-outline-secondary btn-sm copy-dosing-row">Copy row</button>
-                      <button type="button" class="btn btn-outline-secondary btn-sm clear-dosing-row">Clear row</button>
                       <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row">Remove</button>
                     </div>
                   </div>
@@ -57,10 +99,7 @@
                   <label class="form-label fw-bold">Additive</label>
                   <select class="form-select dosing-solution" name="dosing_solution[]">
                     <option value="">Select additive</option>
-                    <option value="NoPox" data-parameter="NoPox">NoPox</option>
-                    {% for additive in additives %}
-                      <option value="{{ additive.name }}" data-parameter="{{ additive.parameter }}">{{ additive|additive_label }}</option>
-                    {% endfor %}
+                    {{ render_additive_options() }}
                   </select>
                 </div>
                 <div class="col-12 col-md-2">
@@ -75,9 +114,6 @@
                   <label class="form-label fw-bold">Remaining (ml)</label>
                   <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" placeholder="ml">
                   <div class="d-grid gap-1 mt-2">
-                    <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Use container</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm copy-dosing-row">Copy row</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm clear-dosing-row">Clear row</button>
                     <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row">Remove</button>
                   </div>
                 </div>
@@ -131,42 +167,10 @@
 
   function wireDosingRow(row) {
     const removeButton = row.querySelector('.remove-dosing-row');
-    const copyButton = row.querySelector('.copy-dosing-row');
-    const clearButton = row.querySelector('.clear-dosing-row');
-    const autofillButton = row.querySelector('.autofill-remaining');
     if (removeButton) {
       removeButton.addEventListener('click', () => {
         row.remove();
         validateDosingRows();
-      });
-    }
-    if (copyButton && dosingRowsContainer) {
-      copyButton.addEventListener('click', () => {
-        const clone = row.cloneNode(true);
-        dosingRowsContainer.insertBefore(clone, row.nextSibling);
-        wireDosingRow(clone);
-        validateDosingRows();
-      });
-    }
-    if (clearButton) {
-      clearButton.addEventListener('click', () => {
-        row.querySelectorAll('input').forEach((input) => {
-          input.value = '';
-        });
-        row.querySelectorAll('select').forEach((select) => {
-          select.selectedIndex = 0;
-        });
-        validateDosingRows();
-      });
-    }
-    if (autofillButton) {
-      autofillButton.addEventListener('click', () => {
-        const containerInput = row.querySelector('input[name="dosing_container_ml[]"]');
-        const remainingInput = row.querySelector('input[name="dosing_remaining_ml[]"]');
-        if (containerInput && remainingInput) {
-          remainingInput.value = containerInput.value;
-          validateDosingRows();
-        }
       });
     }
   }

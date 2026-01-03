@@ -2861,6 +2861,52 @@ def tank_detail(request: Request, tank_id: int):
     trend_warning_by_param = {}
     stability_score_by_param = {}
     overdue_by_param = {}
+    mode = values_mode(db)
+
+    def normalize_key(value: str) -> str:
+        return re.sub(r"[\s/_-]+", "", str(value or "").lower())
+
+    def recent_param_values(param_name: str) -> List[float]:
+        normalized_param = normalize_key(param_name)
+        if mode == "sample_values":
+            rows = q(
+                db,
+                """
+                SELECT sv.value, pd.name AS name
+                FROM sample_values sv
+                JOIN parameter_defs pd ON pd.id = sv.parameter_id
+                JOIN samples s ON s.id = sv.sample_id
+                WHERE s.tank_id=?
+                ORDER BY s.taken_at DESC
+                LIMIT 200
+                """,
+                (tank_id,),
+            )
+        else:
+            rows = q(
+                db,
+                """
+                SELECT p.value, p.name AS name
+                FROM parameters p
+                JOIN samples s ON s.id = p.sample_id
+                WHERE s.tank_id=?
+                ORDER BY s.taken_at DESC
+                LIMIT 200
+                """,
+                (tank_id,),
+            )
+        values = []
+        for row in rows:
+            if normalize_key(row_get(row, "name")) != normalized_param:
+                continue
+            try:
+                val = float(row["value"])
+            except Exception:
+                continue
+            values.append(val)
+            if len(values) >= 10:
+                break
+        return values
     for pname in available_params:
         data = latest_by_param_id.get(pname)
         v = data.get("value") if data else None
@@ -2893,8 +2939,7 @@ def tank_detail(request: Request, tank_id: int):
                     trend_warning_by_param[pname] = True
             except Exception:
                 trend_warning_by_param[pname] = False
-        series_vals = [point.get("y") for point in series_map.get(pname, [])][-10:]
-        series_vals = [float(val) for val in series_vals if val is not None]
+        series_vals = recent_param_values(pname)
         if len(series_vals) >= 2:
             mean_val = sum(series_vals) / len(series_vals)
             if mean_val != 0:
@@ -5316,7 +5361,11 @@ def dose_plan(request: Request):
     db = get_db()
     today = date.today()
     try:
-        chk_rows = q(db, "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?", (today.isoformat(), (today + timedelta(days=60)).isoformat()))
+        chk_rows = q(
+            db,
+            "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?",
+            ((today - timedelta(days=60)).isoformat(), (today + timedelta(days=60)).isoformat()),
+        )
         check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
     except Exception: check_map = {}
     tanks = get_visible_tanks(db, request)
@@ -5364,6 +5413,7 @@ def dose_plan(request: Request):
         latest_map = get_latest_per_parameter(db, tank_id)
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
+        plan_start_date = latest_taken.date() if latest_taken else today
 
         targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
         tank_rows = []
@@ -5452,7 +5502,7 @@ def dose_plan(request: Request):
                 per_day_ml = None if total_ml is None else (float(total_ml) / float(days))
                 schedule = []
                 for i in range(int(days)):
-                    d = (today + timedelta(days=i)).isoformat()
+                    d = (plan_start_date + timedelta(days=i)).isoformat()
                     schedule.append({
                         "day": i + 1,
                         "date": d,

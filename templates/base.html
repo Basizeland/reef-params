@@ -424,6 +424,20 @@
         document.addEventListener("DOMContentLoaded", () => {
             const toggleBtn = document.getElementById("enable-browser-alerts");
             const statusLabel = document.getElementById("browser-alerts-status");
+            const getPushRegistration = async () => {
+                if (!("serviceWorker" in navigator)) {
+                    return null;
+                }
+                const registration = await navigator.serviceWorker.getRegistration("/static/");
+                if (registration) {
+                    return registration;
+                }
+                try {
+                    return await navigator.serviceWorker.ready;
+                } catch (error) {
+                    return null;
+                }
+            };
             const updateStatus = async () => {
                 if (!statusLabel) return;
                 if (!("serviceWorker" in navigator)) {
@@ -431,7 +445,11 @@
                     if (toggleBtn) toggleBtn.disabled = true;
                     return;
                 }
-                const registration = await navigator.serviceWorker.ready;
+                const registration = await getPushRegistration();
+                if (!registration) {
+                    statusLabel.textContent = "Off";
+                    return;
+                }
                 const subscription = await registration.pushManager.getSubscription();
                 statusLabel.textContent = subscription ? "On" : "Off";
             };
@@ -458,7 +476,8 @@
                     alert("Push notifications are not configured on the server.");
                     return;
                 }
-                const registration = await navigator.serviceWorker.ready;
+                const registration = await getPushRegistration();
+                if (!registration) return;
                 const subscription = await registration.pushManager.subscribe({
                     userVisibleOnly: true,
                     applicationServerKey: urlBase64ToUint8Array(publicKey),
@@ -471,7 +490,8 @@
                 });
             };
             const unsubscribePush = async () => {
-                const registration = await navigator.serviceWorker.ready;
+                const registration = await getPushRegistration();
+                if (!registration) return;
                 const subscription = await registration.pushManager.getSubscription();
                 if (!subscription) return;
                 await fetch("/api/push/unsubscribe", {
