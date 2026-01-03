@@ -1091,6 +1091,11 @@ def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
     db.commit()
 
 APEX_SETTINGS_KEY = "apex_integration_settings"
+DEFAULT_APEX_MAPPING = {
+    "Alk": "Alkalinity",
+    "Ca": "Calcium",
+    "Mg": "Magnesium",
+}
 
 def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
     raw = get_setting(db, APEX_SETTINGS_KEY)
@@ -4981,13 +4986,14 @@ def apex_settings(request: Request):
     require_admin(current_user)
     settings = get_apex_settings(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    mapping = settings.get("mapping") or {}
     db.close()
     return templates.TemplateResponse(
         "apex_settings.html",
         {
             "request": request,
             "settings": settings,
-            "mapping_json": apex_mapping_text(settings.get("mapping", {})),
+            "mapping_json": apex_mapping_text(mapping or DEFAULT_APEX_MAPPING),
             "tanks": tanks,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
