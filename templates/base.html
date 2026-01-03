@@ -100,7 +100,7 @@
     <nav class="navbar navbar-expand-lg navbar-dark mb-4 sticky-top shadow-sm">
         <div class="container">
             <a class="navbar-brand" href="/">
-                <img src="/static/logo.png" alt="Reef Metrics" class="brand-logo-img">
+                <img src="/static/logo-light.png" alt="Reef Metrics" class="brand-logo-img">
             </a>
             <div class="collapse navbar-collapse me-auto" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
@@ -504,6 +504,13 @@
                 });
             }
             updateStatus();
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const tooltipTriggers = Array.from(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggers.forEach((trigger) => {
+                new bootstrap.Tooltip(trigger);
+            });
         });
     </script>
 </body>
