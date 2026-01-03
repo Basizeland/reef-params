@@ -1102,6 +1102,8 @@ def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
         "poll_interval_minutes": 15,
         "mapping": {},
         "tank_id": None,
+        "last_probe_list": [],
+        "last_probe_loaded_at": None,
     }
     if raw:
         try:
@@ -1112,6 +1114,8 @@ def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
             pass
     if not isinstance(settings.get("mapping"), dict):
         settings["mapping"] = {}
+    if not isinstance(settings.get("last_probe_list"), list):
+        settings["last_probe_list"] = []
     return settings
 
 def save_apex_settings(db: sqlite3.Connection, settings: Dict[str, Any]) -> None:
@@ -1156,6 +1160,64 @@ def clean_apex_host(host: str) -> str:
             return f"{split.scheme}://{netloc}{split.path}"
         return f"{split.scheme}://{netloc}"
     return f"http://{trimmed.split('?', 1)[0]}"
+
+def normalize_probe_label(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(label).lower())
+
+def infer_apex_auto_mapping(probes: List[str], parameters: List[sqlite3.Row]) -> Dict[str, str]:
+    param_by_key = {normalize_probe_label(p["name"]): p["name"] for p in parameters if p.get("name")}
+    mapping_rules = {
+        "temp": "Temperature",
+        "temperature": "Temperature",
+        "ph": "pH",
+        "alk": "Alkalinity/KH",
+        "alkalinity": "Alkalinity/KH",
+        "dkh": "Alkalinity/KH",
+        "calcium": "Calcium",
+        "ca": "Calcium",
+        "magnesium": "Magnesium",
+        "mg": "Magnesium",
+        "nitrate": "Nitrate",
+        "no3": "Nitrate",
+        "phosphate": "Phosphate",
+        "po4": "Phosphate",
+        "salinity": "Salinity",
+        "sg": "Salinity",
+        "orp": "ORP",
+        "oxygen": "Oxygen",
+        "o2": "Oxygen",
+        "ammonia": "Ammonia",
+        "nh3": "Ammonia",
+        "nitrite": "Nitrite",
+        "no2": "Nitrite",
+    }
+    auto_mapping: Dict[str, str] = {}
+    for probe in probes:
+        key = normalize_probe_label(probe)
+        if not key:
+            continue
+        matched = None
+        for rule_key, param_name in mapping_rules.items():
+            if key == rule_key or key.startswith(rule_key):
+                matched = param_name
+                break
+        if not matched:
+            continue
+        param_key = normalize_probe_label(matched)
+        if param_key in param_by_key:
+            auto_mapping[probe] = param_by_key[param_key]
+    return auto_mapping
+
+def build_apex_mapping_from_form(form: Any, fallback: Dict[str, str]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    probe_names = form.getlist("probe_name")
+    param_names = form.getlist("param_name")
+    for probe_name, param_name in zip(probe_names, param_names):
+        if probe_name and param_name:
+            mapping[str(probe_name)] = str(param_name)
+    if mapping:
+        return mapping
+    return fallback or {}
 
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
@@ -1300,6 +1362,34 @@ def fetch_apex_readings(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
     return normalized
 
+def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) -> List[Dict[str, Any]]:
+    if not settings.get("host"):
+        raise ValueError("Apex host is required.")
+    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
+    if not mapping:
+        raise ValueError("Apex mapping is required.")
+    readings = fetch_apex_readings(settings)
+    preview: List[Dict[str, Any]] = []
+    for reading in readings:
+        probe_name = str(reading.get("name", "")).strip()
+        if not probe_name:
+            continue
+        param_name = mapping.get(probe_name.lower())
+        if not param_name:
+            continue
+        preview.append(
+            {
+                "probe": probe_name,
+                "parameter": param_name,
+                "value": reading.get("value"),
+                "unit": reading.get("unit", ""),
+                "timestamp": reading.get("timestamp"),
+            }
+        )
+    if not preview:
+        raise ValueError("No Apex probes matched the mapping.")
+    return preview
+
 def values_mode(db: sqlite3.Connection) -> str:
     try:
         cur = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('sample_values','parameter_defs')")
@@ -1409,6 +1499,25 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
     db.commit()
     log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
     return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped)}
+
+def apex_polling_loop() -> None:
+    while True:
+        db = get_db()
+        settings = get_apex_settings(db)
+        enabled = bool(settings.get("enabled"))
+        interval = int(to_float(settings.get("poll_interval_minutes")) or 15)
+        interval = max(interval, 1)
+        if enabled and settings.get("host") and settings.get("mapping"):
+            try:
+                import_apex_sample(db, settings, None)
+            except Exception as exc:
+                print(f"Apex polling error: {exc}")
+        db.close()
+        time_module.sleep(interval * 60)
+
+def start_apex_polling() -> None:
+    thread = threading.Thread(target=apex_polling_loop, name="apex-poller", daemon=True)
+    thread.start()
 
 def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
     mode = values_mode(db)
@@ -1944,6 +2053,7 @@ init_db()
 @app.on_event("startup")
 def start_background_jobs() -> None:
     start_daily_summary_scheduler()
+    start_apex_polling()
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -4982,6 +5092,9 @@ def apex_settings(request: Request):
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = list_parameters(db)
     mapping = settings.get("mapping") or {}
+    probes = settings.get("last_probe_list") or []
+    auto_mapping = infer_apex_auto_mapping(probes, parameters)
+    last_probe_loaded_at = settings.get("last_probe_loaded_at")
     db.close()
     return templates.TemplateResponse(
         "apex_settings.html",
@@ -4989,8 +5102,11 @@ def apex_settings(request: Request):
             "request": request,
             "settings": settings,
             "parameters": parameters,
-            "probes": [],
+            "probes": probes,
             "mapping": mapping,
+            "auto_mapping": auto_mapping,
+            "last_probe_loaded_at": last_probe_loaded_at,
+            "preview": [],
             "tanks": tanks,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
@@ -5009,12 +5125,7 @@ async def apex_settings_save(request: Request):
     password = (form.get("password") or "").strip() or settings.get("password", "")
     api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
     poll_interval = int(to_float(form.get("poll_interval_minutes")) or 15)
-    mapping = {}
-    probe_names = form.getlist("probe_name")
-    param_names = form.getlist("param_name")
-    for probe_name, param_name in zip(probe_names, param_names):
-        if probe_name and param_name:
-            mapping[str(probe_name)] = str(param_name)
+    mapping = build_apex_mapping_from_form(form, settings.get("mapping") or {})
     tank_id = form.get("tank_id")
     settings.update(
         {
@@ -5090,6 +5201,55 @@ async def apex_settings_probes(request: Request):
     try:
         readings = fetch_apex_readings(settings)
         probes = sorted({str(r["name"]) for r in readings if r.get("name")})
+        settings["last_probe_list"] = probes
+        settings["last_probe_loaded_at"] = datetime.utcnow().isoformat()
+        save_apex_settings(db, settings)
+    except Exception as exc:
+        error = str(exc)
+    auto_mapping = infer_apex_auto_mapping(probes, parameters)
+    last_probe_loaded_at = settings.get("last_probe_loaded_at")
+    db.close()
+    return templates.TemplateResponse(
+        "apex_settings.html",
+        {
+            "request": request,
+            "settings": settings,
+            "parameters": parameters,
+            "probes": probes,
+            "mapping": mapping,
+            "auto_mapping": auto_mapping,
+            "last_probe_loaded_at": last_probe_loaded_at,
+            "preview": [],
+            "tanks": tanks,
+            "success": None,
+            "error": error,
+        },
+    )
+
+@app.post("/settings/integrations/apex/preview", response_class=HTMLResponse)
+async def apex_settings_preview(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    form = await request.form()
+    settings = get_apex_settings(db)
+    settings["host"] = clean_apex_host(form.get("host") or "")
+    settings["username"] = (form.get("username") or "").strip()
+    settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
+    settings["api_token"] = (form.get("api_token") or "").strip() or settings.get("api_token", "")
+    settings["poll_interval_minutes"] = int(to_float(form.get("poll_interval_minutes")) or 15)
+    settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
+    tank_id = form.get("tank_id")
+    settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
+    parameters = list_parameters(db)
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    probes = settings.get("last_probe_list") or []
+    auto_mapping = infer_apex_auto_mapping(probes, parameters)
+    mapping = build_apex_mapping_from_form(form, settings.get("mapping") or {})
+    preview: List[Dict[str, Any]] = []
+    error = None
+    try:
+        preview = preview_apex_mapping(settings, mapping or auto_mapping)
     except Exception as exc:
         error = str(exc)
     db.close()
@@ -5101,6 +5261,9 @@ async def apex_settings_probes(request: Request):
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
+            "auto_mapping": auto_mapping,
+            "last_probe_loaded_at": settings.get("last_probe_loaded_at"),
+            "preview": preview,
             "tanks": tanks,
             "success": None,
             "error": error,
