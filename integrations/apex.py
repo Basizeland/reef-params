@@ -37,7 +37,7 @@ class ApexClient:
         return readings
 
     def _fetch_payload(self) -> Any:
-        base = self.host.rstrip("/")
+        base = _normalize_host(self.host)
         endpoints = ["/rest/status", "/rest/status.json", "/rest/"]
         headers = {"Accept": "application/json"}
         if self.api_token:
@@ -124,3 +124,12 @@ def _to_float(value: Any) -> Optional[float]:
             return float(text.replace(",", "."))
         except Exception:
             return None
+
+
+def _normalize_host(host: str) -> str:
+    trimmed = host.strip()
+    if not trimmed:
+        return ""
+    if "://" not in trimmed:
+        trimmed = f"http://{trimmed}"
+    return trimmed.rstrip("/")
