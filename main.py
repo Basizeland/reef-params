@@ -2897,7 +2897,7 @@ def tank_detail(request: Request, tank_id: int):
             )
         values = []
         for row in rows:
-            if normalize_key(row.get("name")) != normalized_param:
+            if normalize_key(row_get(row, "name")) != normalized_param:
                 continue
             try:
                 val = float(row["value"])
