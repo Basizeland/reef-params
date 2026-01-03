@@ -1457,6 +1457,76 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
     else:
         cur.execute("INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)", (sample_id, pname, value, unit or None, test_kit_id))
 
+def get_latest_sample_values(db: sqlite3.Connection, tank_id: int, param_names: List[str]) -> Dict[str, float]:
+    if not param_names:
+        return {}
+    mode = values_mode(db)
+    latest = one(db, "SELECT id FROM samples WHERE tank_id=? ORDER BY taken_at DESC, id DESC LIMIT 1", (tank_id,))
+    if not latest:
+        return {}
+    sample_id = latest["id"]
+    if mode == "sample_values":
+        placeholders = ",".join("?" for _ in param_names)
+        rows = q(
+            db,
+            f"""
+            SELECT pd.name AS name, sv.value AS value
+            FROM sample_values sv
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE sv.sample_id=? AND pd.name IN ({placeholders})
+            """,
+            (sample_id, *param_names),
+        )
+    else:
+        placeholders = ",".join("?" for _ in param_names)
+        rows = q(
+            db,
+            f"""
+            SELECT name, value
+            FROM parameters
+            WHERE sample_id=? AND name IN ({placeholders})
+            """,
+            (sample_id, *param_names),
+        )
+    latest_values: Dict[str, float] = {}
+    for row in rows:
+        name = row_get(row, "name")
+        value = row_get(row, "value")
+        if name is None or value is None:
+            continue
+        try:
+            latest_values[str(name)] = float(value)
+        except Exception:
+            continue
+    return latest_values
+
+def should_import_apex_sample(
+    db: sqlite3.Connection,
+    tank_id: int,
+    mapped: List[Tuple[str, Dict[str, Any]]],
+) -> Tuple[bool, str]:
+    tracked_params = {"Alkalinity/KH", "Calcium", "Magnesium"}
+    tracked_readings = [(param, reading) for param, reading in mapped if param in tracked_params]
+    if not tracked_readings:
+        return True, ""
+    latest_values = get_latest_sample_values(db, tank_id, list(tracked_params))
+    if not latest_values:
+        return True, ""
+    for param_name, reading in tracked_readings:
+        value = reading.get("value")
+        if value is None:
+            continue
+        try:
+            current_value = float(value)
+        except Exception:
+            continue
+        previous_value = latest_values.get(param_name)
+        if previous_value is None:
+            return True, ""
+        if abs(current_value - previous_value) > 1e-6:
+            return True, ""
+    return False, "Alkalinity, Calcium, and Magnesium unchanged from last sample."
+
 def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: Optional[sqlite3.Row]) -> Dict[str, Any]:
     if not settings.get("host"):
         raise ValueError("Apex host is required.")
@@ -1485,6 +1555,9 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
         tank = one(db, "SELECT * FROM tanks ORDER BY id LIMIT 1")
     if not tank:
         raise ValueError("No tank available to import Apex readings.")
+    should_import, reason = should_import_apex_sample(db, tank["id"], mapped)
+    if not should_import:
+        return {"skipped": True, "reason": reason, "mapped_count": len(mapped)}
     taken_at = None
     for _, reading in mapped:
         dt = parse_dt_any(reading.get("timestamp"))
@@ -1502,7 +1575,7 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
         insert_sample_reading(db, sample_id, param_name, float(value), reading.get("unit", ""))
     db.commit()
     log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
-    return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped)}
+    return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped), "skipped": False}
 
 def apex_polling_loop() -> None:
     while True:
@@ -5175,7 +5248,10 @@ async def apex_settings_import(request: Request):
     settings = get_apex_settings(db)
     try:
         result = import_apex_sample(db, settings, current_user)
-        message = f"Imported {result['mapped_count']} readings into sample {result['sample_id']}."
+        if result.get("skipped"):
+            message = result.get("reason") or "No changes detected; import skipped."
+        else:
+            message = f"Imported {result['mapped_count']} readings into sample {result['sample_id']}."
         db.close()
         return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
     except Exception as exc:
