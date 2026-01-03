@@ -5316,7 +5316,11 @@ def dose_plan(request: Request):
     db = get_db()
     today = date.today()
     try:
-        chk_rows = q(db, "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?", (today.isoformat(), (today + timedelta(days=60)).isoformat()))
+        chk_rows = q(
+            db,
+            "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?",
+            ((today - timedelta(days=60)).isoformat(), (today + timedelta(days=60)).isoformat()),
+        )
         check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
     except Exception: check_map = {}
     tanks = get_visible_tanks(db, request)
@@ -5364,6 +5368,7 @@ def dose_plan(request: Request):
         latest_map = get_latest_per_parameter(db, tank_id)
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
+        plan_start_date = latest_taken.date() if latest_taken else today
 
         targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
         tank_rows = []
@@ -5452,7 +5457,7 @@ def dose_plan(request: Request):
                 per_day_ml = None if total_ml is None else (float(total_ml) / float(days))
                 schedule = []
                 for i in range(int(days)):
-                    d = (today + timedelta(days=i)).isoformat()
+                    d = (plan_start_date + timedelta(days=i)).isoformat()
                     schedule.append({
                         "day": i + 1,
                         "date": d,

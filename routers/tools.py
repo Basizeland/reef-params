@@ -67,7 +67,14 @@ def dose_plan(request: Request, db: Session = Depends(get_db)):
     plans = []
     
     # Preload checks
-    checks = db.query(DosePlanCheck).filter(DosePlanCheck.planned_date >= today.isoformat()).all()
+    checks = (
+        db.query(DosePlanCheck)
+        .filter(
+            DosePlanCheck.planned_date >= (today - timedelta(days=60)).isoformat(),
+            DosePlanCheck.planned_date <= (today + timedelta(days=60)).isoformat(),
+        )
+        .all()
+    )
     check_map = {(c.tank_id, c.parameter, c.additive_id, c.planned_date): c.checked for c in checks}
     
     db_main = app_main.get_db()
@@ -82,6 +89,7 @@ def dose_plan(request: Request, db: Session = Depends(get_db)):
         
         latest = db.query(Sample).filter(Sample.tank_id == t.id).order_by(Sample.taken_at.desc()).first()
         if not latest: continue
+        plan_start_date = latest.taken_at.date()
         
         l_vals = {v.parameter_def.name: v.value for v in latest.values}
         targets = db.query(Target).filter(Target.tank_id == t.id).all()
@@ -120,7 +128,7 @@ def dose_plan(request: Request, db: Session = Depends(get_db)):
                 # Schedule
                 sched = []
                 for i in range(days):
-                    d = (today + timedelta(days=i)).isoformat()
+                    d = (plan_start_date + timedelta(days=i)).isoformat()
                     sched.append({
                         "date": d, "ml": per_day,
                         "checked": check_map.get((t.id, tr.parameter, a.id, d), 0),
