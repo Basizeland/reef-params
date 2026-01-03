@@ -10,6 +10,8 @@ import hashlib
 import urllib.parse
 import urllib.request
 import csv
+import gzip
+import html
 import importlib
 import importlib.util
 import smtplib
@@ -1320,13 +1322,39 @@ class TritonTableParser(HTMLParser):
         if self.in_cell:
             self.buffer.append(data)
 
-def fetch_triton_html(url: str) -> str:
+def fetch_triton_html(url: str) -> Tuple[str, Dict[str, Any]]:
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "Mozilla/5.0 (compatible; ReefMetrics/1.0)"},
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", errors="ignore")
+        raw = resp.read()
+        encoding = resp.getheader("Content-Encoding", "")
+        if encoding.lower() == "gzip":
+            raw = gzip.decompress(raw)
+        content_type = resp.getheader("Content-Type", "")
+        meta = {
+            "status": getattr(resp, "status", None),
+            "content_type": content_type,
+            "content_length": len(raw),
+        }
+        return raw.decode("utf-8", errors="ignore"), meta
+
+def summarize_triton_html(content: str, meta: Dict[str, Any]) -> str:
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", content, re.IGNORECASE | re.DOTALL)
+    title = html.unescape(title_match.group(1).strip()) if title_match else "unknown"
+    lower = content.lower()
+    blocked_markers = ["access denied", "forbidden", "captcha", "cloudflare", "attention required"]
+    blocked = any(marker in lower for marker in blocked_markers)
+    notes = []
+    if blocked:
+        notes.append("response looks blocked (access denied/captcha)")
+    if meta.get("content_type"):
+        notes.append(f"type: {meta['content_type']}")
+    if meta.get("content_length") is not None:
+        notes.append(f"bytes: {meta['content_length']}")
+    extra = f" ({'; '.join(notes)})" if notes else ""
+    return f"Response title: {title}{extra}"
 
 def extract_numeric_value(raw: str) -> Optional[float]:
     if raw is None:
@@ -6584,7 +6612,7 @@ async def icp_preview(request: Request):
     pdf_available = importlib.util.find_spec("PyPDF2") is not None
     try:
         if url:
-            content = fetch_triton_html(url)
+            content, meta = fetch_triton_html(url)
             results = parse_triton_html(content)
         elif upload and getattr(upload, "filename", ""):
             data = await upload.read()
@@ -6600,6 +6628,12 @@ async def icp_preview(request: Request):
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
         if not results:
+            if url:
+                summary = summarize_triton_html(content, meta)
+                raise ValueError(
+                    "No ICP values found. Please verify the URL or file. "
+                    f"{summary}."
+                )
             raise ValueError("No ICP values found. Please verify the URL or file.")
         mapped = map_icp_to_parameters(db, results)
     except Exception as exc:
