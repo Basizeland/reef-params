@@ -1165,7 +1165,11 @@ def normalize_probe_label(label: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(label).lower())
 
 def infer_apex_auto_mapping(probes: List[str], parameters: List[sqlite3.Row]) -> Dict[str, str]:
-    param_by_key = {normalize_probe_label(p["name"]): p["name"] for p in parameters if p.get("name")}
+    param_by_key = {
+        normalize_probe_label(row_get(p, "name")): row_get(p, "name")
+        for p in parameters
+        if row_get(p, "name")
+    }
     mapping_rules = {
         "temp": "Temperature",
         "temperature": "Temperature",
