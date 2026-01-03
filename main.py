@@ -6602,6 +6602,7 @@ def dose_plan(request: Request):
 def icp_import(request: Request):
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
     pdf_available = importlib.util.find_spec("PyPDF2") is not None
     db.close()
     return templates.TemplateResponse(
@@ -6609,10 +6610,12 @@ def icp_import(request: Request):
         {
             "request": request,
             "tanks": tanks,
+            "parameters": parameters,
             "mapped": [],
             "mapped_payload": "",
             "raw_count": 0,
             "raw_preview": [],
+            "raw_results": [],
             "error": request.query_params.get("error"),
             "success": request.query_params.get("success"),
             "selected_tank": "",
@@ -6628,6 +6631,7 @@ async def icp_preview(request: Request):
     selected_tank = (form.get("tank_id") or "").strip()
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
     pdf_available = importlib.util.find_spec("PyPDF2") is not None
     try:
         if url:
@@ -6663,10 +6667,12 @@ async def icp_preview(request: Request):
             {
                 "request": request,
                 "tanks": tanks,
+                "parameters": parameters,
                 "mapped": [],
                 "mapped_payload": "",
                 "raw_count": 0,
                 "raw_preview": [],
+                "raw_results": [],
                 "error": str(exc),
                 "success": None,
                 "selected_tank": selected_tank,
@@ -6679,10 +6685,12 @@ async def icp_preview(request: Request):
         {
             "request": request,
             "tanks": tanks,
+            "parameters": parameters,
             "mapped": mapped,
             "mapped_payload": json.dumps(mapped),
             "raw_count": len(results),
             "raw_preview": raw_preview,
+            "raw_results": results,
             "error": None,
             "success": None,
             "selected_tank": selected_tank,
@@ -6696,15 +6704,41 @@ async def icp_import_submit(request: Request):
     tank_id = form.get("tank_id")
     payload = form.get("mapped_payload")
     if not tank_id or not payload:
-        return redirect("/tools/icp?error=Missing tank or preview data.")
+        map_count = form.get("map_count")
+        if not map_count:
+            return redirect("/tools/icp?error=Missing tank or preview data.")
     try:
         tank_id_int = int(tank_id)
     except Exception:
         return redirect("/tools/icp?error=Invalid tank selected.")
-    try:
-        mapped = json.loads(payload)
-    except Exception:
-        return redirect("/tools/icp?error=Unable to read preview payload.")
+    mapped: List[Dict[str, Any]] = []
+    if payload:
+        try:
+            mapped = json.loads(payload)
+        except Exception:
+            return redirect("/tools/icp?error=Unable to read preview payload.")
+    else:
+        try:
+            map_count_int = int(map_count or 0)
+        except Exception:
+            return redirect("/tools/icp?error=Invalid mapping data.")
+        for idx in range(map_count_int):
+            param_name = (form.get(f"map_{idx}") or "").strip()
+            if not param_name:
+                continue
+            raw_name = (form.get(f"raw_name_{idx}") or "").strip()
+            raw_value = form.get(f"raw_value_{idx}")
+            raw_unit = (form.get(f"raw_unit_{idx}") or "").strip()
+            if raw_value is None:
+                continue
+            mapped.append(
+                {
+                    "parameter": param_name,
+                    "value": raw_value,
+                    "unit": raw_unit,
+                    "source": raw_name,
+                }
+            )
     db = get_db()
     user = get_current_user(db, request)
     tank = get_tank_for_user(db, user, tank_id_int)
