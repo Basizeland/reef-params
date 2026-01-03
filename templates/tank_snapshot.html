@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-1">{{ tank.name }} Snapshot</h1>
+    <div class="text-muted small">
+      {% if latest_sample %}
+        Last sample {{ latest_sample.taken_at|time_ago }}
+      {% else %}
+        No samples recorded yet.
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="/tanks/{{ tank.id }}">
+      <i class="bi bi-arrow-left"></i> Back to tank
+    </a>
+    <button class="btn btn-outline-secondary" onclick="window.print()">
+      <i class="bi bi-printer"></i> Print
+    </button>
+  </div>
+</div>
+
+<div class="card shadow-sm border-0">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="text-muted text-uppercase small">Volume</div>
+        <div class="fs-5 fw-semibold">{{ tank.volume_l or "—" }} L</div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted text-uppercase small">Last sample</div>
+        <div class="fs-5 fw-semibold">
+          {% if latest_sample %}{{ latest_sample.taken_at }}{% else %}—{% endif %}
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="text-muted text-uppercase small">Readings</div>
+        <div class="fs-5 fw-semibold">{{ readings|length }}</div>
+      </div>
+    </div>
+    <hr>
+    {% if readings %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in readings %}
+              <tr>
+                <td class="fw-semibold">{{ r.name }}</td>
+                <td>{{ r.value|fmt2 }} {{ r.unit }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted small">No readings available for this tank.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

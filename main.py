@@ -1223,6 +1223,115 @@ def build_apex_mapping_from_form(form: Any, fallback: Dict[str, str]) -> Dict[st
         return mapping
     return fallback or {}
 
+def build_sparkline_points(values: List[float], width: int = 84, height: int = 24) -> str:
+    if len(values) < 2:
+        return ""
+    min_val = min(values)
+    max_val = max(values)
+    span = max(max_val - min_val, 1e-6)
+    points = []
+    for idx, value in enumerate(values):
+        x = round((idx / (len(values) - 1)) * width, 1)
+        y = round(height - ((value - min_val) / span) * height, 1)
+        points.append(f"{x},{y}")
+    return " ".join(points)
+
+def get_recent_param_values(
+    db: sqlite3.Connection,
+    tank_id: int,
+    param_names: List[str],
+    limit: int = 6,
+) -> Dict[str, List[float]]:
+    if not param_names:
+        return {}
+    samples = q(
+        db,
+        """
+        SELECT id
+        FROM samples
+        WHERE tank_id=?
+        ORDER BY taken_at DESC, id DESC
+        LIMIT ?
+        """,
+        (tank_id, limit),
+    )
+    if not samples:
+        return {}
+    sample_ids = [row["id"] for row in samples]
+    mode = values_mode(db)
+    placeholders = ",".join("?" for _ in sample_ids)
+    param_placeholders = ",".join("?" for _ in param_names)
+    if mode == "sample_values":
+        rows = q(
+            db,
+            f"""
+            SELECT sv.sample_id, pd.name AS name, sv.value
+            FROM sample_values sv
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE sv.sample_id IN ({placeholders}) AND pd.name IN ({param_placeholders})
+            """,
+            (*sample_ids, *param_names),
+        )
+    else:
+        rows = q(
+            db,
+            f"""
+            SELECT p.sample_id, p.name AS name, p.value
+            FROM parameters p
+            WHERE p.sample_id IN ({placeholders}) AND p.name IN ({param_placeholders})
+            """,
+            (*sample_ids, *param_names),
+        )
+    values_by_param: Dict[str, Dict[int, float]] = {name: {} for name in param_names}
+    for row in rows:
+        name = row_get(row, "name")
+        value = row_get(row, "value")
+        sample_id = row_get(row, "sample_id")
+        if name is None or value is None or sample_id is None:
+            continue
+        try:
+            values_by_param[str(name)][int(sample_id)] = float(value)
+        except Exception:
+            continue
+    ordered_ids = list(reversed(sample_ids))
+    series: Dict[str, List[float]] = {}
+    for name, values_map in values_by_param.items():
+        series_values = [values_map[sid] for sid in ordered_ids if sid in values_map]
+        if series_values:
+            series[name] = series_values
+    return series
+
+def get_overdue_tests(db: sqlite3.Connection, tank_id: int) -> List[Dict[str, Any]]:
+    now = datetime.now()
+    overdue: List[Dict[str, Any]] = []
+    pdefs = get_active_param_defs(db)
+    latest_map = get_latest_and_previous_per_parameter(db, tank_id)
+    for p in pdefs:
+        name = row_get(p, "name")
+        if not name:
+            continue
+        interval_days = row_get(p, "test_interval_days")
+        if not interval_days:
+            continue
+        data = latest_map.get(name)
+        if not data or not data.get("latest"):
+            continue
+        latest_taken = data["latest"].get("taken_at")
+        if not latest_taken:
+            continue
+        try:
+            if (now - latest_taken).days >= int(interval_days):
+                overdue.append(
+                    {
+                        "parameter": name,
+                        "last_tested": latest_taken,
+                        "days_overdue": (now - latest_taken).days,
+                    }
+                )
+        except Exception:
+            continue
+    return overdue
+
 def users_exist(db: sqlite3.Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
     return bool(row and row["count"] > 0)
@@ -2161,11 +2270,13 @@ def dashboard(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
     tank_cards = []
+    reminders: List[Dict[str, Any]] = []
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
         targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
+        history_map = get_recent_param_values(db, t["id"], list(pdefs.keys()))
         
         readings = []
         out_of_range = 0
@@ -2220,6 +2331,15 @@ def dashboard(request: Request):
                 out_of_range += 1
             if overdue:
                 overdue_count += 1
+                reminders.append(
+                    {
+                        "tank_id": t["id"],
+                        "tank_name": t["name"],
+                        "parameter": pname,
+                        "last_tested": latest_taken,
+                    }
+                )
+            sparkline_values = history_map.get(pname, [])
             readings.append({
                 "name": pname,
                 "value": latest_val,
@@ -2229,6 +2349,7 @@ def dashboard(request: Request):
                 "trend_warning": trend_warning,
                 "delta_per_day": delta_per_day,
                 "overdue": overdue,
+                "sparkline": build_sparkline_points(sparkline_values),
             })
         
         tank_data = dict(t)
@@ -2248,7 +2369,131 @@ def dashboard(request: Request):
             },
         })
     db.close()
-    return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "tank_cards": tank_cards,
+            "reminders": reminders,
+            "extra_css": ["/static/dashboard.css"],
+        },
+    )
+
+@app.get("/insights", response_class=HTMLResponse)
+def insights(request: Request):
+    db = get_db()
+    tanks = get_visible_tanks(db, request)
+    tank_ids = [t["id"] for t in tanks]
+    total_tanks = len(tanks)
+    total_samples_week = 0
+    overdue_items: List[Dict[str, Any]] = []
+    volatility: List[Dict[str, Any]] = []
+    if tank_ids:
+        placeholders = ",".join("?" for _ in tank_ids)
+        week_start = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        total_samples_week = one(
+            db,
+            f"SELECT COUNT(*) AS count FROM samples WHERE tank_id IN ({placeholders}) AND taken_at>=?",
+            (*tank_ids, week_start),
+        )["count"]
+        for tank in tanks:
+            overdue_items.extend(
+                [
+                    {
+                        "tank_id": tank["id"],
+                        "tank_name": tank["name"],
+                        **item,
+                    }
+                    for item in get_overdue_tests(db, tank["id"])
+                ]
+            )
+            latest_map = get_latest_and_previous_per_parameter(db, tank["id"])
+            for param_name, data in latest_map.items():
+                latest = data.get("latest")
+                previous = data.get("previous")
+                if not latest or not previous:
+                    continue
+                latest_taken = latest.get("taken_at")
+                previous_taken = previous.get("taken_at")
+                if not latest_taken or not previous_taken:
+                    continue
+                try:
+                    delta = float(latest.get("value")) - float(previous.get("value"))
+                    days = max((latest_taken - previous_taken).total_seconds() / 86400.0, 1e-6)
+                    volatility.append(
+                        {
+                            "tank_id": tank["id"],
+                            "tank_name": tank["name"],
+                            "parameter": param_name,
+                            "delta_per_day": delta / days,
+                        }
+                    )
+                except Exception:
+                    continue
+    volatility_sorted = sorted(volatility, key=lambda v: abs(v["delta_per_day"]), reverse=True)[:5]
+    db.close()
+    return templates.TemplateResponse(
+        "insights.html",
+        {
+            "request": request,
+            "total_tanks": total_tanks,
+            "total_samples_week": total_samples_week,
+            "overdue_items": overdue_items,
+            "volatility": volatility_sorted,
+        },
+    )
+
+@app.get("/alerts", response_class=HTMLResponse)
+def alerts_center(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    if row_get(user, "admin"):
+        alerts = collect_dosing_notifications(db, actor_user=user)
+    else:
+        alerts = collect_dosing_notifications(db, owner_user_id=user["id"], actor_user=user)
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    db.close()
+    return templates.TemplateResponse(
+        "alerts.html",
+        {
+            "request": request,
+            "alerts": alerts,
+            "tanks": tanks,
+        },
+    )
+
+@app.get("/tanks/{tank_id}/snapshot", response_class=HTMLResponse)
+def tank_snapshot(request: Request, tank_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
+    latest_sample = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
+    readings: List[Dict[str, Any]] = []
+    if latest_sample:
+        for row in get_sample_readings(db, latest_sample["id"]):
+            readings.append(
+                {
+                    "name": row_get(row, "name"),
+                    "value": row_get(row, "value"),
+                    "unit": row_get(row, "unit"),
+                }
+            )
+    db.close()
+    return templates.TemplateResponse(
+        "tank_snapshot.html",
+        {
+            "request": request,
+            "tank": tank,
+            "latest_sample": latest_sample,
+            "readings": readings,
+        },
+    )
 
 @app.get("/auth/login", response_class=HTMLResponse)
 def login_form(request: Request):
