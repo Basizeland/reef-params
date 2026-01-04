@@ -248,6 +248,53 @@
             {% endfor %}
           </div>
 
+          {% if plan.icp_recommendations and plan.icp_recommendations|length %}
+            <div class="border-top pt-3 mt-3">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                <h6 class="mb-0 fw-semibold">ICP Dose Recommendations</h6>
+                {% if plan.icp_sample and plan.icp_sample.taken_at %}
+                  <span class="badge bg-light text-secondary border">From {{ plan.icp_sample.taken_at|time_ago }}</span>
+                {% endif %}
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Recommendation</th>
+                      <th>Amount</th>
+                      <th>Notes</th>
+                      <th class="text-center">Done</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for rec in plan.icp_recommendations %}
+                      <tr>
+                        <td class="fw-semibold">{{ rec.label }}</td>
+                        <td>
+                          {% if rec.value is not none %}
+                            {{ rec.value }} {{ rec.unit or "" }}
+                          {% else %}
+                            —
+                          {% endif %}
+                        </td>
+                        <td class="text-muted">{{ rec.notes or "—" }}</td>
+                        <td class="text-center">
+                          <label class="form-check form-check-inline m-0 pointer" style="cursor: pointer;">
+                            <input class="form-check-input icp-dose-check"
+                                   type="checkbox"
+                                   data-sample-id="{{ rec.sample_id }}"
+                                   data-label="{{ rec.label }}"
+                                   {% if rec.checked %}checked{% endif %}>
+                          </label>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {% endif %}
+
         {% else %}
           <div class="text-center py-4 text-muted">All parameters are within target range.</div>
         {% endif %}
@@ -477,6 +524,39 @@ function updateDoseCheckStyles() {
 
   document.querySelectorAll(".dose-check").forEach((el)=>{
     el.addEventListener("change", ()=>toggleDoseCheck(el));
+  });
+})();
+
+// ICP dose recommendations
+(function(){
+  async function toggleIcpDoseCheck(input){
+    const sampleId = input.dataset.sampleId;
+    const label = input.dataset.label;
+    const checked = input.checked ? 1 : 0;
+    input.disabled = true;
+    try{
+      const res = await fetch("/tools/icp-dose/check", {
+        method: "POST",
+        headers: {"Content-Type":"application/x-www-form-urlencoded"},
+        body: new URLSearchParams({
+          sample_id: sampleId,
+          label: label,
+          checked: checked
+        })
+      });
+      if(!res.ok){
+        throw new Error(await res.text());
+      }
+    }catch(e){
+      input.checked = !input.checked;
+      alert("Failed to update ICP dose check. " + (e && e.message ? e.message : ""));
+    } finally {
+      input.disabled = false;
+    }
+  }
+
+  document.querySelectorAll(".icp-dose-check").forEach((el)=>{
+    el.addEventListener("change", ()=>toggleIcpDoseCheck(el));
   });
 })();
 </script>

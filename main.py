@@ -670,6 +670,18 @@ def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, 
     parameter_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     trend_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     maintenance_by_tank: Dict[int, List[Dict[str, Any]]] = {}
+    icp_check_map: Dict[Tuple[int, str], int] = {}
+    if icp_sample_ids:
+        placeholders = ",".join("?" for _ in icp_sample_ids)
+        icp_check_rows = q(
+            db,
+            f"SELECT sample_id, label, checked FROM icp_dose_checks WHERE sample_id IN ({placeholders})",
+            tuple(icp_sample_ids),
+        )
+        icp_check_map = {
+            (row_get(r, "sample_id"), row_get(r, "label")): int(row_get(r, "checked") or 0)
+            for r in icp_check_rows
+        }
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -2525,6 +2537,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_id, endpoint), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS icp_recommendations (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, category TEXT NOT NULL, label TEXT, value REAL, unit TEXT, notes TEXT, severity TEXT, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS icp_dose_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, label TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(sample_id, label), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
@@ -6671,6 +6684,8 @@ def dose_plan(request: Request):
     top_deficit = None
     plans = []
     grand_total_ml = 0.0
+    latest_icp_by_tank: Dict[int, Dict[str, Any]] = {}
+    icp_sample_ids: List[int] = []
     for t in tanks:
         tank_id = int(t["id"])
         prof = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
@@ -6689,6 +6704,17 @@ def dose_plan(request: Request):
         latest_map = get_latest_per_parameter(db, tank_id)
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
+        icp_sample = one(
+            db,
+            "SELECT id, taken_at FROM samples WHERE tank_id=? AND lower(notes) LIKE ? ORDER BY taken_at DESC LIMIT 1",
+            (tank_id, "%imported from icp%"),
+        )
+        if icp_sample:
+            latest_icp_by_tank[tank_id] = {
+                "id": icp_sample["id"],
+                "taken_at": parse_dt_any(icp_sample["taken_at"]),
+            }
+            icp_sample_ids.append(icp_sample["id"])
 
         targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
         tank_rows = []
@@ -6823,7 +6849,43 @@ def dose_plan(request: Request):
                     try: plan_total_ml += float(_a.get("total_ml") or 0)
                     except Exception: pass
         grand_total_ml += plan_total_ml
-        plans.append({"tank": t, "latest_taken": latest_taken, "eff_vol_l": eff_vol_l, "net_pct": net_pct, "rows": tank_rows, "total_ml": plan_total_ml})
+        icp_recommendations: List[Dict[str, Any]] = []
+        icp_info = latest_icp_by_tank.get(tank_id)
+        if icp_info:
+            rec_rows = q(
+                db,
+                """
+                SELECT label, value, unit, notes
+                FROM icp_recommendations
+                WHERE sample_id=? AND category='dose'
+                ORDER BY id ASC
+                """,
+                (icp_info["id"],),
+            )
+            for row in rec_rows:
+                label = row_get(row, "label") or "Dose"
+                icp_recommendations.append(
+                    {
+                        "label": label,
+                        "value": row_get(row, "value"),
+                        "unit": row_get(row, "unit"),
+                        "notes": row_get(row, "notes"),
+                        "checked": icp_check_map.get((icp_info["id"], label), 0),
+                        "sample_id": icp_info["id"],
+                    }
+                )
+        plans.append(
+            {
+                "tank": t,
+                "latest_taken": latest_taken,
+                "eff_vol_l": eff_vol_l,
+                "net_pct": net_pct,
+                "rows": tank_rows,
+                "total_ml": plan_total_ml,
+                "icp_recommendations": icp_recommendations,
+                "icp_sample": icp_info,
+            }
+        )
     db.close()
     available_parameters_sorted = sorted(available_parameters, key=lambda s: s.lower())
     dose_plan_summary = {
@@ -7078,6 +7140,28 @@ async def dose_plan_check(request: Request):
         elif not checked:
             db.execute("DELETE FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at LIKE ? AND reason=?", (tank_id, additive_id, date_like, reason))
     except Exception: pass
+    db.commit()
+    db.close()
+    return {"ok": True, "checked": checked}
+
+@app.post("/tools/icp-dose/check")
+async def icp_dose_check(request: Request):
+    form = await request.form()
+    sample_id_raw = (form.get("sample_id") or "").strip()
+    label = (form.get("label") or "").strip()
+    checked = 1 if str(form.get("checked") or "").lower() in ("1", "true", "on", "yes") else 0
+    try:
+        sample_id = int(sample_id_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid sample id")
+    if not label:
+        raise HTTPException(status_code=400, detail="Missing label")
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat()
+    db.execute(
+        "INSERT INTO icp_dose_checks (sample_id, label, checked, checked_at) VALUES (?, ?, ?, ?) ON CONFLICT(sample_id, label) DO UPDATE SET checked=excluded.checked, checked_at=excluded.checked_at",
+        (sample_id, label, checked, now_iso),
+    )
     db.commit()
     db.close()
     return {"ok": True, "checked": checked}
