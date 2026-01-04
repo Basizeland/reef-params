@@ -670,18 +670,6 @@ def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, 
     parameter_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     trend_alerts_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     maintenance_by_tank: Dict[int, List[Dict[str, Any]]] = {}
-    icp_check_map: Dict[Tuple[int, str], int] = {}
-    if icp_sample_ids:
-        placeholders = ",".join("?" for _ in icp_sample_ids)
-        icp_check_rows = q(
-            db,
-            f"SELECT sample_id, label, checked FROM icp_dose_checks WHERE sample_id IN ({placeholders})",
-            tuple(icp_sample_ids),
-        )
-        icp_check_map = {
-            (row_get(r, "sample_id"), row_get(r, "label")): int(row_get(r, "checked") or 0)
-            for r in icp_check_rows
-        }
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -6849,31 +6837,7 @@ def dose_plan(request: Request):
                     try: plan_total_ml += float(_a.get("total_ml") or 0)
                     except Exception: pass
         grand_total_ml += plan_total_ml
-        icp_recommendations: List[Dict[str, Any]] = []
         icp_info = latest_icp_by_tank.get(tank_id)
-        if icp_info:
-            rec_rows = q(
-                db,
-                """
-                SELECT label, value, unit, notes
-                FROM icp_recommendations
-                WHERE sample_id=? AND category='dose'
-                ORDER BY id ASC
-                """,
-                (icp_info["id"],),
-            )
-            for row in rec_rows:
-                label = row_get(row, "label") or "Dose"
-                icp_recommendations.append(
-                    {
-                        "label": label,
-                        "value": row_get(row, "value"),
-                        "unit": row_get(row, "unit"),
-                        "notes": row_get(row, "notes"),
-                        "checked": icp_check_map.get((icp_info["id"], label), 0),
-                        "sample_id": icp_info["id"],
-                    }
-                )
         plans.append(
             {
                 "tank": t,
@@ -6882,10 +6846,48 @@ def dose_plan(request: Request):
                 "net_pct": net_pct,
                 "rows": tank_rows,
                 "total_ml": plan_total_ml,
-                "icp_recommendations": icp_recommendations,
+                "icp_recommendations": [],
                 "icp_sample": icp_info,
             }
         )
+    icp_check_map: Dict[Tuple[int, str], int] = {}
+    if icp_sample_ids:
+        placeholders = ",".join("?" for _ in icp_sample_ids)
+        icp_check_rows = q(
+            db,
+            f"SELECT sample_id, label, checked FROM icp_dose_checks WHERE sample_id IN ({placeholders})",
+            tuple(icp_sample_ids),
+        )
+        icp_check_map = {
+            (row_get(r, "sample_id"), row_get(r, "label")): int(row_get(r, "checked") or 0)
+            for r in icp_check_rows
+        }
+    for plan in plans:
+        icp_info = plan.get("icp_sample")
+        if not icp_info:
+            continue
+        rec_rows = q(
+            db,
+            """
+            SELECT label, value, unit, notes
+            FROM icp_recommendations
+            WHERE sample_id=? AND category='dose'
+            ORDER BY id ASC
+            """,
+            (icp_info["id"],),
+        )
+        for row in rec_rows:
+            label = row_get(row, "label") or "Dose"
+            plan["icp_recommendations"].append(
+                {
+                    "label": label,
+                    "value": row_get(row, "value"),
+                    "unit": row_get(row, "unit"),
+                    "notes": row_get(row, "notes"),
+                    "checked": icp_check_map.get((icp_info["id"], label), 0),
+                    "sample_id": icp_info["id"],
+                }
+            )
     db.close()
     available_parameters_sorted = sorted(available_parameters, key=lambda s: s.lower())
     dose_plan_summary = {
