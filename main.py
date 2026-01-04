@@ -1562,14 +1562,18 @@ def extract_dose_tab_recommendations(content: str) -> List[Dict[str, Any]]:
             if re.fullmatch(r"[A-Za-z0-9]{1,4}", line):
                 symbol = line
                 next_line = lines[idx + 1] if idx + 1 < len(lines) else ""
+                label = symbol
+                idx += 1
                 if next_line and not re.fullmatch(r"[A-Za-z0-9]{1,4}", next_line):
-                    label = f"{symbol} {next_line}"
-                    idx += 2
-                else:
-                    label = symbol
-                    idx += 1
+                    next_lower = next_line.lower()
+                    if not next_lower.startswith("we have detected"):
+                        label = f"{symbol} {next_line}"
+                        idx += 1
                 flush()
                 current_label = label
+                continue
+            if current_label and lower_line.startswith("we have detected"):
+                idx += 1
                 continue
             buffer.append(line)
             idx += 1
@@ -1834,7 +1838,8 @@ def parse_icp_dose_schedule(notes: str) -> Dict[str, Any]:
     if days_match:
         days = int(days_match.group(1))
     doses: List[Tuple[int, float]] = []
-    for match in re.finditer(r"(?:day\s*(\d+)|first day|last day).*?(\d+(?:[.,]\d+)?)\s*ml", notes, re.IGNORECASE):
+    dose_pattern = r"(?:day\s*(\d+)|first day|last day).*?(\d+(?:[.,]\d+)?)\s*(ml|g|mg)"
+    for match in re.finditer(dose_pattern, notes, re.IGNORECASE):
         day_raw = match.group(1)
         amount = extract_numeric_value(match.group(2))
         if amount is None:
@@ -1849,11 +1854,21 @@ def parse_icp_dose_schedule(notes: str) -> Dict[str, Any]:
                 day = 1
         doses.append((day, amount))
     doses = sorted({day: amount for day, amount in doses}.items())
-    total_match = re.search(r"total[^\\d]*(\\d+(?:[.,]\\d+)?)\\s*ml", notes, re.IGNORECASE)
+    total_match = re.search(r"total[^\\d]*(\\d+(?:[.,]\\d+)?)\\s*(ml|g|mg)", notes, re.IGNORECASE)
     total = extract_numeric_value(total_match.group(1)) if total_match else None
     if total is None and doses:
         total = sum(amount for _, amount in doses)
-    unit = "ml" if ("ml" in notes.lower()) else None
+    unit_match = re.search(r"\b(ml|g|mg)\b", notes.lower())
+    unit = unit_match.group(1) if unit_match else None
+    if not doses:
+        single_match = re.search(r"corrective dosage of\s*(\d+(?:[.,]\d+)?)\s*(ml|g|mg)", notes, re.IGNORECASE)
+        if single_match:
+            amount = extract_numeric_value(single_match.group(1))
+            if amount is not None:
+                unit = single_match.group(2)
+                doses = [(1, amount)]
+                total = amount
+                days = 1
     return {"days": days, "doses": doses, "total": total, "unit": unit}
 
 def get_recent_param_values(
