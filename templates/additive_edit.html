@@ -36,9 +36,9 @@
         </div>
 
         <div class="col-12 col-md-4">
-          <label class="form-label">Strength (X)</label>
+          <label class="form-label">Concentration (mg/L)</label>
           <input class="form-control" name="strength" type="number" step="any" value="{{ additive.strength|string if additive and additive.strength is not none else '' }}" required />
-          <div class="form-text">Change per 1 mL / 100 L</div>
+          <div class="form-text">Enter the additive concentration in mg/L.</div>
         </div>
 
         <div class="col-12 col-md-4">

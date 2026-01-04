@@ -139,7 +139,7 @@ def build_daily_consumption(db: sqlite3.Connection, tank_view: Dict[str, Any]) -
         strength = row_get(additive, "strength")
         if strength in (None, 0):
             continue
-        daily_change = float(daily_ml) * float(strength) * (100.0 / float(volume_l))
+        daily_change = (float(daily_ml) * float(strength)) / (1000.0 * float(volume_l))
         additive_name = additive_label(additive) or solution_name
         additive_param = row_get(additive, "parameter") or ""
         additive_unit = row_get(additive, "unit") or ""
@@ -6863,7 +6863,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
     if volume_l is None or strength in (None, 0): error = "Tank volume or additive strength is missing/invalid."
     else:
         volume = float(volume_l) * (float(net_percent) / 100.0)
-        dose_ml = (float(desired_change) / float(strength)) * (volume / 100.0)
+        dose_ml = (float(desired_change) * volume * 1000.0) / float(strength)
         pname = (additive['parameter'] or '').strip()
         pdef = one(db, "SELECT * FROM parameter_defs WHERE name=?", (pname,))
         if not pdef and pname:
@@ -6879,7 +6879,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
             if limit_change is not None and float(limit_change) > 0 and float(desired_change) > float(limit_change):
                 days = int(math.ceil(float(desired_change) / float(limit_change)))
                 daily_change = float(desired_change) / float(days)
-                daily_ml = (daily_change / float(strength)) * (volume / 100.0)
+                daily_ml = (daily_change * volume * 1000.0) / float(strength)
         except Exception: pass
     tanks = get_visible_tanks(db, request)
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
@@ -7060,7 +7060,7 @@ def dose_plan(request: Request):
                 strength = a["strength"]
                 if strength in (None, 0) or eff_vol_l is None: total_ml = None
                 else:
-                    try: total_ml = (float(delta) / float(strength)) * (float(eff_vol_l) / 100.0)
+                    try: total_ml = (float(delta) * float(eff_vol_l) * 1000.0) / float(strength)
                     except Exception: total_ml = None
                 per_day_ml = None if total_ml is None else (float(total_ml) / float(days))
                 schedule = []
