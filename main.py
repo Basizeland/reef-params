@@ -1094,35 +1094,72 @@ def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
     db.commit()
 
 APEX_SETTINGS_KEY = "apex_integration_settings"
-def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
-    raw = get_setting(db, APEX_SETTINGS_KEY)
-    settings: Dict[str, Any] = {
-        "enabled": False,
-        "host": "",
-        "username": "",
-        "password": "",
-        "api_token": "",
-        "poll_interval_minutes": 15,
-        "mapping": {},
-        "tank_id": None,
-        "last_probe_list": [],
-        "last_probe_loaded_at": None,
-    }
-    if raw:
-        try:
-            stored = json.loads(raw)
-            if isinstance(stored, dict):
-                settings.update(stored)
-        except Exception:
-            pass
+def _normalize_apex_integration(settings: Dict[str, Any]) -> Dict[str, Any]:
+    settings.setdefault("id", "default")
+    settings.setdefault("name", "Apex Integration")
+    settings.setdefault("enabled", False)
+    settings.setdefault("host", "")
+    settings.setdefault("username", "")
+    settings.setdefault("password", "")
+    settings.setdefault("api_token", "")
+    settings.setdefault("poll_interval_minutes", 15)
+    settings.setdefault("mapping", {})
+    settings.setdefault("tank_id", None)
+    settings.setdefault("tank_ids", [])
+    settings.setdefault("last_probe_list", [])
+    settings.setdefault("last_probe_loaded_at", None)
     if not isinstance(settings.get("mapping"), dict):
         settings["mapping"] = {}
     if not isinstance(settings.get("last_probe_list"), list):
         settings["last_probe_list"] = []
+    if not isinstance(settings.get("tank_ids"), list):
+        settings["tank_ids"] = []
     return settings
 
-def save_apex_settings(db: sqlite3.Connection, settings: Dict[str, Any]) -> None:
-    set_setting(db, APEX_SETTINGS_KEY, json.dumps(settings))
+def get_apex_integrations(db: sqlite3.Connection) -> List[Dict[str, Any]]:
+    raw = get_setting(db, APEX_SETTINGS_KEY)
+    if not raw:
+        return [_normalize_apex_integration({})]
+    try:
+        stored = json.loads(raw)
+    except Exception:
+        stored = {}
+    if isinstance(stored, dict) and "integrations" in stored:
+        integrations = stored.get("integrations") or []
+    elif isinstance(stored, list):
+        integrations = stored
+    elif isinstance(stored, dict):
+        integrations = [stored]
+    else:
+        integrations = []
+    normalized = []
+    for idx, entry in enumerate(integrations):
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("id"):
+            entry["id"] = f"apex-{idx + 1}"
+        normalized.append(_normalize_apex_integration(entry))
+    return normalized or [_normalize_apex_integration({})]
+
+def get_apex_settings(db: sqlite3.Connection, integration_id: Optional[str] = None) -> Dict[str, Any]:
+    integrations = get_apex_integrations(db)
+    if integration_id:
+        for integration in integrations:
+            if integration.get("id") == integration_id:
+                return integration
+    return integrations[0]
+
+def save_apex_settings(db: sqlite3.Connection, integration_id: str, settings: Dict[str, Any]) -> None:
+    integrations = get_apex_integrations(db)
+    updated = False
+    for idx, integration in enumerate(integrations):
+        if integration.get("id") == integration_id:
+            integrations[idx] = _normalize_apex_integration(settings)
+            updated = True
+            break
+    if not updated:
+        integrations.append(_normalize_apex_integration(settings))
+    set_setting(db, APEX_SETTINGS_KEY, json.dumps({"integrations": integrations}))
 
 def parse_apex_mapping(mapping_text: str) -> Dict[str, str]:
     if not mapping_text:
@@ -2297,16 +2334,17 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
         mapped.append((param_name, reading))
     if not mapped:
         raise ValueError("No Apex probes matched the mapping.")
-    tank_id = settings.get("tank_id")
-    if tank_id:
-        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
-    else:
+    tank_ids = []
+    if settings.get("tank_ids"):
+        tank_ids = [int(tid) for tid in settings.get("tank_ids") if str(tid).isdigit()]
+    elif settings.get("tank_id"):
+        tank_ids = [int(settings.get("tank_id"))]
+    if not tank_ids:
         tank = one(db, "SELECT * FROM tanks ORDER BY id LIMIT 1")
-    if not tank:
-        raise ValueError("No tank available to import Apex readings.")
-    should_import, reason = should_import_apex_sample(db, tank["id"], mapped)
-    if not should_import:
-        return {"skipped": True, "reason": reason, "mapped_count": len(mapped)}
+        if not tank:
+            raise ValueError("No tank available to import Apex readings.")
+        tank_ids = [tank["id"]]
+    results = []
     taken_at = None
     for _, reading in mapped:
         dt = parse_dt_any(reading.get("timestamp"))
@@ -2314,32 +2352,45 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
             taken_at = dt
             break
     when_iso = (taken_at or datetime.utcnow()).isoformat()
-    cur = db.cursor()
-    cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank["id"], when_iso, "Imported from Apex"))
-    sample_id = cur.lastrowid
-    for param_name, reading in mapped:
-        value = reading.get("value")
-        if value is None:
+    for tank_id in tank_ids:
+        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+        if not tank:
             continue
-        insert_sample_reading(db, sample_id, param_name, float(value), reading.get("unit", ""))
-    db.commit()
-    log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
-    return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped), "skipped": False}
+        should_import, reason = should_import_apex_sample(db, tank["id"], mapped)
+        if not should_import:
+            results.append({"tank_id": tank["id"], "skipped": True, "reason": reason})
+            continue
+        cur = db.cursor()
+        cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank["id"], when_iso, "Imported from Apex"))
+        sample_id = cur.lastrowid
+        for param_name, reading in mapped:
+            value = reading.get("value")
+            if value is None:
+                continue
+            insert_sample_reading(db, sample_id, param_name, float(value), reading.get("unit", ""))
+        db.commit()
+        log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
+        results.append({"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped), "skipped": False})
+    return {"imports": results, "mapped_count": len(mapped)}
 
 def apex_polling_loop() -> None:
     while True:
         db = get_db()
-        settings = get_apex_settings(db)
-        enabled = bool(settings.get("enabled"))
-        interval = int(to_float(settings.get("poll_interval_minutes")) or 15)
-        interval = max(interval, 1)
-        if enabled and settings.get("host") and settings.get("mapping"):
-            try:
-                import_apex_sample(db, settings, None)
-            except Exception as exc:
-                print(f"Apex polling error: {exc}")
+        integrations = get_apex_integrations(db)
+        intervals = []
+        for settings in integrations:
+            enabled = bool(settings.get("enabled"))
+            interval = int(to_float(settings.get("poll_interval_minutes")) or 15)
+            interval = max(interval, 1)
+            intervals.append(interval)
+            if enabled and settings.get("host") and settings.get("mapping"):
+                try:
+                    import_apex_sample(db, settings, None)
+                except Exception as exc:
+                    print(f"Apex polling error: {exc}")
         db.close()
-        time_module.sleep(interval * 60)
+        sleep_minutes = min(intervals) if intervals else 15
+        time_module.sleep(sleep_minutes * 60)
 
 def start_apex_polling() -> None:
     thread = threading.Thread(target=apex_polling_loop, name="apex-poller", daemon=True)
@@ -6148,7 +6199,9 @@ def apex_settings(request: Request):
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
-    settings = get_apex_settings(db)
+    integration_id = request.query_params.get("integration_id") or None
+    settings = get_apex_settings(db, integration_id)
+    integrations = get_apex_integrations(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = list_parameters(db)
     mapping = settings.get("mapping") or {}
@@ -6161,6 +6214,8 @@ def apex_settings(request: Request):
         {
             "request": request,
             "settings": settings,
+            "integrations": integrations,
+            "integration_id": settings.get("id"),
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
@@ -6179,17 +6234,24 @@ async def apex_settings_save(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     host = clean_apex_host(form.get("host") or "")
+    name = (form.get("name") or "").strip()
     username = (form.get("username") or "").strip()
     password = (form.get("password") or "").strip() or settings.get("password", "")
     api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
     poll_interval = int(to_float(form.get("poll_interval_minutes")) or 15)
     mapping = build_apex_mapping_from_form(form, settings.get("mapping") or {})
+    tank_ids = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     tank_id = form.get("tank_id")
     settings.update(
         {
+            "id": settings.get("id") or (integration_id or secrets.token_hex(6)),
             "enabled": form.get("enabled") in ("on", "true", "1", True),
+            "name": name or settings.get("name") or "Apex Integration",
             "host": host,
             "username": username,
             "password": password,
@@ -6197,11 +6259,12 @@ async def apex_settings_save(request: Request):
             "poll_interval_minutes": poll_interval,
             "mapping": mapping,
             "tank_id": int(tank_id) if tank_id and str(tank_id).isdigit() else None,
+            "tank_ids": tank_ids,
         }
     )
-    save_apex_settings(db, settings)
+    save_apex_settings(db, settings["id"], settings)
     db.close()
-    return redirect("/settings/integrations/apex?success=Saved Apex settings.")
+    return redirect(f"/settings/integrations/apex?integration_id={settings['id']}&success=Saved Apex settings.")
 
 @app.post("/settings/integrations/apex/test")
 async def apex_settings_test(request: Request):
@@ -6209,7 +6272,10 @@ async def apex_settings_test(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     settings["host"] = clean_apex_host(form.get("host") or "")
     settings["username"] = (form.get("username") or "").strip()
     settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
@@ -6218,28 +6284,34 @@ async def apex_settings_test(request: Request):
         readings = fetch_apex_readings(settings)
         message = f"Connected successfully. Found {len(readings)} probes."
         db.close()
-        return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&success={urllib.parse.quote(message)}")
     except Exception as exc:
         db.close()
-        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&error={urllib.parse.quote(str(exc))}")
 
 @app.post("/settings/integrations/apex/import")
 async def apex_settings_import(request: Request):
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
-    settings = get_apex_settings(db)
+    form = await request.form()
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     try:
         result = import_apex_sample(db, settings, current_user)
-        if result.get("skipped"):
-            message = result.get("reason") or "No changes detected; import skipped."
+        imports = result.get("imports") or []
+        imported = [row for row in imports if not row.get("skipped")]
+        if not imported:
+            message = "No changes detected; import skipped."
         else:
-            message = f"Imported {result['mapped_count']} readings into sample {result['sample_id']}."
+            message = f"Imported {len(imported)} sample(s) from {result.get('mapped_count', 0)} readings."
         db.close()
-        return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&success={urllib.parse.quote(message)}")
     except Exception as exc:
         db.close()
-        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&error={urllib.parse.quote(str(exc))}")
 
 @app.post("/settings/integrations/apex/probes", response_class=HTMLResponse)
 async def apex_settings_probes(request: Request):
@@ -6247,7 +6319,10 @@ async def apex_settings_probes(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     settings["host"] = clean_apex_host(form.get("host") or "")
     settings["username"] = (form.get("username") or "").strip()
     settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
@@ -6256,6 +6331,7 @@ async def apex_settings_probes(request: Request):
     settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
     tank_id = form.get("tank_id")
     settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
+    settings["tank_ids"] = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     mapping = settings.get("mapping") or {}
     parameters = list_parameters(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
@@ -6266,17 +6342,20 @@ async def apex_settings_probes(request: Request):
         probes = sorted({str(r["name"]) for r in readings if r.get("name")})
         settings["last_probe_list"] = probes
         settings["last_probe_loaded_at"] = datetime.utcnow().isoformat()
-        save_apex_settings(db, settings)
+        save_apex_settings(db, settings["id"], settings)
     except Exception as exc:
         error = str(exc)
     auto_mapping = infer_apex_auto_mapping(probes, parameters)
     last_probe_loaded_at = settings.get("last_probe_loaded_at")
+    integrations = get_apex_integrations(db)
     db.close()
     return templates.TemplateResponse(
         "apex_settings.html",
         {
             "request": request,
             "settings": settings,
+            "integrations": integrations,
+            "integration_id": settings.get("id"),
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
@@ -6295,7 +6374,10 @@ async def apex_settings_preview(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     settings["host"] = clean_apex_host(form.get("host") or "")
     settings["username"] = (form.get("username") or "").strip()
     settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
@@ -6304,6 +6386,7 @@ async def apex_settings_preview(request: Request):
     settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
     tank_id = form.get("tank_id")
     settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
+    settings["tank_ids"] = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     parameters = list_parameters(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     probes = settings.get("last_probe_list") or []
@@ -6315,12 +6398,15 @@ async def apex_settings_preview(request: Request):
         preview = preview_apex_mapping(settings, mapping or auto_mapping)
     except Exception as exc:
         error = str(exc)
+    integrations = get_apex_integrations(db)
     db.close()
     return templates.TemplateResponse(
         "apex_settings.html",
         {
             "request": request,
             "settings": settings,
+            "integrations": integrations,
+            "integration_id": settings.get("id"),
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
