@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <h2 class="h5 mb-1">Apex Integration</h2>
+        <div class="text-muted small">Connect to a Neptune Apex controller and import probe readings.</div>
+      </div>
+    </div>
+
+    {% if error %}
+      <div class="alert alert-danger mt-3">{{ error }}</div>
+    {% endif %}
+    {% if success %}
+      <div class="alert alert-success mt-3">{{ success }}</div>
+    {% endif %}
+
+    <form class="mt-4" method="post" action="/settings/integrations/apex/save">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Apex Base URL</label>
+          <input class="form-control" name="host" value="{{ settings.host }}" placeholder="http://192.168.1.50" />
+          <div class="form-text">Use the local IP of your Apex controller.</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Tank</label>
+          <select class="form-select" name="tank_id">
+            <option value="">Select a tank</option>
+            {% for tank in tanks %}
+              <option value="{{ tank.id }}" {% if settings.tank_id == tank.id %}selected{% endif %}>{{ tank.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Username</label>
+          <input class="form-control" name="username" value="{{ settings.username }}" />
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Password</label>
+          <input class="form-control" name="password" type="password" value="" placeholder="Leave blank to keep" />
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">API Token</label>
+          <input class="form-control" name="api_token" type="password" value="" placeholder="Optional bearer token" />
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Poll Interval (minutes)</label>
+          <input class="form-control" name="poll_interval_minutes" value="{{ settings.poll_interval_minutes }}" />
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="enabled" id="apex-enabled" {% if settings.enabled %}checked{% endif %} />
+            <label class="form-check-label" for="apex-enabled">Enable integration</label>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="alert alert-secondary small mb-0">
+            Load probes to map them to your parameters using the table below.
+          </div>
+        </div>
+      </div>
+
+      {% if probes %}
+        <div class="mt-4">
+          <h3 class="h6 text-uppercase text-muted">Probe Mapping</h3>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Probe</th>
+                  <th>Parameter</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for probe in probes %}
+                  <tr>
+                    <td class="fw-semibold">{{ probe }}</td>
+                    <td>
+                      <input type="hidden" name="probe_name" value="{{ probe }}" />
+                      <select class="form-select form-select-sm" name="param_name">
+                        <option value="">Select parameter</option>
+                        {% for param in parameters %}
+                          <option value="{{ param.name }}" {% if mapping.get(probe) == param.name %}selected{% endif %}>
+                            {{ param.name }}
+                          </option>
+                        {% endfor %}
+                      </select>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="d-flex flex-wrap gap-2 mt-4">
+        <button class="btn btn-primary" type="submit">Save Settings</button>
+        <button class="btn btn-outline-secondary" type="submit" formaction="/settings/integrations/apex/test" formmethod="post">Test Connection</button>
+        <button class="btn btn-outline-secondary" type="submit" formaction="/settings/integrations/apex/probes" formmethod="post">Load Probes</button>
+      </div>
+    </form>
+
+    <form class="mt-4" method="post" action="/settings/integrations/apex/import">
+      <button class="btn btn-outline-primary" type="submit">Import Now</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
