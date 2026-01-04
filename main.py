@@ -6816,7 +6816,7 @@ def dose_plan(request: Request):
         check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
     except Exception: check_map = {}
     tanks = get_visible_tanks(db, request)
-    pdefs = q(db, "SELECT name, unit, max_daily_change FROM parameter_defs")
+    pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
     all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
     additives_by_group: Dict[str, List[sqlite3.Row]] = {}
