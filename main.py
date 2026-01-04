@@ -1608,6 +1608,33 @@ def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]
                 )
 
     if not recommendations["dose"]:
+        dosage_block_pattern = re.compile(
+            r"<(?:div|section)[^>]*(?:id|class)=\"[^\"]*dosage[^\"]*\"[^>]*>(.*?)</(?:div|section)>",
+            re.IGNORECASE | re.DOTALL,
+        )
+        for block in dosage_block_pattern.findall(content):
+            for name, amount, notes in re.findall(
+                r"<tr[^>]*>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*</tr>",
+                block,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                label = strip_html(name)
+                amount_text = strip_html(amount)
+                numeric = extract_numeric_value(amount_text)
+                unit_match = re.search(r"[a-zA-Z]+/?[a-zA-Z]*", amount_text)
+                unit = unit_match.group(0) if unit_match else None
+                notes_text = strip_html(notes)
+                if label or numeric is not None:
+                    recommendations["dose"].append(
+                        {
+                            "label": label,
+                            "value": numeric,
+                            "unit": unit,
+                            "notes": notes_text or None,
+                        }
+                    )
+
+    if not recommendations["dose"]:
         dose_pattern = re.compile(
             r"(?:dose|dosage)\s*[:\-]\s*([^<\n]+)",
             re.IGNORECASE,
