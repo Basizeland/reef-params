@@ -1514,6 +1514,48 @@ def extract_json_candidates(content: str) -> List[Any]:
 
     return candidates
 
+def extract_dose_tab_recommendations(content: str) -> List[Dict[str, Any]]:
+    blocks = re.findall(
+        r"<(?:div|section)[^>]*(?:id|class)=\"[^\"]*(?:dose|dosage)[^\"]*\"[^>]*>(.*?)</(?:div|section)>",
+        content,
+        re.IGNORECASE | re.DOTALL,
+    )
+    recommendations: List[Dict[str, Any]] = []
+    for block in blocks:
+        parts = re.split(
+            r"(<h[1-4][^>]*>.*?</h[1-4]>)",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        current_label = None
+        buffer: List[str] = []
+
+        def flush() -> None:
+            nonlocal buffer, current_label
+            if not current_label:
+                buffer = []
+                return
+            notes_text = strip_html(" ".join(buffer))
+            if notes_text:
+                recommendations.append(
+                    {
+                        "label": current_label,
+                        "value": None,
+                        "unit": None,
+                        "notes": notes_text,
+                    }
+                )
+            buffer = []
+
+        for part in parts:
+            if part.lower().startswith("<h"):
+                flush()
+                current_label = strip_html(part)
+            else:
+                buffer.append(part)
+        flush()
+    return recommendations
+
 def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]]:
     def normalize_help_item(item: Any) -> Optional[Dict[str, Any]]:
         if isinstance(item, str):
@@ -1557,6 +1599,10 @@ def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]
         return None
 
     recommendations: Dict[str, List[Dict[str, Any]]] = {"help": [], "dose": []}
+    dose_tab_recommendations = extract_dose_tab_recommendations(content)
+    if dose_tab_recommendations:
+        recommendations["dose"] = dose_tab_recommendations
+        return recommendations
     for candidate in extract_json_candidates(content):
         stack = [candidate]
         while stack:
