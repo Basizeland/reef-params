@@ -275,7 +275,7 @@
                     {% for rec in plan.icp_recommendations %}
                       <tr>
                         <td>
-                          <span class="badge bg-light text-secondary border fw-normal">{{ rec.label }}</span>
+                          <span class="badge bg-light text-secondary border fw-normal">{{ rec.parameter_name }}</span>
                         </td>
                         <td>
                           <select class="form-select form-select-sm">
@@ -312,7 +312,7 @@
                               {% endfor %}
                             </div>
                           {% else %}
-                            —
+                            <div class="text-muted small">No dose amount provided by ICP.</div>
                           {% endif %}
                         </td>
                         <td class="text-center">
@@ -336,7 +336,7 @@
                       <div class="d-flex justify-content-between align-items-start gap-2">
                         <div>
                           <div class="small text-muted mb-1">Parameter</div>
-                          <div class="fw-semibold">{{ rec.label }}</div>
+                          <div class="fw-semibold">{{ rec.parameter_name }}</div>
                           <div class="small text-muted mt-2">Additive</div>
                           <select class="form-select form-select-sm">
                             <option value="">Select additive</option>
@@ -384,7 +384,7 @@
                             {% endfor %}
                           </div>
                         {% else %}
-                          <div class="text-muted small">—</div>
+                          <div class="text-muted small">No dose amount provided by ICP.</div>
                         {% endif %}
                       </div>
                       <div class="text-muted small mt-2">{{ rec.notes or "—" }}</div>

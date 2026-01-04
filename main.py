@@ -6903,6 +6903,15 @@ def dose_plan(request: Request):
         icp_info = plan.get("icp_sample")
         if not icp_info:
             continue
+        sample_values = { }
+        for reading in get_sample_readings(db, icp_info["id"]):
+            name = row_get(reading, "name") or ""
+            normalized = normalize_icp_name(name)
+            sample_values[normalized] = {
+                "name": name,
+                "value": row_get(reading, "value"),
+                "unit": row_get(reading, "unit"),
+            }
         rec_rows = q(
             db,
             """
@@ -6917,6 +6926,24 @@ def dose_plan(request: Request):
             label = row_get(row, "label") or "Dose"
             notes = row_get(row, "notes") or ""
             range_info = parse_icp_notes_range(notes)
+            normalized_label = normalize_icp_name(label)
+            matched_reading = sample_values.get(normalized_label)
+            parameter_name = matched_reading["name"] if matched_reading else label
+            if range_info["current"] is None and matched_reading:
+                range_info["current"] = matched_reading["value"]
+                if not range_info["unit"]:
+                    range_info["unit"] = matched_reading["unit"]
+            target_low = None
+            target_high = None
+            target_unit = range_info["unit"]
+            target_row = targets_by_param.get(parameter_name) or targets_by_param.get(label)
+            if target_row:
+                target_low = row_get(target_row, "target_low") or row_get(target_row, "low")
+                target_high = row_get(target_row, "target_high") or row_get(target_row, "high")
+                if row_get(target_row, "unit"):
+                    target_unit = row_get(target_row, "unit")
+                elif parameter_name in pdef_map and pdef_map[parameter_name]["unit"]:
+                    target_unit = pdef_map[parameter_name]["unit"]
             days_match = re.search(r"(\d+)\s*day", notes, re.IGNORECASE)
             days = int(days_match.group(1)) if days_match else 1
             total_value = row_get(row, "value")
@@ -6935,13 +6962,14 @@ def dose_plan(request: Request):
             plan["icp_recommendations"].append(
                 {
                     "label": label,
+                    "parameter_name": parameter_name,
                     "value": total_value,
                     "unit": row_get(row, "unit"),
                     "notes": notes,
                     "current": range_info["current"],
-                    "target_low": range_info["target_low"],
-                    "target_high": range_info["target_high"],
-                    "target_unit": range_info["unit"],
+                    "target_low": range_info["target_low"] if range_info["target_low"] is not None else target_low,
+                    "target_high": range_info["target_high"] if range_info["target_high"] is not None else target_high,
+                    "target_unit": target_unit,
                     "days": days,
                     "per_day_value": per_day_value,
                     "additives": additive_options,
