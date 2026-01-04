@@ -14,6 +14,7 @@ import importlib
 import importlib.util
 import smtplib
 import threading
+import html
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
@@ -1350,6 +1351,158 @@ def parse_triton_html(content: str) -> List[Dict[str, Any]]:
     parser.feed(content)
     return parse_triton_rows(parser.rows)
 
+def _parse_amount_unit(value: Any) -> Tuple[Optional[str], Optional[str]]:
+    if value is None:
+        return None, None
+    if isinstance(value, (int, float)):
+        return str(value), None
+    text = str(value).strip()
+    if not text:
+        return None, None
+    match = re.match(r"^([0-9]+(?:[.,][0-9]+)?)\s*([a-zA-Z/%µμ]+.*)?$", text)
+    if match:
+        amount = match.group(1).replace(",", ".")
+        unit = (match.group(2) or "").strip() or None
+        return amount, unit
+    return text, None
+
+def _normalize_help_entry(entry: Any) -> Optional[Dict[str, Any]]:
+    if entry is None:
+        return None
+    if isinstance(entry, str):
+        text = entry.strip()
+        return {"text": text, "severity": None} if text else None
+    if isinstance(entry, dict):
+        text = entry.get("text") or entry.get("message") or entry.get("label") or entry.get("recommendation")
+        severity = entry.get("severity") or entry.get("level") or entry.get("status")
+        if text:
+            return {
+                "text": str(text).strip(),
+                "severity": str(severity).strip() if severity else None,
+            }
+    return None
+
+def _normalize_dose_entry(entry: Any) -> Optional[Dict[str, Any]]:
+    if entry is None:
+        return None
+    if isinstance(entry, str):
+        label = entry.strip()
+        return {"label": label, "value": None, "unit": None, "notes": None} if label else None
+    if isinstance(entry, dict):
+        label = entry.get("additive") or entry.get("name") or entry.get("label") or entry.get("product")
+        amount = entry.get("amount") or entry.get("dose") or entry.get("value") or entry.get("recommendedAmount")
+        unit = entry.get("unit") or entry.get("uom")
+        notes = entry.get("notes") or entry.get("note") or entry.get("comment") or entry.get("description")
+        amount_value = None
+        if amount is not None:
+            if unit:
+                amount_value = str(amount).strip()
+            else:
+                amount_value, unit = _parse_amount_unit(amount)
+        if label or amount_value or notes:
+            return {
+                "label": str(label).strip() if label else None,
+                "value": amount_value,
+                "unit": str(unit).strip() if unit else None,
+                "notes": str(notes).strip() if notes else None,
+            }
+    return None
+
+def _collect_recommendations_from_node(node: Any) -> Dict[str, List[Dict[str, Any]]]:
+    collected = {"help": [], "dose": []}
+
+    def walk(current: Any) -> None:
+        if isinstance(current, dict):
+            lowered = {str(k).lower(): k for k in current.keys()}
+            for key in ("help", "helprecommendations", "help_recommendations", "helprecommendation"):
+                if key in lowered:
+                    raw = current.get(lowered[key])
+                    if isinstance(raw, list):
+                        for item in raw:
+                            normalized = _normalize_help_entry(item)
+                            if normalized:
+                                collected["help"].append(normalized)
+                    else:
+                        normalized = _normalize_help_entry(raw)
+                        if normalized:
+                            collected["help"].append(normalized)
+            for key in ("dose", "doserecommendations", "dose_recommendations", "doserecommendation"):
+                if key in lowered:
+                    raw = current.get(lowered[key])
+                    if isinstance(raw, list):
+                        for item in raw:
+                            normalized = _normalize_dose_entry(item)
+                            if normalized:
+                                collected["dose"].append(normalized)
+                    else:
+                        normalized = _normalize_dose_entry(raw)
+                        if normalized:
+                            collected["dose"].append(normalized)
+            if "recommendations" in lowered:
+                walk(current.get(lowered["recommendations"]))
+            for value in current.values():
+                walk(value)
+        elif isinstance(current, list):
+            for item in current:
+                walk(item)
+
+    walk(node)
+    return collected
+
+def _extract_json_payloads(content: str) -> List[Any]:
+    payloads: List[Any] = []
+    for match in re.findall(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', content, re.S):
+        try:
+            payloads.append(json.loads(match))
+        except Exception:
+            continue
+    for match in re.findall(r"__NUXT__\s*=\s*(\{.*?\});", content, re.S):
+        try:
+            payloads.append(json.loads(match))
+        except Exception:
+            continue
+    for match in re.findall(r'data-(?:react-)?props="([^"]+)"', content, re.S):
+        try:
+            payloads.append(json.loads(html.unescape(match)))
+        except Exception:
+            continue
+    return payloads
+
+def _extract_html_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]]:
+    extracted = {"help": [], "dose": []}
+    for category in ("help", "dose"):
+        pattern = re.compile(
+            rf'(?is)<(section|div)[^>]*(?:id|class)="[^"]*{category}[^"]*"[^>]*>(.*?)</\1>'
+        )
+        for match in pattern.finditer(content):
+            section_html = match.group(2)
+            items = re.findall(r"(?is)<li[^>]*>(.*?)</li>", section_html)
+            if not items:
+                items = re.findall(r"(?is)<p[^>]*>(.*?)</p>", section_html)
+            for item in items:
+                text = re.sub(r"(?is)<[^>]+>", "", item)
+                text = html.unescape(text).strip()
+                if not text:
+                    continue
+                if category == "help":
+                    extracted["help"].append({"text": text, "severity": None})
+                else:
+                    amount, unit = _parse_amount_unit(text)
+                    extracted["dose"].append({"label": text, "value": amount, "unit": unit, "notes": None})
+    return extracted
+
+def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]]:
+    recommendations = {"help": [], "dose": []}
+    for payload in _extract_json_payloads(content):
+        found = _collect_recommendations_from_node(payload)
+        recommendations["help"].extend(found["help"])
+        recommendations["dose"].extend(found["dose"])
+    if not recommendations["help"] and not recommendations["dose"]:
+        fallback = _extract_html_recommendations(content)
+        recommendations["help"].extend(fallback["help"])
+        recommendations["dose"].extend(fallback["dose"])
+    return recommendations
+
 def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
     text = content.decode("utf-8", errors="ignore")
     sniffer = csv.Sniffer()
@@ -1762,6 +1915,69 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
             )
     else:
         cur.execute("INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)", (sample_id, pname, value, unit or None, test_kit_id))
+
+def insert_icp_recommendations(
+    db: sqlite3.Connection,
+    sample_id: int,
+    recommendations: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    help_entries = recommendations.get("help") or []
+    dose_entries = recommendations.get("dose") or []
+    for idx, entry in enumerate(help_entries):
+        text = (entry.get("text") or "").strip()
+        severity = (entry.get("severity") or None)
+        if not text:
+            continue
+        db.execute(
+            """
+            INSERT INTO icp_recommendations (sample_id, category, label, value, unit, notes, severity, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (sample_id, "help", text, None, None, None, severity, idx),
+        )
+    for idx, entry in enumerate(dose_entries):
+        label = (entry.get("label") or "").strip()
+        value = entry.get("value")
+        unit = entry.get("unit")
+        notes = entry.get("notes")
+        if not label and not value and not notes:
+            continue
+        db.execute(
+            """
+            INSERT INTO icp_recommendations (sample_id, category, label, value, unit, notes, severity, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (sample_id, "dose", label or None, str(value).strip() if value is not None else None, unit or None, notes or None, None, idx),
+        )
+
+def get_icp_recommendations(db: sqlite3.Connection, sample_id: int) -> Dict[str, List[Dict[str, Any]]]:
+    rows = q(
+        db,
+        """
+        SELECT category, label, value, unit, notes, severity
+        FROM icp_recommendations
+        WHERE sample_id=?
+        ORDER BY sort_order, id
+        """,
+        (sample_id,),
+    )
+    recommendations = {"help": [], "dose": []}
+    for row in rows:
+        category = row_get(row, "category")
+        if category == "help":
+            recommendations["help"].append(
+                {"text": row_get(row, "label") or "", "severity": row_get(row, "severity")}
+            )
+        elif category == "dose":
+            recommendations["dose"].append(
+                {
+                    "label": row_get(row, "label"),
+                    "value": row_get(row, "value"),
+                    "unit": row_get(row, "unit"),
+                    "notes": row_get(row, "notes"),
+                }
+            )
+    return recommendations
 
 def get_latest_sample_values(db: sqlite3.Connection, tank_id: int, param_names: List[str]) -> Dict[str, float]:
     if not param_names:
@@ -2261,6 +2477,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_id, endpoint), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS icp_recommendations (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, category TEXT NOT NULL, label TEXT, value TEXT, unit TEXT, notes TEXT, severity TEXT, sort_order INTEGER DEFAULT 0, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
@@ -5100,8 +5317,18 @@ def sample_detail(request: Request, tank_id: int, sample_id: int):
     readings = []
     for r in get_sample_readings(db, sample_id):
         readings.append({"name": r["name"], "value": r["value"], "unit": (r["unit"] or "")})
+    recommendations = get_icp_recommendations(db, sample_id)
     db.close()
-    return templates.TemplateResponse("sample_detail.html", {"request": request, "tank": tank, "sample": s, "readings": readings})
+    return templates.TemplateResponse(
+        "sample_detail.html",
+        {
+            "request": request,
+            "tank": tank,
+            "sample": s,
+            "readings": readings,
+            "recommendations": recommendations,
+        },
+    )
 
 @app.get("/tanks/{tank_id}/samples/{sample_id}/edit", response_class=HTMLResponse)
 def sample_edit(request: Request, tank_id: int, sample_id: int):
@@ -6529,6 +6756,8 @@ def icp_import(request: Request):
             "tanks": tanks,
             "mapped": [],
             "mapped_payload": "",
+            "recommendations": {"help": [], "dose": []},
+            "recommendations_payload": "",
             "raw_count": 0,
             "error": request.query_params.get("error"),
             "success": request.query_params.get("success"),
@@ -6550,15 +6779,18 @@ async def icp_preview(request: Request):
         if url:
             content = fetch_triton_html(url)
             results = parse_triton_html(content)
+            recommendations = parse_triton_recommendations(content)
         elif upload and getattr(upload, "filename", ""):
             data = await upload.read()
             filename = upload.filename.lower()
             if filename.endswith(".csv"):
                 results = parse_triton_csv(data)
+                recommendations = {"help": [], "dose": []}
             elif filename.endswith(".pdf"):
                 if not pdf_available:
                     raise ValueError("PDF parsing requires PyPDF2. Install it and rebuild the container.")
                 results = parse_triton_pdf(data)
+                recommendations = {"help": [], "dose": []}
             else:
                 raise ValueError("Unsupported file type. Upload CSV or PDF.")
         else:
@@ -6574,14 +6806,16 @@ async def icp_preview(request: Request):
                 "request": request,
                 "tanks": tanks,
                 "mapped": [],
-            "mapped_payload": "",
-            "raw_count": 0,
-            "error": str(exc),
-            "success": None,
-            "selected_tank": selected_tank,
-            "pdf_available": pdf_available,
-        },
-    )
+                "mapped_payload": "",
+                "recommendations": {"help": [], "dose": []},
+                "recommendations_payload": "",
+                "raw_count": 0,
+                "error": str(exc),
+                "success": None,
+                "selected_tank": selected_tank,
+                "pdf_available": pdf_available,
+            },
+        )
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
@@ -6590,6 +6824,8 @@ async def icp_preview(request: Request):
             "tanks": tanks,
             "mapped": mapped,
             "mapped_payload": json.dumps(mapped),
+            "recommendations": recommendations,
+            "recommendations_payload": json.dumps(recommendations),
             "raw_count": len(results),
             "error": None,
             "success": None,
@@ -6603,6 +6839,7 @@ async def icp_import_submit(request: Request):
     form = await request.form()
     tank_id = form.get("tank_id")
     payload = form.get("mapped_payload")
+    recommendations_payload = form.get("recommendations_payload")
     if not tank_id or not payload:
         return redirect("/tools/icp?error=Missing tank or preview data.")
     try:
@@ -6636,6 +6873,13 @@ async def icp_import_submit(request: Request):
             insert_sample_reading(db, sample_id, pname, float(value), unit)
         except Exception:
             continue
+    if recommendations_payload:
+        try:
+            recommendations = json.loads(recommendations_payload)
+        except Exception:
+            recommendations = {"help": [], "dose": []}
+        if isinstance(recommendations, dict):
+            insert_icp_recommendations(db, sample_id, recommendations)
     db.commit()
     db.close()
     return redirect(f"/tools/icp?success=Imported ICP sample {sample_id}.")
