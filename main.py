@@ -1485,7 +1485,24 @@ def parse_triton_json_like(content: str) -> List[Dict[str, Any]]:
 
 def normalize_icp_name(name: str) -> str:
     normalized = normalize_probe_label(name)
-    return ICP_ELEMENT_ALIASES.get(normalized, normalized)
+    if normalized in ICP_ELEMENT_ALIASES:
+        return ICP_ELEMENT_ALIASES[normalized]
+
+    stripped = re.sub(r"\([^)]*\)", "", name).strip()
+    stripped_normalized = normalize_probe_label(stripped)
+    if stripped_normalized in ICP_ELEMENT_ALIASES:
+        return ICP_ELEMENT_ALIASES[stripped_normalized]
+
+    tokens: List[str] = []
+    tokens.extend(re.findall(r"\(([^)]+)\)", name))
+    tokens.append(name)
+    for text in tokens:
+        for token in re.split(r"[\s/,-]+", text):
+            token_normalized = normalize_probe_label(token)
+            if token_normalized in ICP_ELEMENT_ALIASES:
+                return ICP_ELEMENT_ALIASES[token_normalized]
+
+    return ICP_ELEMENT_ALIASES.get(stripped_normalized or normalized, stripped_normalized or normalized)
 
 def map_icp_to_parameters(
     db: sqlite3.Connection,
