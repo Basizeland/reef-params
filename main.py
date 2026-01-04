@@ -1716,6 +1716,23 @@ def insert_icp_recommendations(
         rows,
     )
 
+def parse_icp_notes_range(notes: str) -> Dict[str, Optional[float]]:
+    if not notes:
+        return {"current": None, "target_low": None, "target_high": None, "unit": None}
+    pattern = re.compile(
+        r"(?P<current>-?[\d.,]+)\s*(?P<unit>[a-zA-Zµ/%]+)?\s*/\s*"
+        r"(?P<low>-?[\d.,]+)\s*-\s*(?P<high>-?[\d.,]+)\s*(?P=unit)?",
+        re.IGNORECASE,
+    )
+    match = pattern.search(notes)
+    if not match:
+        return {"current": None, "target_low": None, "target_high": None, "unit": None}
+    current = extract_numeric_value(match.group("current"))
+    low = extract_numeric_value(match.group("low"))
+    high = extract_numeric_value(match.group("high"))
+    unit = match.group("unit")
+    return {"current": current, "target_low": low, "target_high": high, "unit": unit}
+
 def get_recent_param_values(
     db: sqlite3.Connection,
     tank_id: int,
@@ -6898,12 +6915,37 @@ def dose_plan(request: Request):
         )
         for row in rec_rows:
             label = row_get(row, "label") or "Dose"
+            notes = row_get(row, "notes") or ""
+            range_info = parse_icp_notes_range(notes)
+            days_match = re.search(r"(\d+)\s*day", notes, re.IGNORECASE)
+            days = int(days_match.group(1)) if days_match else 1
+            total_value = row_get(row, "value")
+            per_day_value = None
+            if total_value is not None and days:
+                try:
+                    per_day_value = float(total_value) / float(days)
+                except Exception:
+                    per_day_value = None
+            additive_options = [{"id": a["id"], "name": a["name"]} for a in all_additives]
+            selected_additive_id = None
+            for additive in additive_options:
+                if label.lower() in additive["name"].lower() or additive["name"].lower() in label.lower():
+                    selected_additive_id = additive["id"]
+                    break
             plan["icp_recommendations"].append(
                 {
                     "label": label,
-                    "value": row_get(row, "value"),
+                    "value": total_value,
                     "unit": row_get(row, "unit"),
-                    "notes": row_get(row, "notes"),
+                    "notes": notes,
+                    "current": range_info["current"],
+                    "target_low": range_info["target_low"],
+                    "target_high": range_info["target_high"],
+                    "target_unit": range_info["unit"],
+                    "days": days,
+                    "per_day_value": per_day_value,
+                    "additives": additive_options,
+                    "selected_additive_id": selected_additive_id,
                     "checked": icp_check_map.get((icp_info["id"], label), 0),
                     "sample_id": icp_info["id"],
                 }
