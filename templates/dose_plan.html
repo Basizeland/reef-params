@@ -304,6 +304,16 @@
                             <div class="small text-secondary mb-1">
                               {{ rec.days }} day(s) • <span class="fw-bold">{{ rec.value|fmt2 }} {{ rec.unit or "" }}</span> total
                             </div>
+                          {% endif %}
+                          {% if rec.schedule_doses and rec.schedule_doses|length %}
+                            <div class="d-flex flex-wrap gap-1">
+                              {% for day, amount in rec.schedule_doses %}
+                                <span class="badge bg-light text-dark border fw-normal">
+                                  D{{ day }}: {{ amount|fmt2 }} {{ rec.unit or "" }}
+                                </span>
+                              {% endfor %}
+                            </div>
+                          {% elif rec.value is not none %}
                             <div class="d-flex flex-wrap gap-1">
                               {% for day in range(rec.days) %}
                                 <span class="badge bg-light text-dark border fw-normal">
@@ -375,7 +385,15 @@
                       </div>
                       <div class="mt-2">
                         <div class="small text-muted mb-1">Schedule</div>
-                        {% if rec.value is not none %}
+                        {% if rec.schedule_doses and rec.schedule_doses|length %}
+                          <div class="d-flex flex-column gap-1">
+                            {% for day, amount in rec.schedule_doses %}
+                              <span class="badge bg-light text-dark border fw-normal">
+                                Day {{ day }}: {{ amount|fmt2 }} {{ rec.unit or "" }}
+                              </span>
+                            {% endfor %}
+                          </div>
+                        {% elif rec.value is not none %}
                           <div class="d-flex flex-column gap-1">
                             {% for day in range(rec.days) %}
                               <span class="badge bg-light text-dark border fw-normal">

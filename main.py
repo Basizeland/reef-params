@@ -1733,6 +1733,36 @@ def parse_icp_notes_range(notes: str) -> Dict[str, Optional[float]]:
     unit = match.group("unit")
     return {"current": current, "target_low": low, "target_high": high, "unit": unit}
 
+def parse_icp_dose_schedule(notes: str) -> Dict[str, Any]:
+    if not notes:
+        return {"days": 1, "doses": [], "total": None, "unit": None}
+    days = 1
+    days_match = re.search(r"over\s+(\d+)\s+days", notes, re.IGNORECASE)
+    if days_match:
+        days = int(days_match.group(1))
+    doses: List[Tuple[int, float]] = []
+    for match in re.finditer(r"(?:day\s*(\d+)|first day|last day).*?(\d+(?:[.,]\d+)?)\s*ml", notes, re.IGNORECASE):
+        day_raw = match.group(1)
+        amount = extract_numeric_value(match.group(2))
+        if amount is None:
+            continue
+        if day_raw:
+            day = int(day_raw)
+        else:
+            text = match.group(0).lower()
+            if "last day" in text:
+                day = days
+            else:
+                day = 1
+        doses.append((day, amount))
+    doses = sorted({day: amount for day, amount in doses}.items())
+    total_match = re.search(r"total[^\\d]*(\\d+(?:[.,]\\d+)?)\\s*ml", notes, re.IGNORECASE)
+    total = extract_numeric_value(total_match.group(1)) if total_match else None
+    if total is None and doses:
+        total = sum(amount for _, amount in doses)
+    unit = "ml" if ("ml" in notes.lower()) else None
+    return {"days": days, "doses": doses, "total": total, "unit": unit}
+
 def get_recent_param_values(
     db: sqlite3.Connection,
     tank_id: int,
@@ -6929,6 +6959,7 @@ def dose_plan(request: Request):
             label = row_get(row, "label") or "Dose"
             notes = row_get(row, "notes") or ""
             range_info = parse_icp_notes_range(notes)
+            schedule_info = parse_icp_dose_schedule(notes)
             normalized_label = normalize_icp_name(label)
             matched_reading = sample_values.get(normalized_label)
             parameter_name = matched_reading["name"] if matched_reading else label
@@ -6947,9 +6978,10 @@ def dose_plan(request: Request):
                     target_unit = row_get(target_row, "unit")
                 elif parameter_name in pdef_map and pdef_map[parameter_name]["unit"]:
                     target_unit = pdef_map[parameter_name]["unit"]
-            days_match = re.search(r"(\d+)\s*day", notes, re.IGNORECASE)
-            days = int(days_match.group(1)) if days_match else 1
+            days = schedule_info["days"]
             total_value = row_get(row, "value")
+            if total_value is None:
+                total_value = schedule_info["total"]
             per_day_value = None
             if total_value is not None and days:
                 try:
@@ -6967,7 +6999,7 @@ def dose_plan(request: Request):
                     "label": label,
                     "parameter_name": parameter_name,
                     "value": total_value,
-                    "unit": row_get(row, "unit"),
+                    "unit": row_get(row, "unit") or schedule_info["unit"],
                     "notes": notes,
                     "current": range_info["current"],
                     "target_low": range_info["target_low"] if range_info["target_low"] is not None else target_low,
@@ -6975,6 +7007,7 @@ def dose_plan(request: Request):
                     "target_unit": target_unit,
                     "days": days,
                     "per_day_value": per_day_value,
+                    "schedule_doses": schedule_info["doses"],
                     "additives": additive_options,
                     "selected_additive_id": selected_additive_id,
                     "checked": icp_check_map.get((icp_info["id"], label), 0),
