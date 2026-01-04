@@ -225,12 +225,14 @@
             </table>
           </div>
         </div>
+      {% else %}
+        <div class="text-muted small">No dose recommendations were detected for this ICP report.</div>
       {% endif %}
     </div>
   </div>
 {% endif %}
 
-<div class="icp-loading d-none align-items-center justify-content-center">
+<div class="icp-loading d-none align-items-center justify-content-center" id="icp-loading-overlay">
   <div class="text-center">
     <div class="spinner-border text-primary" role="status">
       <span class="visually-hidden">Loading...</span>
@@ -250,14 +252,16 @@
 
 <script>
   document.addEventListener("DOMContentLoaded", () => {
-    const overlay = document.querySelector(".icp-loading");
-    const forms = document.querySelectorAll("form");
+    const overlay = document.getElementById("icp-loading-overlay");
+    const forms = document.querySelectorAll("form[action^='/tools/icp']");
     forms.forEach((form) => {
       form.addEventListener("submit", () => {
         if (overlay) {
           overlay.classList.remove("d-none");
           overlay.classList.add("d-flex");
         }
+        const buttons = form.querySelectorAll("button, input[type='submit']");
+        buttons.forEach((button) => button.setAttribute("disabled", "disabled"));
       });
     });
   });
