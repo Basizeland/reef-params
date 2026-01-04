@@ -67,4 +67,65 @@
     </div>
   </div>
 </div>
+
+{% if recommendations %}
+  <div class="card shadow-sm mt-4">
+    <div class="card-header bg-white py-3">
+      <h5 class="card-title mb-0 fw-bold">ICP Recommendations</h5>
+    </div>
+    <div class="card-body">
+      {% set help_items = recommendations|selectattr("category", "equalto", "help")|list %}
+      {% set dose_items = recommendations|selectattr("category", "equalto", "dose")|list %}
+      {% if help_items %}
+        <div class="mb-4">
+          <h6 class="fw-semibold">Help</h6>
+          <ul class="list-group list-group-flush">
+            {% for item in help_items %}
+              <li class="list-group-item px-0">
+                <div class="fw-semibold">{{ item.label }}</div>
+                {% if item.severity %}
+                  <span class="badge bg-warning text-dark text-uppercase">{{ item.severity }}</span>
+                {% endif %}
+                {% if item.notes %}
+                  <div class="text-muted small">{{ item.notes }}</div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+      {% if dose_items %}
+        <div>
+          <h6 class="fw-semibold">Dose</h6>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Additive</th>
+                  <th>Recommended</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in dose_items %}
+                  <tr>
+                    <td class="fw-semibold">{{ item.label or "—" }}</td>
+                    <td>
+                      {% if item.value is not none %}
+                        {{ item.value }} {{ item.unit or "" }}
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                    <td class="text-muted">{{ item.notes or "—" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
 {% endblock %}
