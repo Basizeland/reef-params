@@ -6816,7 +6816,6 @@ async def icp_preview(request: Request):
                 "pdf_available": pdf_available,
             },
         )
-    )
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
