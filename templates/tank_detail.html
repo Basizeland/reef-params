@@ -534,19 +534,15 @@
   {% endif %}
 {% endif %}
 
-{% if trend_alert_params %}
-  <div class="alert alert-warning small mb-4">
-    <div class="fw-semibold">Trend alerts</div>
-    <div>Rapid changes detected in: {{ trend_alert_params|join(", ") }}.</div>
+{% macro render_latest(title, param_list, show_hint=True) %}
+  <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+    <h4 class="mb-0 h5 fw-bold">{{ title }}</h4>
+    {% if show_hint %}
+      <span class="text-muted small">Stability scores use the last 10 readings.</span>
+    {% endif %}
   </div>
-{% endif %}
-
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-  <h4 class="mb-0 h5 fw-bold">Latest Readings</h4>
-  <span class="text-muted small">Stability scores use the last 10 readings.</span>
-</div>
-<div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
-  {% for p in params %}
+  <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
+  {% for p in param_list %}
     {% set p_data = latest_vals.get(p.id) %}
     {% set val = p_data.value if p_data else None %}
     {% set taken_at = p_data.taken_at if p_data else None %}
@@ -611,7 +607,25 @@
       </div>
     </div>
   {% endfor %}
-</div>
+  </div>
+{% endmacro %}
+
+{% if trend_alert_params %}
+  <div class="alert alert-warning small mb-4">
+    <div class="fw-semibold">Trend alerts</div>
+    <div>Rapid changes detected in: {{ trend_alert_params|join(", ") }}.</div>
+  </div>
+{% endif %}
+
+{{ render_latest("Latest Readings", core_params) }}
+
+{% if trace_params %}
+  {{ render_latest("Trace Elements", trace_params, False) }}
+{% endif %}
+
+{% if icp_params %}
+  {{ render_latest("ICP Results", icp_params, False) }}
+{% endif %}
 
 <div class="card shadow-sm mb-4">
   <div class="card-header bg-white py-3 d-flex flex-column gap-2">

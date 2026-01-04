@@ -3890,6 +3890,33 @@ def tank_detail(request: Request, tank_id: int):
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
     pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
+
+    latest_sample_ids = {data.get("sample_id") for data in latest_by_param_id.values() if data.get("sample_id")}
+    icp_sample_ids: set[int] = set()
+    if latest_sample_ids:
+        placeholders = ",".join("?" for _id in latest_sample_ids)
+        rows = q(
+            db,
+            f"SELECT id, notes FROM samples WHERE id IN ({placeholders})",
+            tuple(latest_sample_ids),
+        )
+        for row in rows:
+            notes = (row_get(row, "notes") or "").lower()
+            if "imported from icp" in notes:
+                icp_sample_ids.add(row_get(row, "id"))
+
+    core_params = []
+    trace_params = []
+    icp_params = []
+    for param in params:
+        latest = latest_by_param_id.get(param["name"])
+        sample_id = latest.get("sample_id") if latest else None
+        if sample_id and sample_id in icp_sample_ids:
+            icp_params.append(param)
+        elif is_trace_element(param["name"]):
+            trace_params.append(param)
+        else:
+            core_params.append(param)
     
     status_by_param_id = {}
     trend_warning_by_param = {}
@@ -3974,6 +4001,9 @@ def tank_detail(request: Request, tank_id: int):
             "selected_parameter_id": selected_parameter_id,
             "format_value": format_value,
             "low_container_alerts": low_container_alerts,
+            "core_params": core_params,
+            "trace_params": trace_params,
+            "icp_params": icp_params,
         },
     )
 
