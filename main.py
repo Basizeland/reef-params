@@ -1619,6 +1619,26 @@ def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]
                 continue
             recommendations["dose"].append({"label": "", "value": numeric, "unit": None, "notes": None})
 
+    if recommendations["dose"]:
+        filtered = []
+        for item in recommendations["dose"]:
+            label = (item.get("label") or "").strip()
+            value = item.get("value")
+            notes = item.get("notes") or ""
+            if value is None and notes:
+                value = extract_numeric_value(notes)
+                if value is not None:
+                    item["value"] = value
+                unit_match = re.search(r"[a-zA-Z]+/?[a-zA-Z]*", notes)
+                if unit_match and not item.get("unit"):
+                    item["unit"] = unit_match.group(0)
+            if not label and notes:
+                item["label"] = notes.split(":", 1)[0].strip()
+            if not label and value is None:
+                continue
+            filtered.append(item)
+        recommendations["dose"] = filtered
+
     return recommendations
 
 def normalize_icp_name(name: str) -> str:
