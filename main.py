@@ -1626,7 +1626,6 @@ def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]
     dose_tab_recommendations = extract_dose_tab_recommendations(content)
     if dose_tab_recommendations:
         recommendations["dose"] = dose_tab_recommendations
-        return recommendations
     for candidate in extract_json_candidates(content):
         stack = [candidate]
         while stack:
@@ -1729,6 +1728,12 @@ def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]
                 unit_match = re.search(r"[a-zA-Z]+/?[a-zA-Z]*", notes)
                 if unit_match and not item.get("unit"):
                     item["unit"] = unit_match.group(0)
+            if value is None and notes:
+                schedule_info = parse_icp_dose_schedule(notes)
+                if schedule_info.get("total") is not None:
+                    item["value"] = schedule_info["total"]
+                    if not item.get("unit"):
+                        item["unit"] = schedule_info.get("unit")
             if not label and notes:
                 item["label"] = notes.split(":", 1)[0].strip()
             if not label and value is None:
