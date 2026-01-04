@@ -59,9 +59,51 @@
         <form method="post" action="/tools/icp/import" class="d-flex flex-wrap gap-2 align-items-end">
           <input type="hidden" name="tank_id" value="{{ selected_tank }}">
           <input type="hidden" name="mapped_payload" value="{{ mapped_payload }}">
+          <input type="hidden" name="recommendations_payload" value="{{ recommendations_payload }}">
           <button class="btn btn-outline-primary" type="submit">Import Sample</button>
         </form>
       </div>
+      {% if recommendations.help or recommendations.dose %}
+        <div class="row g-3 mb-4">
+          {% if recommendations.help %}
+            <div class="col-lg-6">
+              <div class="border rounded-3 p-3 h-100">
+                <div class="text-uppercase text-muted small mb-2">Help</div>
+                <ul class="list-unstyled mb-0">
+                  {% for rec in recommendations.help %}
+                    <li class="mb-2">
+                      <div class="fw-semibold">{{ rec.text }}</div>
+                      {% if rec.severity %}
+                        <span class="badge bg-warning text-dark">{{ rec.severity }}</span>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            </div>
+          {% endif %}
+          {% if recommendations.dose %}
+            <div class="col-lg-6">
+              <div class="border rounded-3 p-3 h-100">
+                <div class="text-uppercase text-muted small mb-2">Dose</div>
+                <ul class="list-unstyled mb-0">
+                  {% for rec in recommendations.dose %}
+                    <li class="mb-2">
+                      <div class="fw-semibold">{{ rec.label or "Dose recommendation" }}</div>
+                      {% if rec.value %}
+                        <div class="text-muted small">{{ rec.value }} {{ rec.unit }}</div>
+                      {% endif %}
+                      {% if rec.notes %}
+                        <div class="text-muted small">{{ rec.notes }}</div>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
           <thead>
