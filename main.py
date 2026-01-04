@@ -6742,6 +6742,7 @@ def dose_plan(request: Request):
             icp_sample_ids.append(icp_sample["id"])
 
         targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
+        targets_by_param = {row_get(t, "parameter"): t for t in targets if row_get(t, "parameter")}
         tank_rows = []
         for tr in targets:
             pname = tr["parameter"]
@@ -6885,6 +6886,7 @@ def dose_plan(request: Request):
                 "total_ml": plan_total_ml,
                 "icp_recommendations": [],
                 "icp_sample": icp_info,
+                "targets_by_param": targets_by_param,
             }
         )
     icp_check_map: Dict[Tuple[int, str], int] = {}
@@ -6903,6 +6905,7 @@ def dose_plan(request: Request):
         icp_info = plan.get("icp_sample")
         if not icp_info:
             continue
+        targets_by_param = plan.get("targets_by_param") or {}
         sample_values = { }
         for reading in get_sample_readings(db, icp_info["id"]):
             name = row_get(reading, "name") or ""
