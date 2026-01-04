@@ -6672,6 +6672,7 @@ async def icp_preview(request: Request):
                 )
             raise ValueError("No ICP values found. Please verify the URL or file.")
         mapped = map_icp_to_parameters(db, results)
+        mapped_lookup = {row.get("source"): row.get("parameter") for row in mapped}
         raw_preview = results[:10]
     except Exception as exc:
         db.close()
@@ -6686,6 +6687,7 @@ async def icp_preview(request: Request):
                 "raw_count": 0,
                 "raw_preview": [],
                 "raw_results": [],
+                "mapped_lookup": {},
                 "error": str(exc),
                 "success": None,
                 "selected_tank": selected_tank,
@@ -6704,6 +6706,7 @@ async def icp_preview(request: Request):
             "raw_count": len(results),
             "raw_preview": raw_preview,
             "raw_results": results,
+            "mapped_lookup": mapped_lookup,
             "error": None,
             "success": None,
             "selected_tank": selected_tank,

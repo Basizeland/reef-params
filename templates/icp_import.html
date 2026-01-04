@@ -157,7 +157,7 @@
                     <select class="form-select form-select-sm" name="map_{{ loop.index0 }}">
                       <option value="">-- Skip --</option>
                       {% for param in parameters %}
-                        <option value="{{ param.name }}">{{ param.name }}</option>
+                        <option value="{{ param.name }}" {% if mapped_lookup.get(row.name) == param.name %}selected{% endif %}>{{ param.name }}</option>
                       {% endfor %}
                     </select>
                   </td>
