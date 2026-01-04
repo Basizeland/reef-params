@@ -6963,13 +6963,17 @@ def dose_plan(request: Request):
             normalized_label = normalize_icp_name(label)
             matched_reading = sample_values.get(normalized_label)
             parameter_name = matched_reading["name"] if matched_reading else label
-            if range_info["current"] is None and matched_reading:
-                range_info["current"] = matched_reading["value"]
-                if not range_info["unit"]:
-                    range_info["unit"] = matched_reading["unit"]
+            current_value = None
+            current_unit = None
+            if matched_reading:
+                current_value = matched_reading["value"]
+                current_unit = matched_reading["unit"]
+            elif range_info["current"] is not None and (range_info["target_low"] is not None or range_info["target_high"] is not None):
+                current_value = range_info["current"]
+                current_unit = range_info["unit"]
             target_low = None
             target_high = None
-            target_unit = range_info["unit"]
+            target_unit = current_unit or range_info["unit"]
             target_row = targets_by_param.get(parameter_name) or targets_by_param.get(label)
             if target_row:
                 target_low = row_get(target_row, "target_low") or row_get(target_row, "low")
@@ -7001,7 +7005,7 @@ def dose_plan(request: Request):
                     "value": total_value,
                     "unit": row_get(row, "unit") or schedule_info["unit"],
                     "notes": notes,
-                    "current": range_info["current"],
+                    "current": current_value,
                     "target_low": range_info["target_low"] if range_info["target_low"] is not None else target_low,
                     "target_high": range_info["target_high"] if range_info["target_high"] is not None else target_high,
                     "target_unit": target_unit,
