@@ -248,6 +248,8 @@
             {% endfor %}
           </div>
 
+          {# ICP recommendations removed; dose plan uses measured readings + targets. #}
+
         {% else %}
           <div class="text-center py-4 text-muted">All parameters are within target range.</div>
         {% endif %}
@@ -479,5 +481,6 @@ function updateDoseCheckStyles() {
     el.addEventListener("change", ()=>toggleDoseCheck(el));
   });
 })();
+
 </script>
 {% endblock %}

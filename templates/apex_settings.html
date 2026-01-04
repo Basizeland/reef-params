@@ -19,18 +19,35 @@
     <form class="mt-4" method="post" action="/settings/integrations/apex/save">
       <div class="row g-3">
         <div class="col-md-6">
+          <label class="form-label">Integration</label>
+          <select class="form-select" name="integration_id">
+            {% for integration in integrations %}
+              <option value="{{ integration.id }}" {% if integration_id == integration.id %}selected{% endif %}>
+                {{ integration.name or integration.host or ("Integration " ~ loop.index) }}
+              </option>
+            {% endfor %}
+            <option value="new">+ New integration</option>
+          </select>
+          <div class="form-text">Create one integration per Apex or share a single Apex across tanks.</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Integration Name</label>
+          <input class="form-control" name="name" value="{{ settings.name }}" placeholder="e.g. Apex Living Room" />
+        </div>
+        <div class="col-md-6">
           <label class="form-label">Apex Base URL</label>
           <input class="form-control" name="host" value="{{ settings.host }}" placeholder="http://192.168.1.50" />
           <div class="form-text">Use the local IP of your Apex controller.</div>
         </div>
         <div class="col-md-6">
-          <label class="form-label">Tank</label>
-          <select class="form-select" name="tank_id">
-            <option value="">Select a tank</option>
+          <label class="form-label">Tanks</label>
+          <select class="form-select" name="tank_ids" multiple>
             {% for tank in tanks %}
-              <option value="{{ tank.id }}" {% if settings.tank_id == tank.id %}selected{% endif %}>{{ tank.name }}</option>
+              {% set is_selected = (tank.id in settings.tank_ids) or (settings.tank_id == tank.id) %}
+              <option value="{{ tank.id }}" {% if is_selected %}selected{% endif %}>{{ tank.name }}</option>
             {% endfor %}
           </select>
+          <div class="form-text">Select one or more tanks to import readings into.</div>
         </div>
         <div class="col-md-4">
           <label class="form-label">Username</label>
@@ -136,6 +153,7 @@
     {% endif %}
 
     <form class="mt-4" method="post" action="/settings/integrations/apex/import">
+      <input type="hidden" name="integration_id" value="{{ integration_id }}">
       <button class="btn btn-outline-primary" type="submit">Import Now</button>
     </form>
   </div>

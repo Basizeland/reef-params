@@ -31,6 +31,7 @@ class ParameterDef(Base, DictMixin):
     __tablename__ = "parameter_defs"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
+    chemical_symbol = Column(String, nullable=True)
     unit = Column(String, nullable=True)
     active = Column(Integer, default=1)
     sort_order = Column(Integer, default=0)

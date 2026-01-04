@@ -48,6 +48,13 @@
   </div>
 </div>
 
+{% if raw_count and not mapped %}
+  <div class="alert alert-info">
+    Parsed {{ raw_count }} ICP results but none matched existing parameters.
+    Review the raw preview below to confirm the page parsed correctly.
+  </div>
+{% endif %}
+
 {% if mapped %}
   <div class="card shadow-sm border-0">
     <div class="card-body">
@@ -59,6 +66,7 @@
         <form method="post" action="/tools/icp/import" class="d-flex flex-wrap gap-2 align-items-end">
           <input type="hidden" name="tank_id" value="{{ selected_tank }}">
           <input type="hidden" name="mapped_payload" value="{{ mapped_payload }}">
+          <input type="hidden" name="recommendations_payload" value="">
           <button class="btn btn-outline-primary" type="submit">Import Sample</button>
         </form>
       </div>
@@ -85,4 +93,123 @@
     </div>
   </div>
 {% endif %}
+
+{% if raw_count and not mapped %}
+  <div class="card shadow-sm border-0 mt-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div>
+          <h5 class="mb-1">Raw preview</h5>
+          <div class="text-muted small">Showing up to 10 parsed entries.</div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Source name</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in raw_preview %}
+              <tr>
+                <td class="fw-semibold">{{ row.name }}</td>
+                <td>{{ row.value }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+{% if raw_results %}
+  <div class="card shadow-sm border-0 mt-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div>
+          <h5 class="mb-1">Map ICP parameters</h5>
+          <div class="text-muted small">Match each ICP entry to a parameter in your app before importing.</div>
+        </div>
+      </div>
+      <form method="post" action="/tools/icp/import">
+        <input type="hidden" name="tank_id" value="{{ selected_tank }}">
+        <input type="hidden" name="map_count" value="{{ raw_results|length }}">
+        <input type="hidden" name="recommendations_payload" value="">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>Source name</th>
+                <th>Value</th>
+                <th>Map to parameter</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in raw_results %}
+                <tr>
+                  <td class="fw-semibold">{{ row.name }}</td>
+                  <td>{{ row.value }}</td>
+                  <td>
+                    <input type="hidden" name="raw_name_{{ loop.index0 }}" value="{{ row.name }}">
+                    <input type="hidden" name="raw_value_{{ loop.index0 }}" value="{{ row.value }}">
+                    <input type="hidden" name="raw_unit_{{ loop.index0 }}" value="{{ row.unit }}">
+                    <select class="form-select form-select-sm" name="map_{{ loop.index0 }}">
+                      <option value="">-- Skip --</option>
+                      {% for param in parameters %}
+                        <option value="{{ param.name }}" {% if mapped_lookup.get(row.normalized) == param.name %}selected{% endif %}>{{ param.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="mt-3">
+          <button class="btn btn-primary" type="submit">Import Mapped Sample</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endif %}
+
+{# Recommendations are no longer shown; dose plans use targets + readings. #}
+
+<div class="icp-loading d-none align-items-center justify-content-center" id="icp-loading-overlay">
+  <div class="text-center">
+    <div class="spinner-border text-primary" role="status">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <div class="mt-3 fw-semibold">Processing ICP data…</div>
+  </div>
+</div>
+
+<style>
+  .icp-loading {
+    position: fixed;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.85);
+    z-index: 1050;
+  }
+</style>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const overlay = document.getElementById("icp-loading-overlay");
+    const forms = document.querySelectorAll("form[action^='/tools/icp']");
+    forms.forEach((form) => {
+      form.addEventListener("submit", () => {
+        if (overlay) {
+          overlay.classList.remove("d-none");
+          overlay.classList.add("d-flex");
+        }
+        const buttons = form.querySelectorAll("button, input[type='submit']");
+        buttons.forEach((button) => button.setAttribute("disabled", "disabled"));
+      });
+    });
+  });
+</script>
 {% endblock %}
