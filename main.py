@@ -6876,6 +6876,23 @@ def dose_plan(request: Request):
 
         targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
         targets_by_param = {row_get(t, "parameter"): t for t in targets if row_get(t, "parameter")}
+        for pname, pdef in pdef_map.items():
+            if pname in targets_by_param:
+                continue
+            if not is_trace_element(pname):
+                continue
+            default_low = row_get(pdef, "default_target_low")
+            default_high = row_get(pdef, "default_target_high")
+            if default_low is None and default_high is None:
+                continue
+            targets_by_param[pname] = {
+                "parameter": pname,
+                "target_low": default_low,
+                "target_high": default_high,
+                "unit": row_get(pdef, "unit"),
+                "enabled": 1,
+            }
+        targets = list(targets_by_param.values())
         tank_rows = []
         for tr in targets:
             pname = tr["parameter"]
