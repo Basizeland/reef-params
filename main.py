@@ -6672,8 +6672,15 @@ async def icp_preview(request: Request):
                 )
             raise ValueError("No ICP values found. Please verify the URL or file.")
         mapped = map_icp_to_parameters(db, results)
-        mapped_lookup = {row.get("source"): row.get("parameter") for row in mapped}
-        raw_preview = results[:10]
+        enhanced_results = []
+        for row in results:
+            raw_name = row.get("name") or ""
+            enhanced_results.append({**row, "normalized": normalize_icp_name(raw_name)})
+        mapped_lookup = {}
+        for row in mapped:
+            source = row.get("source") or ""
+            mapped_lookup[normalize_icp_name(source)] = row.get("parameter")
+        raw_preview = enhanced_results[:10]
     except Exception as exc:
         db.close()
         return templates.TemplateResponse(
@@ -6705,7 +6712,7 @@ async def icp_preview(request: Request):
             "mapped_payload": json.dumps(mapped),
             "raw_count": len(results),
             "raw_preview": raw_preview,
-            "raw_results": results,
+            "raw_results": enhanced_results,
             "mapped_lookup": mapped_lookup,
             "error": None,
             "success": None,
