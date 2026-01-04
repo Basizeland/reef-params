@@ -1521,12 +1521,17 @@ def extract_dose_tab_recommendations(content: str) -> List[Dict[str, Any]]:
         re.IGNORECASE | re.DOTALL,
     )
     recommendations: List[Dict[str, Any]] = []
+    ignored_headings = {
+        "very important for your aquarium",
+        "important for your aquarium",
+        "not important but beneficial for your aquarium",
+        "fine-tuning level 1 ( basic )",
+        "fine-tuning level 1 ( advanced )",
+        "products to improve your aquarium",
+    }
     for block in blocks:
-        parts = re.split(
-            r"(<h[1-4][^>]*>.*?</h[1-4]>)",
-            block,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
+        text = strip_html(block)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
         current_label = None
         buffer: List[str] = []
 
@@ -1535,7 +1540,7 @@ def extract_dose_tab_recommendations(content: str) -> List[Dict[str, Any]]:
             if not current_label:
                 buffer = []
                 return
-            notes_text = strip_html(" ".join(buffer))
+            notes_text = " ".join(buffer).strip()
             if notes_text:
                 recommendations.append(
                     {
@@ -1547,12 +1552,27 @@ def extract_dose_tab_recommendations(content: str) -> List[Dict[str, Any]]:
                 )
             buffer = []
 
-        for part in parts:
-            if part.lower().startswith("<h"):
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx]
+            lower_line = line.lower()
+            if lower_line in ignored_headings:
+                idx += 1
+                continue
+            if re.fullmatch(r"[A-Za-z0-9]{1,4}", line):
+                symbol = line
+                next_line = lines[idx + 1] if idx + 1 < len(lines) else ""
+                if next_line and not re.fullmatch(r"[A-Za-z0-9]{1,4}", next_line):
+                    label = f"{symbol} {next_line}"
+                    idx += 2
+                else:
+                    label = symbol
+                    idx += 1
                 flush()
-                current_label = strip_html(part)
-            else:
-                buffer.append(part)
+                current_label = label
+                continue
+            buffer.append(line)
+            idx += 1
         flush()
     return recommendations
 
