@@ -66,7 +66,7 @@
         <form method="post" action="/tools/icp/import" class="d-flex flex-wrap gap-2 align-items-end">
           <input type="hidden" name="tank_id" value="{{ selected_tank }}">
           <input type="hidden" name="mapped_payload" value="{{ mapped_payload }}">
-          <input type="hidden" name="recommendations_payload" value="{{ recommendations_payload }}">
+          <input type="hidden" name="recommendations_payload" value="">
           <button class="btn btn-outline-primary" type="submit">Import Sample</button>
         </form>
       </div>
@@ -137,7 +137,7 @@
       <form method="post" action="/tools/icp/import">
         <input type="hidden" name="tank_id" value="{{ selected_tank }}">
         <input type="hidden" name="map_count" value="{{ raw_results|length }}">
-        <input type="hidden" name="recommendations_payload" value="{{ recommendations_payload }}">
+        <input type="hidden" name="recommendations_payload" value="">
         <div class="table-responsive">
           <table class="table table-sm align-middle">
             <thead>
@@ -176,61 +176,7 @@
   </div>
 {% endif %}
 
-{% if recommendations.help or recommendations.dose %}
-  <div class="card shadow-sm border-0 mt-4">
-    <div class="card-body">
-      <h5 class="mb-3">Triton Recommendations</h5>
-      {% if recommendations.help %}
-        <div class="mb-4">
-          <h6 class="fw-semibold">Help</h6>
-          <ul class="list-group list-group-flush">
-            {% for item in recommendations.help %}
-              <li class="list-group-item px-0">
-                <div class="fw-semibold">{{ item.label }}</div>
-                {% if item.severity %}
-                  <span class="badge bg-warning text-dark text-uppercase">{{ item.severity }}</span>
-                {% endif %}
-              </li>
-            {% endfor %}
-          </ul>
-        </div>
-      {% endif %}
-      {% if recommendations.dose %}
-        <div>
-          <h6 class="fw-semibold">Dose</h6>
-          <div class="table-responsive">
-            <table class="table table-sm align-middle">
-              <thead>
-                <tr>
-                  <th>Additive</th>
-                  <th>Recommended</th>
-                  <th>Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for item in recommendations.dose %}
-                  <tr>
-                    <td class="fw-semibold">{{ item.label or "—" }}</td>
-                    <td>
-                      {% if item.value is not none %}
-                        {{ item.value }} {{ item.unit or "" }}
-                      {% else %}
-                        —
-                      {% endif %}
-                    </td>
-                    <td class="text-muted">{{ item.notes or "—" }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {% else %}
-        <div class="text-muted small">No dose recommendations were detected for this ICP report.</div>
-      {% endif %}
-    </div>
-  </div>
-{% endif %}
+{# Recommendations are no longer shown; dose plans use targets + readings. #}
 
 <div class="icp-loading d-none align-items-center justify-content-center" id="icp-loading-overlay">
   <div class="text-center">

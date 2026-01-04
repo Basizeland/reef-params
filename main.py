@@ -5576,16 +5576,6 @@ def sample_detail(request: Request, tank_id: int, sample_id: int):
     readings = []
     for r in get_sample_readings(db, sample_id):
         readings.append({"name": r["name"], "value": r["value"], "unit": (r["unit"] or "")})
-    recommendations = q(
-        db,
-        """
-        SELECT category, label, value, unit, notes, severity
-        FROM icp_recommendations
-        WHERE sample_id=?
-        ORDER BY id ASC
-        """,
-        (sample_id,),
-    )
     db.close()
     return templates.TemplateResponse(
         "sample_detail.html",
@@ -5594,7 +5584,7 @@ def sample_detail(request: Request, tank_id: int, sample_id: int):
             "tank": tank,
             "sample": s,
             "readings": readings,
-            "recommendations": recommendations,
+            "recommendations": [],
         },
     )
 
@@ -7191,7 +7181,7 @@ async def icp_preview(request: Request):
         if url:
             content, meta = fetch_triton_html(url)
             results = parse_triton_html(content)
-            recommendations = parse_triton_recommendations(content)
+            recommendations = {"help": [], "dose": []}
         elif upload and getattr(upload, "filename", ""):
             data = await upload.read()
             filename = upload.filename.lower()
@@ -7225,7 +7215,7 @@ async def icp_preview(request: Request):
             source = row.get("source") or ""
             mapped_lookup[normalize_icp_name(source)] = row.get("parameter")
         raw_preview = enhanced_results[:10]
-        recommendations_payload = json.dumps(recommendations)
+        recommendations_payload = ""
     except Exception as exc:
         db.close()
         return templates.TemplateResponse(
@@ -7321,15 +7311,6 @@ async def icp_import_submit(request: Request):
     if not mapped:
         db.close()
         return redirect("/tools/icp?error=No mapped ICP values found.")
-    recommendations: Dict[str, List[Dict[str, Any]]] = {"help": [], "dose": []}
-    if recommendations_payload:
-        try:
-            parsed = json.loads(recommendations_payload)
-            if isinstance(parsed, dict):
-                recommendations["help"] = parsed.get("help") or []
-                recommendations["dose"] = parsed.get("dose") or []
-        except Exception:
-            recommendations = {"help": [], "dose": []}
     when_iso = datetime.utcnow().isoformat()
     cur = db.cursor()
     cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank_id_int, when_iso, "Imported from ICP"))
@@ -7344,7 +7325,6 @@ async def icp_import_submit(request: Request):
             insert_sample_reading(db, sample_id, pname, float(value), unit)
         except Exception:
             continue
-    insert_icp_recommendations(db, sample_id, recommendations)
     db.commit()
     db.close()
     return redirect(f"/tools/icp?success=Imported ICP sample {sample_id}.")
