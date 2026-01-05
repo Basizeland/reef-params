@@ -736,6 +736,13 @@
         <input class="form-check-input" type="checkbox" id="toggle-trace-elements">
         <label class="form-check-label small" for="toggle-trace-elements">Show trace elements</label>
       </div>
+      <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="toggle-all-params">
+        <label class="form-check-label small" for="toggle-all-params">Show all parameters</label>
+      </div>
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#trendDefaultsModal">
+        <i class="bi bi-sliders"></i> Edit defaults
+      </button>
       <div class="text-muted small">Compare up to 3 parameters at once.</div>
     </div>
   </div>
@@ -857,6 +864,35 @@
   </div>
 </div>
 
+<div class="modal fade" id="trendDefaultsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Trend defaults</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">Choose which parameters are shown by default. Use the toggle to reveal all parameters later.</p>
+        <div class="row g-2">
+          {% for p in params %}
+            {% set param_key = p.key %}
+            <div class="col-6 col-md-4 col-lg-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="default-param-{{ param_key }}" data-default-param value="{{ param_key }}">
+                <label class="form-check-label small" for="default-param-{{ param_key }}">{{ p.name }}</label>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" id="resetTrendDefaults">Reset</button>
+        <button type="button" class="btn btn-primary" id="saveTrendDefaults" data-bs-dismiss="modal">Save defaults</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   document.addEventListener('DOMContentLoaded', function() {
       try {
@@ -869,6 +905,10 @@
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
           const showDoseToggle = document.getElementById('toggle-dose-events');
           const showTraceToggle = document.getElementById('toggle-trace-elements');
+          const showAllToggle = document.getElementById('toggle-all-params');
+          const saveDefaultsButton = document.getElementById('saveTrendDefaults');
+          const resetDefaultsButton = document.getElementById('resetTrendDefaults');
+          const defaultInputs = Array.from(document.querySelectorAll('[data-default-param]'));
           const tankId = {{ tank.id }};
           
           if (!ctx) return;
@@ -1196,15 +1236,44 @@
             });
           }
 
-          function applyTraceVisibility() {
-            if (!showTraceToggle) return;
-            const showTrace = showTraceToggle.checked;
+          const defaultsKey = `tankTrendDefaults-${tankId}`;
+          const showAllKey = `tankTrendShowAll-${tankId}`;
+
+          function loadDefaults() {
+            try {
+              return JSON.parse(localStorage.getItem(defaultsKey) || '[]');
+            } catch (err) {
+              return [];
+            }
+          }
+
+          function saveDefaults(values) {
+            localStorage.setItem(defaultsKey, JSON.stringify(values));
+          }
+
+          function setDefaultInputs(values) {
+            defaultInputs.forEach((input) => {
+              input.checked = values.includes(input.value);
+            });
+          }
+
+          function updateDefaultInputsFromSelection() {
+            const values = defaultInputs.filter((input) => input.checked).map((input) => input.value);
+            saveDefaults(values);
+          }
+
+          function applyVisibility() {
+            const defaults = loadDefaults();
+            const showAll = !showAllToggle;
+            const showTrace = !showTraceToggle || showTraceToggle.checked;
             paramToggles.forEach((box) => {
               const isTrace = box.dataset.trace === 'true';
               const wrapper = box.closest('.form-check');
-              if (!isTrace || !wrapper) return;
-              wrapper.classList.toggle('d-none', !showTrace);
-              if (!showTrace) {
+              if (!wrapper) return;
+              const allowedByDefaults = showAllToggle?.checked || defaults.length === 0 ? true : defaults.includes(box.value);
+              const visible = allowedByDefaults && (showTrace || !isTrace);
+              wrapper.classList.toggle('d-none', !visible);
+              if (!visible) {
                 box.checked = false;
               }
             });
@@ -1214,10 +1283,37 @@
             const traceKey = `tankTraceToggle-${tankId}`;
             const stored = localStorage.getItem(traceKey);
             showTraceToggle.checked = stored === null ? false : stored === 'true';
-            applyTraceVisibility();
+            applyVisibility();
             showTraceToggle.addEventListener('change', () => {
               localStorage.setItem(traceKey, String(showTraceToggle.checked));
-              applyTraceVisibility();
+              applyVisibility();
+              renderChart();
+            });
+          }
+
+          if (showAllToggle) {
+            const stored = localStorage.getItem(showAllKey);
+            showAllToggle.checked = stored === null ? true : stored === 'true';
+            showAllToggle.addEventListener('change', () => {
+              localStorage.setItem(showAllKey, String(showAllToggle.checked));
+              applyVisibility();
+              renderChart();
+            });
+          }
+
+          if (saveDefaultsButton) {
+            saveDefaultsButton.addEventListener('click', () => {
+              updateDefaultInputsFromSelection();
+              applyVisibility();
+              renderChart();
+            });
+          }
+
+          if (resetDefaultsButton) {
+            resetDefaultsButton.addEventListener('click', () => {
+              localStorage.removeItem(defaultsKey);
+              setDefaultInputs([]);
+              applyVisibility();
               renderChart();
             });
           }
@@ -1234,6 +1330,15 @@
           if (showDoseToggle) {
             showDoseToggle.addEventListener('change', renderChart);
           }
+
+          const defaults = loadDefaults();
+          if (defaultInputs.length) {
+            setDefaultInputs(defaults);
+          }
+          if (showAllToggle && defaults.length > 0) {
+            showAllToggle.checked = false;
+          }
+          applyVisibility();
 
           renderChart();
 
