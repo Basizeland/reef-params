@@ -777,7 +777,7 @@
               {% if p.name not in ['Temperature', 'Salinity'] %}
                 {% set sv = sample_values.get(s.id, {}) %}
                 {% set val = sv.get(p.id) %}
-                <span class="badge bg-light text-dark border">
+                <span class="badge bg-light text-dark border" data-param-cell="{{ p.key }}">
                   {{ p.name }}:
                   {% if val is not none %}
                     {{ val|fmt2 }} {{ p.unit }}
@@ -800,7 +800,7 @@
           <th class="ps-3">Date</th>
           {% for p in params %}
             {% if p.name not in ['Temperature', 'Salinity'] %}
-                <th class="text-center">{{ p.name }}</th>
+                <th class="text-center" data-param-col="{{ p.key }}">{{ p.name }}</th>
             {% endif %}
           {% endfor %}
           <th class="text-end pe-3">Actions</th>
@@ -813,7 +813,7 @@
             
             {% for p in params %}
               {% if p.name not in ['Temperature', 'Salinity'] %}
-                  <td class="text-center">
+                  <td class="text-center" data-param-col="{{ p.key }}">
                      {% set sv = sample_values.get(s.id, {}) %}
                      {% set val = sv.get(p.id) %}
                      
@@ -1234,6 +1234,12 @@
 
           const defaultsKey = `tankTrendDefaults-${tankId}`;
           const showAllKey = `tankTrendShowAll-${tankId}`;
+          const defaultParamLabels = ['Alkalinity', 'Calcium', 'Magnesium', 'Nitrate', 'Phosphate', 'Salinity'];
+          const defaultParamKeys = paramsMeta
+            .filter((param) => defaultParamLabels.includes(param.name))
+            .map((param) => param.key);
+          const paramColumnEls = Array.from(document.querySelectorAll('[data-param-col]'));
+          const paramCellEls = Array.from(document.querySelectorAll('[data-param-cell]'));
 
           function loadDefaults() {
             try {
@@ -1269,6 +1275,19 @@
                 box.checked = false;
               }
             });
+            const visibleKeys = showAllToggle?.checked || defaults.length === 0 ? null : new Set(defaults);
+            paramColumnEls.forEach((el) => {
+              const key = el.dataset.paramCol;
+              if (!key) return;
+              const visible = !visibleKeys || visibleKeys.has(key);
+              el.classList.toggle('d-none', !visible);
+            });
+            paramCellEls.forEach((el) => {
+              const key = el.dataset.paramCell;
+              if (!key) return;
+              const visible = !visibleKeys || visibleKeys.has(key);
+              el.classList.toggle('d-none', !visible);
+            });
           }
 
           if (showAllToggle) {
@@ -1292,7 +1311,7 @@
           if (resetDefaultsButton) {
             resetDefaultsButton.addEventListener('click', () => {
               localStorage.removeItem(defaultsKey);
-              setDefaultInputs(allParamKeys);
+              setDefaultInputs(defaultParamKeys);
               applyVisibility();
               renderChart();
             });
@@ -1312,7 +1331,7 @@
           }
 
           const defaults = loadDefaults();
-          const initialDefaults = defaults.length ? defaults : allParamKeys;
+          const initialDefaults = defaults.length ? defaults : defaultParamKeys;
           if (defaultInputs.length) {
             setDefaultInputs(initialDefaults);
           }
