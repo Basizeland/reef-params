@@ -133,6 +133,11 @@
                         </li>
                     </ul>
                 </div>
+                {% if request.state.user is defined and request.state.user %}
+                    <a class="btn btn-outline-primary btn-sm d-none d-lg-inline-flex align-items-center" href="/account">
+                        <i class="bi bi-person-circle me-1"></i> Account
+                    </a>
+                {% endif %}
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                     <span class="navbar-toggler-icon"></span>
                 </button>
@@ -432,6 +437,17 @@
         document.addEventListener("DOMContentLoaded", () => {
             const toggleButtons = Array.from(document.querySelectorAll(".js-enable-browser-alerts"));
             const getAnySubscription = async () => {
+                if (!("serviceWorker" in navigator)) return null;
+                try {
+                    const registration = await navigator.serviceWorker.getRegistration();
+                    if (registration) {
+                        const subscription = await registration.pushManager.getSubscription();
+                        if (subscription) return subscription;
+                    }
+                } catch (err) {
+                    // Ignore and fall back to scanning all registrations.
+                }
+                if (!navigator.serviceWorker.getRegistrations) return null;
                 const registrations = await navigator.serviceWorker.getRegistrations();
                 for (const registration of registrations) {
                     try {
@@ -546,6 +562,11 @@
                     await updateStatus();
                 });
             });
+            if ("serviceWorker" in navigator) {
+                navigator.serviceWorker.addEventListener("controllerchange", () => {
+                    updateStatus();
+                });
+            }
             updateStatus();
         });
 
