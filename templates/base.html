@@ -26,7 +26,6 @@
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link" href="/insights"><i class="bi bi-graph-up-arrow"></i> Insights</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/alerts"><i class="bi bi-bell"></i> Alerts</a></li>
                     
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
@@ -83,6 +82,12 @@
                     </a>
                     <ul class="dropdown-menu dropdown-menu-end shadow-sm notification-menu" style="min-width: 320px;">
                         <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
+                        <li>
+                            <a class="dropdown-item" href="/alerts">
+                                <i class="bi bi-bell"></i> Alert Center
+                            </a>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
                         {% if global_notifications %}
                             {% for group in global_notifications|groupby('tank_id') %}
                                 {% set alerts = group.list %}
@@ -426,6 +431,18 @@
 
         document.addEventListener("DOMContentLoaded", () => {
             const toggleButtons = Array.from(document.querySelectorAll(".js-enable-browser-alerts"));
+            const getAnySubscription = async () => {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                for (const registration of registrations) {
+                    try {
+                        const subscription = await registration.pushManager.getSubscription();
+                        if (subscription) return subscription;
+                    } catch (err) {
+                        continue;
+                    }
+                }
+                return null;
+            };
             const updateStatus = async () => {
                 if (!("serviceWorker" in navigator)) {
                     toggleButtons.forEach((btn) => {
@@ -436,8 +453,7 @@
                     });
                     return;
                 }
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.getSubscription();
+                const subscription = await getAnySubscription();
                 const permission = Notification?.permission || "default";
                 toggleButtons.forEach((btn) => {
                     const targetId = btn.getAttribute("data-status-target");
@@ -490,16 +506,18 @@
                 return subscription;
             };
             const unsubscribePush = async () => {
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.getSubscription();
-                if (!subscription) return;
-                await fetch("/api/push/unsubscribe", {
-                    method: "POST",
-                    credentials: "same-origin",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ endpoint: subscription.endpoint }),
-                });
-                await subscription.unsubscribe();
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                for (const registration of registrations) {
+                    const subscription = await registration.pushManager.getSubscription();
+                    if (!subscription) continue;
+                    await fetch("/api/push/unsubscribe", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ endpoint: subscription.endpoint }),
+                    });
+                    await subscription.unsubscribe();
+                }
             };
             toggleButtons.forEach((btn) => {
                 btn.addEventListener("click", async () => {
@@ -512,8 +530,7 @@
                         await updateStatus();
                         return;
                     }
-                    const registration = await navigator.serviceWorker.ready;
-                    const subscription = await registration.pushManager.getSubscription();
+                    const subscription = await getAnySubscription();
                     if (subscription) {
                         await unsubscribePush();
                     } else {
