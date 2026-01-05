@@ -733,10 +733,6 @@
         <label class="form-check-label small" for="toggle-dose-events">Show dosing events</label>
       </div>
       <div class="form-check form-switch mb-0">
-        <input class="form-check-input" type="checkbox" id="toggle-trace-elements">
-        <label class="form-check-label small" for="toggle-trace-elements">Show trace elements</label>
-      </div>
-      <div class="form-check form-switch mb-0">
         <input class="form-check-input" type="checkbox" id="toggle-all-params">
         <label class="form-check-label small" for="toggle-all-params">Show all parameters</label>
       </div>
@@ -899,12 +895,12 @@
           const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets_map|tojson|safe }};
           const paramsMeta = {{ params|tojson|safe }};
+          const allParamKeys = paramsMeta.map((param) => param.key);
           const doseLogEvents = {{ dose_log_events|tojson|safe }};
           const stabilityScores = {{ stability_score_by_param|tojson|safe }};
           const ctx = document.getElementById('historyChart');
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
           const showDoseToggle = document.getElementById('toggle-dose-events');
-          const showTraceToggle = document.getElementById('toggle-trace-elements');
           const showAllToggle = document.getElementById('toggle-all-params');
           const saveDefaultsButton = document.getElementById('saveTrendDefaults');
           const resetDefaultsButton = document.getElementById('resetTrendDefaults');
@@ -1264,30 +1260,14 @@
 
           function applyVisibility() {
             const defaults = loadDefaults();
-            const showAll = !showAllToggle;
-            const showTrace = !showTraceToggle || showTraceToggle.checked;
             paramToggles.forEach((box) => {
-              const isTrace = box.dataset.trace === 'true';
               const wrapper = box.closest('.form-check');
               if (!wrapper) return;
               const allowedByDefaults = showAllToggle?.checked || defaults.length === 0 ? true : defaults.includes(box.value);
-              const visible = allowedByDefaults && (showTrace || !isTrace);
-              wrapper.classList.toggle('d-none', !visible);
-              if (!visible) {
+              wrapper.classList.toggle('d-none', !allowedByDefaults);
+              if (!allowedByDefaults) {
                 box.checked = false;
               }
-            });
-          }
-
-          if (showTraceToggle) {
-            const traceKey = `tankTraceToggle-${tankId}`;
-            const stored = localStorage.getItem(traceKey);
-            showTraceToggle.checked = stored === null ? false : stored === 'true';
-            applyVisibility();
-            showTraceToggle.addEventListener('change', () => {
-              localStorage.setItem(traceKey, String(showTraceToggle.checked));
-              applyVisibility();
-              renderChart();
             });
           }
 
@@ -1312,7 +1292,7 @@
           if (resetDefaultsButton) {
             resetDefaultsButton.addEventListener('click', () => {
               localStorage.removeItem(defaultsKey);
-              setDefaultInputs([]);
+              setDefaultInputs(allParamKeys);
               applyVisibility();
               renderChart();
             });
@@ -1332,8 +1312,12 @@
           }
 
           const defaults = loadDefaults();
+          const initialDefaults = defaults.length ? defaults : allParamKeys;
           if (defaultInputs.length) {
-            setDefaultInputs(defaults);
+            setDefaultInputs(initialDefaults);
+          }
+          if (!defaults.length) {
+            saveDefaults(initialDefaults);
           }
           if (showAllToggle && defaults.length > 0) {
             showAllToggle.checked = false;
