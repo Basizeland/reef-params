@@ -1404,6 +1404,15 @@ TRITON_GROUP_LOOKUP = {
     for name in items
 }
 
+TRITON_NON_TRACE_GROUPS = {"Macro-Elements", "Nutrient-Group", "Salinity"}
+TRITON_TRACE_ELEMENT_NAMES = {
+    normalize_probe_label(name)
+    for group, items in TRITON_PARAMETER_GROUPS.items()
+    if group not in TRITON_NON_TRACE_GROUPS
+    for name in items
+}
+TRACE_ELEMENT_NAMES.update(TRITON_TRACE_ELEMENT_NAMES)
+
 def build_parameter_groups(parameters: List[sqlite3.Row]) -> List[Dict[str, Any]]:
     grouped: Dict[str, List[sqlite3.Row]] = {}
     for param in parameters:
