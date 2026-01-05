@@ -618,9 +618,21 @@
     </div>
     <div class="card-body">
       {% for group in groups %}
-        <div class="text-uppercase text-muted small fw-semibold mb-2">{{ group.name }}</div>
-        <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-xl-6 g-2 mb-3 icp-compact-grid">
-          {% for p in group["items"] %}
+        {% set group_id = "icp-group-" ~ loop.index %}
+        <button
+          class="btn btn-link text-decoration-none text-muted small fw-semibold text-uppercase mb-2 d-flex align-items-center gap-2 collapsed icp-group-toggle"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#{{ group_id }}"
+          aria-expanded="false"
+          aria-controls="{{ group_id }}"
+        >
+          <i class="bi bi-chevron-down"></i>
+          {{ group.name }}
+        </button>
+        <div class="collapse" id="{{ group_id }}">
+          <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-xl-6 g-2 mb-3 icp-compact-grid">
+            {% for p in group["items"] %}
             {% set p_data = latest_vals.get(p.id) %}
             {% set val = p_data.value if p_data else None %}
             {% set taken_at = p_data.taken_at if p_data else None %}
@@ -659,7 +671,8 @@
                 </div>
               </div>
             </div>
-          {% endfor %}
+            {% endfor %}
+          </div>
         </div>
       {% endfor %}
     </div>
