@@ -55,9 +55,9 @@ h1, h2, h3, h4, h5 {
 }
 
 .brand-logo-img {
-    height: 36px;
+    height: 54px;
     width: auto;
-    max-width: 150px;
+    max-width: 225px;
     transition: transform 0.2s ease;
 }
 
@@ -337,8 +337,8 @@ h1, h2, h3, h4, h5 {
 
 @media (max-width: 576px) {
     .brand-logo-img {
-        height: 28px;
-        max-width: 120px;
+        height: 42px;
+        max-width: 180px;
     }
 
     .notification-menu {
