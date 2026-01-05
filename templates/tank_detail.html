@@ -610,6 +610,62 @@
   </div>
 {% endmacro %}
 
+{% macro render_icp_grouped(groups) %}
+  <div class="card shadow-sm mb-5 icp-compact-card">
+    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <h4 class="mb-0 h5 fw-bold">ICP Results</h4>
+      <span class="text-muted small">Grouped by Triton categories.</span>
+    </div>
+    <div class="card-body">
+      {% for group in groups %}
+        <div class="text-uppercase text-muted small fw-semibold mb-2">{{ group.name }}</div>
+        <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-xl-6 g-2 mb-3 icp-compact-grid">
+          {% for p in group["items"] %}
+            {% set p_data = latest_vals.get(p.id) %}
+            {% set val = p_data.value if p_data else None %}
+            {% set taken_at = p_data.taken_at if p_data else None %}
+            {% set sample_id = p_data.sample_id if p_data else None %}
+            {% set target = target_map.get(p.name) %}
+
+            {% set status_class = "border-secondary-subtle" %}
+            {% if val is not none and target %}
+                {% if (target.alert_low and val < target.alert_low) or (target.alert_high and val > target.alert_high) %}
+                    {% set status_class = "border-danger bg-danger-subtle text-danger" %}
+                {% elif (target.target_low and target.target_high and val >= target.target_low and val <= target.target_high) %}
+                    {% set status_class = "border-success bg-success-subtle text-success" %}
+                {% else %}
+                    {% set status_class = "border-warning bg-warning-subtle" %}
+                {% endif %}
+            {% endif %}
+
+            <div class="col">
+              <div class="card h-100 {{ status_class }} shadow-sm position-relative icp-compact-tile">
+                {% if sample_id %}
+                  <a class="stretched-link" href="/tanks/{{ tank.id }}/samples/{{ sample_id }}" aria-label="View {{ p.name }} reading"></a>
+                {% endif %}
+                <div class="card-body p-2">
+                  <div class="d-flex justify-content-between align-items-start mb-1">
+                    <div class="text-muted small text-uppercase fw-bold">{{ p.name }}</div>
+                    {% if taken_at %}
+                      <span class="badge bg-light text-secondary border fw-normal icp-compact-time">
+                        {{ taken_at|time_ago }}
+                      </span>
+                    {% endif %}
+                  </div>
+                  <div class="d-flex align-items-baseline gap-1">
+                    <span class="fw-bold icp-compact-value">{{ val|fmt2 if val is not none else "-" }}</span>
+                    <span class="text-muted small">{{ p.unit }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endmacro %}
+
 {% if trend_alert_params %}
   <div class="alert alert-warning small mb-4">
     <div class="fw-semibold">Trend alerts</div>
@@ -624,7 +680,7 @@
 {% endif %}
 
 {% if icp_params %}
-  {{ render_latest("ICP Results", icp_params, False) }}
+  {{ render_icp_grouped(icp_grouped_params) }}
 {% endif %}
 
 <div class="card shadow-sm mb-4">

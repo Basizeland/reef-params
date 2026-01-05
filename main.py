@@ -4420,6 +4420,7 @@ def tank_detail(request: Request, tank_id: int):
             "core_params": core_params,
             "trace_params": trace_params,
             "icp_params": icp_params,
+            "icp_grouped_params": build_parameter_groups(icp_params),
         },
     )
 
