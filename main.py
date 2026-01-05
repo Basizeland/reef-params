@@ -2172,6 +2172,38 @@ def map_apex_readings(settings: Dict[str, Any], readings: List[Dict[str, Any]]) 
         raise ValueError("No Apex probes matched the mapping.")
     return mapped
 
+def normalize_apex_readings(readings: List[Any]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for reading in readings:
+        normalized.append(
+            {
+                "name": reading.name,
+                "value": reading.value,
+                "unit": reading.unit or "",
+                "timestamp": reading.timestamp,
+            }
+        )
+    return normalized
+
+def map_apex_readings_with_mapping(readings: List[Dict[str, Any]], mapping_raw: Dict[str, str]) -> List[Tuple[str, Dict[str, Any]]]:
+    if not mapping_raw:
+        raise ValueError("Apex mapping is required.")
+    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
+    if not mapping:
+        raise ValueError("Apex mapping is required.")
+    mapped: List[Tuple[str, Dict[str, Any]]] = []
+    for reading in readings:
+        probe_name = str(reading.get("name", "")).strip()
+        if not probe_name:
+            continue
+        param_name = mapping.get(probe_name.lower())
+        if not param_name:
+            continue
+        mapped.append((param_name, reading))
+    if not mapped:
+        raise ValueError("No Apex probes matched the mapping.")
+    return mapped
+
 def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) -> List[Dict[str, Any]]:
     if not settings.get("host"):
         raise ValueError("Apex host is required.")
@@ -6333,6 +6365,7 @@ async def apex_client_import(request: Request):
     if integration_id == "new":
         integration_id = None
     content = payload.get("payload") or ""
+    mapping_override = payload.get("mapping") or None
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
@@ -6342,21 +6375,100 @@ async def apex_client_import(request: Request):
         return JSONResponse({"error": "Apex payload is required."}, status_code=400)
     try:
         readings = readings_from_payload(content)
-        normalized = []
-        for reading in readings:
-            normalized.append(
-                {
-                    "name": reading.name,
-                    "value": reading.value,
-                    "unit": reading.unit or "",
-                    "timestamp": reading.timestamp,
-                }
-            )
-        mapped = map_apex_readings(settings, normalized)
+        normalized = normalize_apex_readings(readings)
+        if mapping_override:
+            mapped = map_apex_readings_with_mapping(normalized, mapping_override)
+        else:
+            mapped = map_apex_readings(settings, normalized)
         result = import_apex_sample_from_mapped(db, settings, mapped, current_user)
         db.close()
         message = f"Imported {result.get('mapped_count', 0)} readings."
         return JSONResponse({"success": message, "result": result})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+@app.post("/settings/integrations/apex/client-test")
+async def apex_client_test(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        db.close()
+        return JSONResponse({"success": f"Connected successfully. Found {len(readings)} probes."})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+@app.post("/settings/integrations/apex/client-probes")
+async def apex_client_probes(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        probes = sorted({reading.name for reading in readings if reading.name})
+        settings["last_probe_list"] = probes
+        settings["last_probe_loaded_at"] = datetime.utcnow().isoformat()
+        save_apex_settings(db, settings["id"], settings)
+        db.close()
+        return JSONResponse({"success": f"Loaded {len(probes)} probes.", "probes": probes})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+@app.post("/settings/integrations/apex/client-preview")
+async def apex_client_preview(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    mapping_override = payload.get("mapping") or None
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        normalized = normalize_apex_readings(readings)
+        mapping = mapping_override or settings.get("mapping") or {}
+        mapped = map_apex_readings_with_mapping(normalized, mapping)
+        preview = []
+        for param_name, reading in mapped:
+            preview.append(
+                {
+                    "probe": reading.get("name"),
+                    "parameter": param_name,
+                    "value": reading.get("value"),
+                    "unit": reading.get("unit", ""),
+                    "timestamp": reading.get("timestamp"),
+                }
+            )
+        db.close()
+        return JSONResponse({"success": f"Previewed {len(preview)} mapped probes.", "preview": preview})
     except Exception as exc:
         db.close()
         return JSONResponse({"error": str(exc)}, status_code=400)

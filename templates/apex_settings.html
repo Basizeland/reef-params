@@ -157,6 +157,23 @@
       </div>
     {% endif %}
 
+    <div class="mt-4 d-none" id="apex-browser-preview">
+      <h3 class="h6 text-uppercase text-muted">Browser Preview</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Probe</th>
+              <th>Parameter</th>
+              <th>Value</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
     <form class="mt-4" method="post" action="/settings/integrations/apex/import">
       <input type="hidden" name="integration_id" value="{{ integration_id }}">
       <button class="btn btn-outline-primary" type="submit">Import Now (Server)</button>
@@ -164,6 +181,25 @@
         Import via Browser
       </button>
     </form>
+
+    <div class="card border-0 bg-light mt-3">
+      <div class="card-body">
+        <h3 class="h6 text-uppercase text-muted mb-2">Browser import tools</h3>
+        <div class="text-muted small mb-3">
+          If the Apex is only reachable from your browser network, paste the Apex payload here and use the buttons below.
+        </div>
+        <textarea class="form-control" id="apex-browser-payload" rows="6" placeholder="Paste Apex status payload (XML or JSON)"></textarea>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button class="btn btn-outline-secondary" type="button" data-apex-action="test">Test via Browser</button>
+          <button class="btn btn-outline-secondary" type="button" data-apex-action="probes">Load Probes via Browser</button>
+          <button class="btn btn-outline-secondary" type="button" data-apex-action="preview">Preview via Browser</button>
+          <button class="btn btn-outline-primary" type="button" data-apex-action="import">Import Payload</button>
+        </div>
+        <div class="form-text mt-2">
+          Tip: Open your Apex status URL in a new tab and copy the response if the browser fetch fails due to CORS.
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -207,6 +243,7 @@
     const button = document.getElementById("apex-client-import");
     const overlay = document.getElementById("apex-loading-overlay");
     const hostInput = document.querySelector("input[name='host']");
+    const payloadInput = document.getElementById("apex-browser-payload");
     if (!button || !hostInput) return;
 
     const showOverlay = () => {
@@ -262,6 +299,48 @@
       throw lastError || new Error("Unable to reach Apex from the browser.");
     };
 
+    const postClientAction = async (action, payloadText, mapping) => {
+      const endpointMap = {
+        import: "/settings/integrations/apex/client-import",
+        test: "/settings/integrations/apex/client-test",
+        probes: "/settings/integrations/apex/client-probes",
+        preview: "/settings/integrations/apex/client-preview",
+      };
+      const endpoint = endpointMap[action];
+      if (!endpoint) {
+        throw new Error("Unknown browser action.");
+      }
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          integration_id: button.dataset.integrationId || "",
+          payload: payloadText,
+          mapping,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Browser action failed.");
+      }
+      return data;
+    };
+
+    const collectMapping = () => {
+      const mapping = {};
+      const probeInputs = Array.from(document.querySelectorAll("input[name='probe_name']"));
+      const paramSelects = Array.from(document.querySelectorAll("select[name='param_name']"));
+      probeInputs.forEach((input, index) => {
+        const probe = input.value;
+        const select = paramSelects[index];
+        const param = select ? select.value : "";
+        if (probe && param) {
+          mapping[probe] = param;
+        }
+      });
+      return mapping;
+    };
+
     button.addEventListener("click", async () => {
       const host = hostInput.value;
       if (!host) {
@@ -272,22 +351,17 @@
       button.setAttribute("disabled", "disabled");
       try {
         const payload = await fetchPayload(host);
-        const response = await fetch("/settings/integrations/apex/client-import", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            integration_id: button.dataset.integrationId || "",
-            payload: payload.payload,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error || "Client import failed.");
+        if (payloadInput) {
+          payloadInput.value = payload.payload;
         }
+        const data = await postClientAction("import", payload.payload, collectMapping());
         alert(data.success || "Imported Apex readings.");
         window.location.reload();
       } catch (err) {
-        alert(err?.message || "Unable to import from Apex via browser.");
+        alert(err?.message || "Unable to import from Apex via browser. Paste the payload below and use Import Payload.");
+        if (payloadInput) {
+          payloadInput.focus();
+        }
       } finally {
         button.removeAttribute("disabled");
         if (overlay) {
@@ -295,6 +369,54 @@
           overlay.classList.remove("d-flex");
         }
       }
+    });
+
+    const actionButtons = Array.from(document.querySelectorAll("[data-apex-action]"));
+    actionButtons.forEach((actionButton) => {
+      actionButton.addEventListener("click", async () => {
+        const payloadText = payloadInput ? payloadInput.value.trim() : "";
+        if (!payloadText) {
+          alert("Paste the Apex payload before running a browser action.");
+          return;
+        }
+        const action = actionButton.dataset.apexAction;
+        showOverlay();
+        actionButton.setAttribute("disabled", "disabled");
+        try {
+          const data = await postClientAction(action, payloadText, collectMapping());
+          if (data.preview && Array.isArray(data.preview)) {
+            const previewWrap = document.getElementById("apex-browser-preview");
+            if (previewWrap) {
+              const tbody = previewWrap.querySelector("tbody");
+              if (tbody) {
+                tbody.innerHTML = "";
+                data.preview.forEach((row) => {
+                  const tr = document.createElement("tr");
+                  tr.innerHTML = `
+                    <td class="fw-semibold">${row.probe || ""}</td>
+                    <td>${row.parameter || ""}</td>
+                    <td>${row.value ?? ""} ${row.unit || ""}</td>
+                    <td class="text-muted small">${row.timestamp || ""}</td>
+                  `;
+                  tbody.appendChild(tr);
+                });
+              }
+              previewWrap.classList.remove("d-none");
+            }
+            return;
+          }
+          alert(data.success || "Browser action completed.");
+          window.location.reload();
+        } catch (err) {
+          alert(err?.message || "Browser action failed.");
+        } finally {
+          actionButton.removeAttribute("disabled");
+          if (overlay) {
+            overlay.classList.add("d-none");
+            overlay.classList.remove("d-flex");
+          }
+        }
+      });
     });
   });
 </script>
