@@ -3273,6 +3273,7 @@ def logout(request: Request):
 
 @app.get("/account", response_class=HTMLResponse)
 def account_settings(request: Request):
+    db = get_db()
     user = get_current_user(db, request)
     if not user:
         db.close()
