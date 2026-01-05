@@ -3020,6 +3020,8 @@ def dashboard(request: Request):
         out_of_range = 0
         overdue_count = 0
         for pname, p in pdefs.items():
+            if (pname or "").strip().lower() == "trace elements":
+                continue
             data = latest_map.get(pname)
             if not data or not data.get("latest"):
                 continue
