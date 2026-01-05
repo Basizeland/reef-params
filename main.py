@@ -2989,7 +2989,36 @@ def init_db() -> None:
         if existing_id:
             if table_exists(db, "sample_values"):
                 cur.execute(
+                    """
+                    DELETE FROM sample_values
+                    WHERE parameter_id=?
+                      AND EXISTS (
+                          SELECT 1 FROM sample_values sv2
+                          WHERE sv2.sample_id=sample_values.sample_id
+                            AND sv2.parameter_id=?
+                      )
+                    """,
+                    (row["id"], existing_id),
+                )
+                cur.execute(
                     "UPDATE sample_values SET parameter_id=? WHERE parameter_id=?",
+                    (existing_id, row["id"]),
+                )
+            if table_exists(db, "sample_value_kits"):
+                cur.execute(
+                    """
+                    DELETE FROM sample_value_kits
+                    WHERE parameter_id=?
+                      AND EXISTS (
+                          SELECT 1 FROM sample_value_kits svk2
+                          WHERE svk2.sample_id=sample_value_kits.sample_id
+                            AND svk2.parameter_id=?
+                      )
+                    """,
+                    (row["id"], existing_id),
+                )
+                cur.execute(
+                    "UPDATE sample_value_kits SET parameter_id=? WHERE parameter_id=?",
                     (existing_id, row["id"]),
                 )
             cur.execute("DELETE FROM parameter_defs WHERE id=?", (row["id"],))
