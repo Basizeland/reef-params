@@ -1322,6 +1322,105 @@ def is_trace_element(name: str) -> bool:
 def filter_trace_parameters(parameters: List[sqlite3.Row]) -> List[sqlite3.Row]:
     return [p for p in parameters if not is_trace_element(row_get(p, "name"))]
 
+def normalize_group_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+TRITON_PARAMETER_GROUPS: Dict[str, List[str]] = {
+    "Unwanted heavy metals": [
+        "Aluminium",
+        "Antimony",
+        "Arsenic",
+        "Lead",
+        "Cadmium",
+        "Copper",
+        "Lanthanum",
+        "Mercury",
+        "Scandium",
+        "Selenium",
+        "Titanium",
+        "Tungsten",
+        "Tin",
+    ],
+    "Macro-Elements": [
+        "Chloride",
+        "Sodium",
+        "Calcium",
+        "Magnesium",
+        "Potassium",
+        "Bromide",
+        "Boron",
+        "Fluoride",
+        "Strontium",
+        "Sulphur",
+    ],
+    "Li-Group": [
+        "Lithium",
+        "Nickel",
+        "Molybdenum",
+    ],
+    "I-Group": [
+        "Vanadium",
+        "Zinc",
+        "Manganese",
+        "Iodine",
+    ],
+    "Fe-Group": [
+        "Chromium",
+        "Cobalt",
+        "Iron",
+    ],
+    "Ba-Group": [
+        "Barium",
+        "Beryllium",
+    ],
+    "Si-Group": [
+        "Silicon",
+    ],
+    "Nutrient-Group": [
+        "Phosphorus",
+        "Phosphate",
+    ],
+    "Salinity": [
+        "Salinity",
+    ],
+}
+
+TRITON_GROUP_ORDER = [
+    "Macro-Elements",
+    "Nutrient-Group",
+    "Salinity",
+    "Li-Group",
+    "I-Group",
+    "Fe-Group",
+    "Ba-Group",
+    "Si-Group",
+    "Unwanted heavy metals",
+    "Other",
+]
+
+TRITON_GROUP_LOOKUP = {
+    normalize_group_name(name): group
+    for group, items in TRITON_PARAMETER_GROUPS.items()
+    for name in items
+}
+
+def build_parameter_groups(parameters: List[sqlite3.Row]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[sqlite3.Row]] = {}
+    for param in parameters:
+        name = row_get(param, "name") or ""
+        group = TRITON_GROUP_LOOKUP.get(normalize_group_name(name), "Other")
+        grouped.setdefault(group, []).append(param)
+    for items in grouped.values():
+        items.sort(key=lambda row: (row_get(row, "name") or "").lower())
+    ordered = []
+    for group in TRITON_GROUP_ORDER:
+        if group in grouped:
+            ordered.append({"name": group, "items": grouped[group]})
+    for group in sorted(grouped.keys(), key=lambda s: s.lower()):
+        if group not in TRITON_GROUP_ORDER:
+            ordered.append({"name": group, "items": grouped[group]})
+    return ordered
+
 ICP_ELEMENT_ALIASES = {
     "al": "aluminium",
     "aluminum": "aluminium",
@@ -3131,6 +3230,7 @@ def dashboard(request: Request):
             "tank_cards": tank_cards,
             "reminders": reminders,
             "dashboard_parameters": available_parameters,
+            "dashboard_parameter_groups": build_parameter_groups(available_parameters),
             "selected_dashboard_parameters": selected_parameters,
             "success": request.query_params.get("success"),
             "extra_css": ["/static/dashboard.css"],
@@ -6064,7 +6164,14 @@ def parameters_settings(request: Request):
     db = get_db()
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("parameters.html", {"request": request, "parameters": rows})
+    return templates.TemplateResponse(
+        "parameters.html",
+        {
+            "request": request,
+            "parameters": rows,
+            "grouped_parameters": build_parameter_groups(rows),
+        },
+    )
 
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
 @app.get("/settings/parameters/new/", response_class=HTMLResponse, include_in_schema=False)
