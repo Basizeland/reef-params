@@ -2978,6 +2978,7 @@ def init_db() -> None:
         """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
 
     # MIGRATION: Normalize parameter names to canonical defaults
+    cur.execute("PRAGMA foreign_keys = OFF;")
     param_rows = q(db, "SELECT id, name FROM parameter_defs")
     name_to_id = {row["name"]: row["id"] for row in param_rows}
     for row in param_rows:
@@ -3035,6 +3036,7 @@ def init_db() -> None:
         ):
             if table_exists(db, tbl):
                 cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (canonical_name, old_name))
+    cur.execute("PRAGMA foreign_keys = ON;")
 
     # Seed common additives if missing (strength = change per 1 mL / 100 L)
     default_additives = [
