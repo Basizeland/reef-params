@@ -57,11 +57,11 @@ def require_pandas():
 
 def normalize_param_name(name: str) -> str:
     cleaned = re.sub(r"[^a-z0-9]+", "", name.lower())
-    if cleaned in {"alkalinitykh", "alkalinity", "kh"}:
+    if cleaned in {"alkalinitykh", "alkalinitydkh", "alkalinity", "kh"}:
         return "Alkalinity/KH"
-    if cleaned in {"calcium", "ca"}:
+    if cleaned in {"calcium", "ca", "calciumca"}:
         return "Calcium"
-    if cleaned in {"magnesium", "mg"}:
+    if cleaned in {"magnesium", "mg", "magnesiummg"}:
         return "Magnesium"
     if cleaned in {"nitrate", "no3"}:
         return "Nitrate"
@@ -2976,6 +2976,36 @@ def init_db() -> None:
             SET default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=? 
             WHERE name=? AND default_target_low IS NULL
         """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
+
+    # MIGRATION: Normalize parameter names to canonical defaults
+    param_rows = q(db, "SELECT id, name FROM parameter_defs")
+    name_to_id = {row["name"]: row["id"] for row in param_rows}
+    for row in param_rows:
+        old_name = row["name"]
+        canonical_name = normalize_param_name(old_name)
+        if canonical_name == old_name:
+            continue
+        existing_id = name_to_id.get(canonical_name)
+        if existing_id:
+            if table_exists(db, "sample_values"):
+                cur.execute(
+                    "UPDATE sample_values SET parameter_id=? WHERE parameter_id=?",
+                    (existing_id, row["id"]),
+                )
+            cur.execute("DELETE FROM parameter_defs WHERE id=?", (row["id"],))
+        else:
+            cur.execute("UPDATE parameter_defs SET name=? WHERE id=?", (canonical_name, row["id"]))
+            name_to_id[canonical_name] = row["id"]
+        for tbl, col in (
+            ("parameters", "name"),
+            ("targets", "parameter"),
+            ("additives", "parameter"),
+            ("test_kits", "parameter"),
+            ("dosing_entries", "parameter"),
+            ("dose_plan_checks", "parameter"),
+        ):
+            if table_exists(db, tbl):
+                cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (canonical_name, old_name))
 
     # Seed common additives if missing (strength = change per 1 mL / 100 L)
     default_additives = [
