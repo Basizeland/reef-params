@@ -26,7 +26,6 @@
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link" href="/insights"><i class="bi bi-graph-up-arrow"></i> Insights</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/alerts"><i class="bi bi-bell"></i> Alerts</a></li>
                     
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
@@ -83,6 +82,12 @@
                     </a>
                     <ul class="dropdown-menu dropdown-menu-end shadow-sm notification-menu" style="min-width: 320px;">
                         <li class="dropdown-header text-uppercase small text-muted">Notifications</li>
+                        <li>
+                            <a class="dropdown-item" href="/alerts">
+                                <i class="bi bi-bell"></i> Alert Center
+                            </a>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
                         {% if global_notifications %}
                             {% for group in global_notifications|groupby('tank_id') %}
                                 {% set alerts = group.list %}
@@ -203,96 +208,127 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted">Let’s walk through the main areas. Use Next to continue or click any card to jump there.</p>
+                    <p class="text-muted">Pick a step, jump to the screen, and mark it complete. You can come back anytime.</p>
                     <div class="mb-3 d-flex align-items-center justify-content-between">
-                        <div class="small text-muted">Step <span data-guide-step="current">1</span> of <span data-guide-step="total">3</span></div>
+                        <div class="small text-muted"><span data-guide-completed>0</span> of <span data-guide-total>0</span> steps completed</div>
                         <div class="progress flex-grow-1 ms-3" style="height: 6px;">
                             <div class="progress-bar" role="progressbar" style="width: 0%;" data-guide-progress></div>
                         </div>
                     </div>
-                    <div data-guide-step-pane="1">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/">
-                                    <div class="fw-semibold text-navy">Dashboard</div>
-                                    <div class="text-muted small">Your tanks, recent readings, and alerts in one place.</div>
-                                </a>
-                            </div>
-                            <div class="col-md-6">
-                                <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/tanks/new">
-                                    <div class="fw-semibold text-navy">Create a Tank</div>
-                                    <div class="text-muted small">Start by adding your first tank and basic volume.</div>
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="d-none" data-guide-step-pane="2">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/settings/parameters">
-                                    <div class="fw-semibold text-navy">Manage</div>
-                                    <div class="text-muted small">Set parameters, additives, and test kits that power calculations.</div>
-                                    <div class="text-muted small mt-1">Start with Parameters → Additives → Test Kits.</div>
-                                </a>
-                            </div>
-                            <div class="col-md-6">
-                                <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/tools/calculators">
-                                    <div class="fw-semibold text-navy">Tools</div>
-                                    <div class="text-muted small">Use the dosing calculator and dose planner to map your additions.</div>
-                                    <div class="text-muted small mt-1">Shortcuts: Dosing Calculator, Dose Planner.</div>
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="d-none" data-guide-step-pane="3">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/">
-                                    <div class="fw-semibold text-navy">Dosing Settings</div>
-                                    <div class="text-muted small">Pick dosing methods, enter daily amounts, and track containers.</div>
-                                    <div class="text-muted small mt-1">Open any tank → Edit Dosing.</div>
-                                </a>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="border rounded p-3 h-100">
-                                    <div class="fw-semibold">Notifications</div>
-                                    <div class="text-muted small">Check the bell for low-container warnings and actions.</div>
-                                    <div class="text-muted small mt-1">Dismiss alerts or jump to the tank.</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                {% if request.state.user is defined and request.state.user and request.state.user.admin %}
-                                    <a class="border rounded p-3 h-100 text-decoration-none d-block" href="/admin/import">
-                                        <div class="fw-semibold text-navy">Data Center</div>
-                                        <div class="text-muted small">Import/export and backups for power users.</div>
-                                        <div class="text-muted small mt-1">Export data, restore backups, or bulk import.</div>
-                                    </a>
-                                {% else %}
-                                    <div class="border rounded p-3 h-100">
-                                        <div class="fw-semibold">Data Center</div>
-                                        <div class="text-muted small">Import/export and backups for power users.</div>
-                                        <div class="text-muted small mt-1">Admin-only access.</div>
+                    <div class="row g-3" data-guide-list>
+                        <div class="col-md-6">
+                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="create-tank">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div>
+                                        <div class="fw-semibold text-navy">Create your first tank</div>
+                                        <div class="text-muted small">Add your tank name, size, and net water volume.</div>
                                     </div>
-                                {% endif %}
-                            </div>
-                            <div class="col-md-6">
-                                <div class="border rounded p-3 h-100">
-                                    <div class="fw-semibold">Quick Start</div>
-                                    <ol class="small text-muted mb-0">
-                                        <li>Create a tank from the dashboard.</li>
-                                        <li>Add parameters, targets, and preferred additives.</li>
-                                        <li>Enter initial readings and set dosing methods.</li>
-                                        <li>Use the calculator to dial in daily dosing.</li>
-                                    </ol>
+                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
+                                </div>
+                                <div class="mt-auto d-flex flex-wrap gap-2">
+                                    <a class="btn btn-sm btn-primary" href="/tanks/new">Start</a>
+                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
                                 </div>
                             </div>
                         </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="setup-parameters">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div>
+                                        <div class="fw-semibold text-navy">Set parameters &amp; additives</div>
+                                        <div class="text-muted small">Confirm targets, add test kits, and enter additive strengths.</div>
+                                    </div>
+                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
+                                </div>
+                                <div class="mt-auto d-flex flex-wrap gap-2">
+                                    <a class="btn btn-sm btn-primary" href="/settings/parameters">Open settings</a>
+                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="log-readings">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div>
+                                        <div class="fw-semibold text-navy">Log your first readings</div>
+                                        <div class="text-muted small">Capture current alkalinity, calcium, nitrate, and more.</div>
+                                    </div>
+                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
+                                </div>
+                                <div class="mt-auto d-flex flex-wrap gap-2">
+                                    <a class="btn btn-sm btn-primary" href="/">Go to dashboard</a>
+                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="configure-dosing">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div>
+                                        <div class="fw-semibold text-navy">Configure dosing</div>
+                                        <div class="text-muted small">Pick dosing methods, set daily amounts, and track containers.</div>
+                                    </div>
+                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
+                                </div>
+                                <div class="mt-auto d-flex flex-wrap gap-2">
+                                    <a class="btn btn-sm btn-primary" href="/">Open a tank</a>
+                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="run-tools">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div>
+                                        <div class="fw-semibold text-navy">Use calculators &amp; dose plans</div>
+                                        <div class="text-muted small">Dial in dose amounts and schedule future corrections.</div>
+                                    </div>
+                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
+                                </div>
+                                <div class="mt-auto d-flex flex-wrap gap-2">
+                                    <a class="btn btn-sm btn-primary" href="/tools/calculators">Open tools</a>
+                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="notifications">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div>
+                                        <div class="fw-semibold text-navy">Turn on notifications</div>
+                                        <div class="text-muted small">Stay ahead of low containers and reminders.</div>
+                                    </div>
+                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
+                                </div>
+                                <div class="mt-auto d-flex flex-wrap gap-2">
+                                    <a class="btn btn-sm btn-primary" href="/account">Manage alerts</a>
+                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
+                                </div>
+                            </div>
+                        </div>
+                        {% if request.state.user is defined and request.state.user and request.state.user.admin %}
+                            <div class="col-md-6">
+                                <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="import-backup">
+                                    <div class="d-flex justify-content-between align-items-start gap-3">
+                                        <div>
+                                            <div class="fw-semibold text-navy">Import historical data</div>
+                                            <div class="text-muted small">Restore backups or bulk import readings.</div>
+                                        </div>
+                                        <span class="badge bg-success d-none" data-guide-badge>Done</span>
+                                    </div>
+                                    <div class="mt-auto d-flex flex-wrap gap-2">
+                                        <a class="btn btn-sm btn-primary" href="/admin/import">Open data center</a>
+                                        <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-guide-reset>Reset progress</button>
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-outline-secondary" data-guide-prev>Back</button>
-                    <button type="button" class="btn btn-primary" data-guide-next>Next</button>
+                    <a class="btn btn-primary" href="/">Go to dashboard</a>
                 </div>
             </div>
         </div>
@@ -310,68 +346,103 @@
         document.addEventListener("DOMContentLoaded", () => {
             const modalEl = document.getElementById("onboardingModal");
             if (!modalEl) return;
-            const key = "reefMetricsGuideSeen";
-            if (!localStorage.getItem(key)) {
+            const storageKey = "reefMetricsGuideState";
+            const loadState = () => {
+                try {
+                    const raw = localStorage.getItem(storageKey);
+                    if (!raw) return { seen: false, completed: {} };
+                    const parsed = JSON.parse(raw);
+                    return {
+                        seen: Boolean(parsed.seen),
+                        completed: parsed.completed && typeof parsed.completed === "object" ? parsed.completed : {},
+                    };
+                } catch (err) {
+                    return { seen: false, completed: {} };
+                }
+            };
+            const saveState = (state) => {
+                localStorage.setItem(storageKey, JSON.stringify(state));
+            };
+            const state = loadState();
+            if (!state.seen) {
                 const modal = new bootstrap.Modal(modalEl);
                 modal.show();
-                localStorage.setItem(key, "true");
+                state.seen = true;
+                saveState(state);
             }
-            const steps = Array.from(modalEl.querySelectorAll("[data-guide-step-pane]"));
-            if (!steps.length) return;
-            const nextBtn = modalEl.querySelector("[data-guide-next]");
-            const prevBtn = modalEl.querySelector("[data-guide-prev]");
-            const currentLabel = modalEl.querySelector('[data-guide-step="current"]');
-            const totalLabel = modalEl.querySelector('[data-guide-step="total"]');
+            const tasks = Array.from(modalEl.querySelectorAll("[data-guide-task]"));
+            if (!tasks.length) return;
+            const completedLabel = modalEl.querySelector("[data-guide-completed]");
+            const totalLabel = modalEl.querySelector("[data-guide-total]");
             const progress = modalEl.querySelector("[data-guide-progress]");
-            let currentIndex = 0;
-            if (totalLabel) {
-                totalLabel.textContent = steps.length.toString();
-            }
+            const resetBtn = modalEl.querySelector("[data-guide-reset]");
 
-            const render = () => {
-                steps.forEach((step, index) => {
-                    step.classList.toggle("d-none", index !== currentIndex);
-                });
-                if (currentLabel) {
-                    currentLabel.textContent = (currentIndex + 1).toString();
-                }
+            const updateUI = () => {
+                const total = tasks.length;
+                const completedCount = tasks.reduce((count, task) => {
+                    const id = task.dataset.guideTask;
+                    return count + (id && state.completed[id] ? 1 : 0);
+                }, 0);
+                if (completedLabel) completedLabel.textContent = completedCount.toString();
+                if (totalLabel) totalLabel.textContent = total.toString();
                 if (progress) {
-                    const percent = Math.round(((currentIndex + 1) / steps.length) * 100);
+                    const percent = total ? Math.round((completedCount / total) * 100) : 0;
                     progress.style.width = `${percent}%`;
                 }
-                if (prevBtn) {
-                    prevBtn.disabled = currentIndex === 0;
-                }
-                if (nextBtn) {
-                    nextBtn.textContent = currentIndex === steps.length - 1 ? "Finish" : "Next";
-                }
-            };
-
-            const advance = (delta) => {
-                currentIndex = Math.min(Math.max(currentIndex + delta, 0), steps.length - 1);
-                render();
-            };
-
-            if (nextBtn) {
-                nextBtn.addEventListener("click", () => {
-                    if (currentIndex === steps.length - 1) {
-                        const modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
-                        modal.hide();
-                        return;
+                tasks.forEach((task) => {
+                    const id = task.dataset.guideTask;
+                    const isDone = id && state.completed[id];
+                    task.classList.toggle("border-success", Boolean(isDone));
+                    task.classList.toggle("bg-success-subtle", Boolean(isDone));
+                    const badge = task.querySelector("[data-guide-badge]");
+                    if (badge) badge.classList.toggle("d-none", !isDone);
+                    const button = task.querySelector("[data-guide-complete]");
+                    if (button) {
+                        button.textContent = isDone ? "Completed" : "Mark complete";
+                        button.classList.toggle("btn-success", Boolean(isDone));
+                        button.classList.toggle("btn-outline-success", !isDone);
                     }
-                    advance(1);
+                });
+            };
+
+            tasks.forEach((task) => {
+                const button = task.querySelector("[data-guide-complete]");
+                if (!button) return;
+                button.addEventListener("click", () => {
+                    const id = task.dataset.guideTask;
+                    if (!id) return;
+                    state.completed[id] = !state.completed[id];
+                    saveState(state);
+                    updateUI();
+                });
+            });
+
+            if (resetBtn) {
+                resetBtn.addEventListener("click", () => {
+                    state.completed = {};
+                    state.seen = true;
+                    saveState(state);
+                    updateUI();
                 });
             }
 
-            if (prevBtn) {
-                prevBtn.addEventListener("click", () => advance(-1));
-            }
-
-            render();
+            updateUI();
         });
 
         document.addEventListener("DOMContentLoaded", () => {
             const toggleButtons = Array.from(document.querySelectorAll(".js-enable-browser-alerts"));
+            const getAnySubscription = async () => {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                for (const registration of registrations) {
+                    try {
+                        const subscription = await registration.pushManager.getSubscription();
+                        if (subscription) return subscription;
+                    } catch (err) {
+                        continue;
+                    }
+                }
+                return null;
+            };
             const updateStatus = async () => {
                 if (!("serviceWorker" in navigator)) {
                     toggleButtons.forEach((btn) => {
@@ -382,8 +453,7 @@
                     });
                     return;
                 }
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.getSubscription();
+                const subscription = await getAnySubscription();
                 const permission = Notification?.permission || "default";
                 toggleButtons.forEach((btn) => {
                     const targetId = btn.getAttribute("data-status-target");
@@ -436,16 +506,18 @@
                 return subscription;
             };
             const unsubscribePush = async () => {
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.getSubscription();
-                if (!subscription) return;
-                await fetch("/api/push/unsubscribe", {
-                    method: "POST",
-                    credentials: "same-origin",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ endpoint: subscription.endpoint }),
-                });
-                await subscription.unsubscribe();
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                for (const registration of registrations) {
+                    const subscription = await registration.pushManager.getSubscription();
+                    if (!subscription) continue;
+                    await fetch("/api/push/unsubscribe", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ endpoint: subscription.endpoint }),
+                    });
+                    await subscription.unsubscribe();
+                }
             };
             toggleButtons.forEach((btn) => {
                 btn.addEventListener("click", async () => {
@@ -458,8 +530,7 @@
                         await updateStatus();
                         return;
                     }
-                    const registration = await navigator.serviceWorker.ready;
-                    const subscription = await registration.pushManager.getSubscription();
+                    const subscription = await getAnySubscription();
                     if (subscription) {
                         await unsubscribePush();
                     } else {

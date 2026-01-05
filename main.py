@@ -10,6 +10,8 @@ import hashlib
 import urllib.parse
 import urllib.request
 import csv
+import gzip
+import html
 import importlib
 import importlib.util
 import smtplib
@@ -19,7 +21,7 @@ from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from integrations.apex import ApexClient
+from integrations.apex import ApexClient, readings_from_payload
 from html.parser import HTMLParser
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
@@ -137,7 +139,7 @@ def build_daily_consumption(db: sqlite3.Connection, tank_view: Dict[str, Any]) -
         strength = row_get(additive, "strength")
         if strength in (None, 0):
             continue
-        daily_change = float(daily_ml) * float(strength) * (100.0 / float(volume_l))
+        daily_change = (float(daily_ml) * float(strength)) / (1000.0 * float(volume_l))
         additive_name = additive_label(additive) or solution_name
         additive_param = row_get(additive, "parameter") or ""
         additive_unit = row_get(additive, "unit") or ""
@@ -1092,35 +1094,72 @@ def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
     db.commit()
 
 APEX_SETTINGS_KEY = "apex_integration_settings"
-def get_apex_settings(db: sqlite3.Connection) -> Dict[str, Any]:
-    raw = get_setting(db, APEX_SETTINGS_KEY)
-    settings: Dict[str, Any] = {
-        "enabled": False,
-        "host": "",
-        "username": "",
-        "password": "",
-        "api_token": "",
-        "poll_interval_minutes": 15,
-        "mapping": {},
-        "tank_id": None,
-        "last_probe_list": [],
-        "last_probe_loaded_at": None,
-    }
-    if raw:
-        try:
-            stored = json.loads(raw)
-            if isinstance(stored, dict):
-                settings.update(stored)
-        except Exception:
-            pass
+def _normalize_apex_integration(settings: Dict[str, Any]) -> Dict[str, Any]:
+    settings.setdefault("id", "default")
+    settings.setdefault("name", "Apex Integration")
+    settings.setdefault("enabled", False)
+    settings.setdefault("host", "")
+    settings.setdefault("username", "")
+    settings.setdefault("password", "")
+    settings.setdefault("api_token", "")
+    settings.setdefault("poll_interval_minutes", 15)
+    settings.setdefault("mapping", {})
+    settings.setdefault("tank_id", None)
+    settings.setdefault("tank_ids", [])
+    settings.setdefault("last_probe_list", [])
+    settings.setdefault("last_probe_loaded_at", None)
     if not isinstance(settings.get("mapping"), dict):
         settings["mapping"] = {}
     if not isinstance(settings.get("last_probe_list"), list):
         settings["last_probe_list"] = []
+    if not isinstance(settings.get("tank_ids"), list):
+        settings["tank_ids"] = []
     return settings
 
-def save_apex_settings(db: sqlite3.Connection, settings: Dict[str, Any]) -> None:
-    set_setting(db, APEX_SETTINGS_KEY, json.dumps(settings))
+def get_apex_integrations(db: sqlite3.Connection) -> List[Dict[str, Any]]:
+    raw = get_setting(db, APEX_SETTINGS_KEY)
+    if not raw:
+        return [_normalize_apex_integration({})]
+    try:
+        stored = json.loads(raw)
+    except Exception:
+        stored = {}
+    if isinstance(stored, dict) and "integrations" in stored:
+        integrations = stored.get("integrations") or []
+    elif isinstance(stored, list):
+        integrations = stored
+    elif isinstance(stored, dict):
+        integrations = [stored]
+    else:
+        integrations = []
+    normalized = []
+    for idx, entry in enumerate(integrations):
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("id"):
+            entry["id"] = f"apex-{idx + 1}"
+        normalized.append(_normalize_apex_integration(entry))
+    return normalized or [_normalize_apex_integration({})]
+
+def get_apex_settings(db: sqlite3.Connection, integration_id: Optional[str] = None) -> Dict[str, Any]:
+    integrations = get_apex_integrations(db)
+    if integration_id:
+        for integration in integrations:
+            if integration.get("id") == integration_id:
+                return integration
+    return integrations[0]
+
+def save_apex_settings(db: sqlite3.Connection, integration_id: str, settings: Dict[str, Any]) -> None:
+    integrations = get_apex_integrations(db)
+    updated = False
+    for idx, integration in enumerate(integrations):
+        if integration.get("id") == integration_id:
+            integrations[idx] = _normalize_apex_integration(settings)
+            updated = True
+            break
+    if not updated:
+        integrations.append(_normalize_apex_integration(settings))
+    set_setting(db, APEX_SETTINGS_KEY, json.dumps({"integrations": integrations}))
 
 def parse_apex_mapping(mapping_text: str) -> Dict[str, str]:
     if not mapping_text:
@@ -1320,27 +1359,77 @@ class TritonTableParser(HTMLParser):
         if self.in_cell:
             self.buffer.append(data)
 
-def fetch_triton_html(url: str) -> str:
+def fetch_triton_html(url: str) -> Tuple[str, Dict[str, Any]]:
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "Mozilla/5.0 (compatible; ReefMetrics/1.0)"},
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", errors="ignore")
+        raw = resp.read()
+        encoding = resp.getheader("Content-Encoding", "")
+        if encoding.lower() == "gzip":
+            raw = gzip.decompress(raw)
+        content_type = resp.getheader("Content-Type", "")
+        meta = {
+            "status": getattr(resp, "status", None),
+            "content_type": content_type,
+            "content_length": len(raw),
+        }
+        return raw.decode("utf-8", errors="ignore"), meta
+
+def summarize_triton_html(content: str, meta: Dict[str, Any]) -> str:
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", content, re.IGNORECASE | re.DOTALL)
+    title = html.unescape(title_match.group(1).strip()) if title_match else "unknown"
+    lower = content.lower()
+    blocked_markers = ["access denied", "forbidden", "captcha", "cloudflare", "attention required"]
+    blocked = any(marker in lower for marker in blocked_markers)
+    notes = []
+    if blocked:
+        notes.append("response looks blocked (access denied/captcha)")
+    if meta.get("content_type"):
+        notes.append(f"type: {meta['content_type']}")
+    if meta.get("content_length") is not None:
+        notes.append(f"bytes: {meta['content_length']}")
+    extra = f" ({'; '.join(notes)})" if notes else ""
+    return f"Response title: {title}{extra}"
+
+def extract_numeric_value(raw: str) -> Optional[float]:
+    if raw is None:
+        return None
+    match = re.search(r"-?\d+(?:[.,]\d+)?", str(raw))
+    if not match:
+        return None
+    return float(match.group(0).replace(",", "."))
 
 def parse_triton_rows(rows: List[List[str]]) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for row in rows:
-        if len(row) < 2:
+        cleaned = [cell.strip() for cell in row if cell and cell.strip()]
+        if len(cleaned) < 2:
             continue
-        name = row[0].strip()
-        value = row[1].strip()
-        if not name or not value:
+        name_idx = None
+        for idx, cell in enumerate(cleaned):
+            if re.search(r"[A-Za-z]", cell):
+                name_idx = idx
+                break
+        if name_idx is None:
+            name_idx = 0
+        name = cleaned[name_idx]
+        if not name:
             continue
-        value = value.replace(",", ".")
-        try:
-            numeric = float(value)
-        except Exception:
+        numeric = None
+        for cell in cleaned[name_idx + 1 :]:
+            numeric = extract_numeric_value(cell)
+            if numeric is not None:
+                break
+        if numeric is None:
+            for idx, cell in enumerate(cleaned):
+                if idx == name_idx:
+                    continue
+                numeric = extract_numeric_value(cell)
+                if numeric is not None:
+                    break
+        if numeric is None:
             continue
         results.append({"name": name, "value": numeric, "unit": None})
     return results
@@ -1348,15 +1437,26 @@ def parse_triton_rows(rows: List[List[str]]) -> List[Dict[str, Any]]:
 def parse_triton_html(content: str) -> List[Dict[str, Any]]:
     parser = TritonTableParser()
     parser.feed(content)
-    return parse_triton_rows(parser.rows)
+    results = parse_triton_rows(parser.rows)
+    if results:
+        return results
+    results = parse_triton_json_like(content)
+    if results:
+        return results
+    return parse_triton_data_attributes(content)
 
 def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
     text = content.decode("utf-8", errors="ignore")
     sniffer = csv.Sniffer()
+    sample = "\n".join(text.splitlines()[:20])
     try:
-        dialect = sniffer.sniff(text.splitlines()[0])
+        dialect = sniffer.sniff(sample, delimiters=",;\t")
     except Exception:
-        dialect = csv.excel
+        if ";" in sample and "," not in sample:
+            dialect = csv.excel
+            dialect.delimiter = ";"
+        else:
+            dialect = csv.excel
     reader = csv.reader(text.splitlines(), dialect)
     rows = list(reader)
     if not rows:
@@ -1369,21 +1469,15 @@ def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
             name_idx = idx
         if col in {"value", "result", "measured"}:
             value_idx = idx
-    data_rows = rows[1:] if name_idx is not None and value_idx is not None else rows
-    results: List[Dict[str, Any]] = []
-    for row in data_rows:
-        if len(row) < 2:
-            continue
-        name = row[name_idx] if name_idx is not None else row[0]
-        value = row[value_idx] if value_idx is not None else row[1]
-        if not name or not value:
-            continue
-        try:
-            numeric = float(str(value).replace(",", "."))
-        except Exception:
-            continue
-        results.append({"name": name.strip(), "value": numeric, "unit": None})
-    return results
+    if name_idx is not None and value_idx is not None:
+        data_rows = rows[1:]
+        slim_rows = [
+            [row[name_idx], row[value_idx]]
+            for row in data_rows
+            if len(row) > max(name_idx, value_idx)
+        ]
+        return parse_triton_rows(slim_rows)
+    return parse_triton_rows(rows)
 
 def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
     try:
@@ -1397,18 +1491,315 @@ def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
         parts = [p for p in line.split() if p]
         if len(parts) < 2:
             continue
-        name = parts[0]
-        value = parts[1]
-        try:
-            numeric = float(value.replace(",", "."))
-        except Exception:
+        results.extend(parse_triton_rows([parts]))
+    return results
+
+def parse_triton_data_attributes(content: str) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    pattern = re.compile(
+        r'data-(?:element|name)=\"([^\"]+)\"[^>]*?data-(?:value|result)=\"([^\"]+)\"',
+        re.IGNORECASE,
+    )
+    for name, value in pattern.findall(content):
+        numeric = extract_numeric_value(value)
+        if numeric is None:
             continue
         results.append({"name": name.strip(), "value": numeric, "unit": None})
     return results
 
+def parse_triton_json_like(content: str) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    pattern = re.compile(
+        r'[{,]\s*"(?:element|name)"\s*:\s*"([^"]+)"[^}]*?"(?:value|result)"\s*:\s*"?(.*?)"?(?:[},])',
+        re.IGNORECASE | re.DOTALL,
+    )
+    for name, value in pattern.findall(content):
+        numeric = extract_numeric_value(value)
+        if numeric is None:
+            continue
+        results.append({"name": name.strip(), "value": numeric, "unit": None})
+    return results
+
+def strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text or "").strip()
+
+def extract_json_candidates(content: str) -> List[Any]:
+    candidates: List[Any] = []
+    script_pattern = re.compile(
+        r'<script[^>]*type="application/(?:json|ld\+json)"[^>]*>(.*?)</script>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    for match in script_pattern.findall(content):
+        raw = match.strip()
+        if not raw:
+            continue
+        try:
+            candidates.append(json.loads(raw))
+        except Exception:
+            continue
+
+    inline_pattern = re.compile(
+        r"(?:window\.__NUXT__|__NUXT__|__NEXT_DATA__)\s*=\s*(\{.*?\})\s*;",
+        re.DOTALL,
+    )
+    for match in inline_pattern.findall(content):
+        raw = match.strip()
+        try:
+            candidates.append(json.loads(raw))
+        except Exception:
+            continue
+
+    return candidates
+
+def extract_dose_tab_recommendations(content: str) -> List[Dict[str, Any]]:
+    blocks = re.findall(
+        r"<(?:div|section)[^>]*(?:id|class)=\"[^\"]*(?:dose|dosage)[^\"]*\"[^>]*>(.*?)</(?:div|section)>",
+        content,
+        re.IGNORECASE | re.DOTALL,
+    )
+    recommendations: List[Dict[str, Any]] = []
+    ignored_headings = {
+        "very important for your aquarium",
+        "important for your aquarium",
+        "not important but beneficial for your aquarium",
+        "fine-tuning level 1 ( basic )",
+        "fine-tuning level 1 ( advanced )",
+        "products to improve your aquarium",
+    }
+    for block in blocks:
+        text = strip_html(block)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        current_label = None
+        buffer: List[str] = []
+
+        def flush() -> None:
+            nonlocal buffer, current_label
+            if not current_label:
+                buffer = []
+                return
+            notes_text = " ".join(buffer).strip()
+            if notes_text:
+                recommendations.append(
+                    {
+                        "label": current_label,
+                        "value": None,
+                        "unit": None,
+                        "notes": notes_text,
+                    }
+                )
+            buffer = []
+
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx]
+            lower_line = line.lower()
+            if lower_line in ignored_headings:
+                idx += 1
+                continue
+            if re.fullmatch(r"[A-Za-z0-9]{1,4}", line):
+                symbol = line
+                next_line = lines[idx + 1] if idx + 1 < len(lines) else ""
+                label = symbol
+                idx += 1
+                if next_line and not re.fullmatch(r"[A-Za-z0-9]{1,4}", next_line):
+                    next_lower = next_line.lower()
+                    if not next_lower.startswith("we have detected"):
+                        label = f"{symbol} {next_line}"
+                        idx += 1
+                flush()
+                current_label = label
+                continue
+            if current_label and lower_line.startswith("we have detected"):
+                idx += 1
+                continue
+            buffer.append(line)
+            idx += 1
+        flush()
+    return recommendations
+
+def parse_triton_recommendations(content: str) -> Dict[str, List[Dict[str, Any]]]:
+    def normalize_help_item(item: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(item, str):
+            text = strip_html(item)
+            return {"label": text, "severity": None, "notes": None} if text else None
+        if isinstance(item, dict):
+            text = (
+                item.get("message")
+                or item.get("text")
+                or item.get("title")
+                or item.get("description")
+                or item.get("label")
+            )
+            text = strip_html(str(text)) if text else ""
+            if not text:
+                return None
+            severity = item.get("severity") or item.get("level") or item.get("status")
+            return {"label": text, "severity": severity, "notes": None}
+        return None
+
+    def normalize_dose_item(item: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(item, str):
+            text = strip_html(item)
+            return {"label": text, "value": None, "unit": None, "notes": None} if text else None
+        if isinstance(item, dict):
+            label = (
+                item.get("name")
+                or item.get("label")
+                or item.get("product")
+                or item.get("additive")
+            )
+            value = item.get("dose") or item.get("dosage") or item.get("amount") or item.get("value")
+            unit = item.get("unit") or item.get("uom")
+            notes = item.get("notes") or item.get("message") or item.get("description")
+            numeric = extract_numeric_value(value) if value is not None else None
+            label = strip_html(str(label)) if label else ""
+            notes = strip_html(str(notes)) if notes else None
+            if not label and numeric is None:
+                return None
+            return {"label": label, "value": numeric, "unit": unit, "notes": notes}
+        return None
+
+    recommendations: Dict[str, List[Dict[str, Any]]] = {"help": [], "dose": []}
+    dose_tab_recommendations = extract_dose_tab_recommendations(content)
+    if dose_tab_recommendations:
+        recommendations["dose"] = dose_tab_recommendations
+    for candidate in extract_json_candidates(content):
+        stack = [candidate]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, dict):
+                for key, value in current.items():
+                    lowered = str(key).lower()
+                    if lowered in {"help", "warnings", "alerts"} and isinstance(value, list):
+                        for item in value:
+                            normalized = normalize_help_item(item)
+                            if normalized:
+                                recommendations["help"].append(normalized)
+                    if "dose" in lowered and isinstance(value, list):
+                        for item in value:
+                            normalized = normalize_dose_item(item)
+                            if normalized:
+                                recommendations["dose"].append(normalized)
+                    if isinstance(value, (dict, list)):
+                        stack.append(value)
+            elif isinstance(current, list):
+                stack.extend(current)
+
+    if not recommendations["help"]:
+        for match in re.findall(r"help[^:]*:\s*([^\n<]+)", content, re.IGNORECASE):
+            text = strip_html(match)
+            if text:
+                recommendations["help"].append({"label": text, "severity": None, "notes": None})
+
+    if not recommendations["dose"]:
+        table_pattern = re.compile(
+            r"<tr[^>]*>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*</tr>",
+            re.IGNORECASE | re.DOTALL,
+        )
+        for name, amount, notes in table_pattern.findall(content):
+            label = strip_html(name)
+            amount_text = strip_html(amount)
+            numeric = extract_numeric_value(amount_text)
+            unit_match = re.search(r"[a-zA-Z]+/?[a-zA-Z]*", amount_text)
+            unit = unit_match.group(0) if unit_match else None
+            notes_text = strip_html(notes)
+            if label or numeric is not None:
+                recommendations["dose"].append(
+                    {
+                        "label": label,
+                        "value": numeric,
+                        "unit": unit,
+                        "notes": notes_text or None,
+                    }
+                )
+
+    if not recommendations["dose"]:
+        dosage_block_pattern = re.compile(
+            r"<(?:div|section)[^>]*(?:id|class)=\"[^\"]*dosage[^\"]*\"[^>]*>(.*?)</(?:div|section)>",
+            re.IGNORECASE | re.DOTALL,
+        )
+        for block in dosage_block_pattern.findall(content):
+            for name, amount, notes in re.findall(
+                r"<tr[^>]*>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*</tr>",
+                block,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                label = strip_html(name)
+                amount_text = strip_html(amount)
+                numeric = extract_numeric_value(amount_text)
+                unit_match = re.search(r"[a-zA-Z]+/?[a-zA-Z]*", amount_text)
+                unit = unit_match.group(0) if unit_match else None
+                notes_text = strip_html(notes)
+                if label or numeric is not None:
+                    recommendations["dose"].append(
+                        {
+                            "label": label,
+                            "value": numeric,
+                            "unit": unit,
+                            "notes": notes_text or None,
+                        }
+                    )
+
+    if not recommendations["dose"]:
+        dose_pattern = re.compile(
+            r"(?:dose|dosage)\s*[:\-]\s*([^<\n]+)",
+            re.IGNORECASE,
+        )
+        for match in dose_pattern.findall(content):
+            text = strip_html(match)
+            numeric = extract_numeric_value(text)
+            if numeric is None:
+                continue
+            recommendations["dose"].append({"label": "", "value": numeric, "unit": None, "notes": None})
+
+    if recommendations["dose"]:
+        filtered = []
+        for item in recommendations["dose"]:
+            label = (item.get("label") or "").strip()
+            value = item.get("value")
+            notes = item.get("notes") or ""
+            if value is None and notes:
+                value = extract_numeric_value(notes)
+                if value is not None:
+                    item["value"] = value
+                unit_match = re.search(r"[a-zA-Z]+/?[a-zA-Z]*", notes)
+                if unit_match and not item.get("unit"):
+                    item["unit"] = unit_match.group(0)
+            if value is None and notes:
+                schedule_info = parse_icp_dose_schedule(notes)
+                if schedule_info.get("total") is not None:
+                    item["value"] = schedule_info["total"]
+                    if not item.get("unit"):
+                        item["unit"] = schedule_info.get("unit")
+            if not label and notes:
+                item["label"] = notes.split(":", 1)[0].strip()
+            if not label and value is None:
+                continue
+            filtered.append(item)
+        recommendations["dose"] = filtered
+
+    return recommendations
+
 def normalize_icp_name(name: str) -> str:
     normalized = normalize_probe_label(name)
-    return ICP_ELEMENT_ALIASES.get(normalized, normalized)
+    if normalized in ICP_ELEMENT_ALIASES:
+        return ICP_ELEMENT_ALIASES[normalized]
+
+    stripped = re.sub(r"\([^)]*\)", "", name).strip()
+    stripped_normalized = normalize_probe_label(stripped)
+    if stripped_normalized in ICP_ELEMENT_ALIASES:
+        return ICP_ELEMENT_ALIASES[stripped_normalized]
+
+    tokens: List[str] = []
+    tokens.extend(re.findall(r"\(([^)]+)\)", name))
+    tokens.append(name)
+    for text in tokens:
+        for token in re.split(r"[\s/,-]+", text):
+            token_normalized = normalize_probe_label(token)
+            if token_normalized in ICP_ELEMENT_ALIASES:
+                return ICP_ELEMENT_ALIASES[token_normalized]
+
+    return ICP_ELEMENT_ALIASES.get(stripped_normalized or normalized, stripped_normalized or normalized)
 
 def map_icp_to_parameters(
     db: sqlite3.Connection,
@@ -1416,6 +1807,10 @@ def map_icp_to_parameters(
 ) -> List[Dict[str, Any]]:
     params = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY name")
     param_lookup = {normalize_probe_label(row_get(p, "name")): row_get(p, "name") for p in params}
+    for param in params:
+        symbol = row_get(param, "chemical_symbol")
+        if symbol:
+            param_lookup[normalize_probe_label(symbol)] = row_get(param, "name")
     mapped: List[Dict[str, Any]] = []
     for row in results:
         raw_name = row.get("name") or ""
@@ -1432,6 +1827,91 @@ def map_icp_to_parameters(
             }
         )
     return mapped
+
+def insert_icp_recommendations(
+    db: sqlite3.Connection,
+    sample_id: int,
+    recommendations: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    rows: List[Tuple[Any, ...]] = []
+    for category, items in recommendations.items():
+        for item in items:
+            label = (item.get("label") or "").strip() or None
+            value = item.get("value")
+            unit = (item.get("unit") or "").strip() or None
+            notes = (item.get("notes") or "").strip() or None
+            severity = (item.get("severity") or "").strip() or None
+            if not label and value is None and not notes:
+                continue
+            rows.append((sample_id, category, label, value, unit, notes, severity))
+    if not rows:
+        return
+    db.executemany(
+        """
+        INSERT INTO icp_recommendations
+        (sample_id, category, label, value, unit, notes, severity)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+
+def parse_icp_notes_range(notes: str) -> Dict[str, Optional[float]]:
+    if not notes:
+        return {"current": None, "target_low": None, "target_high": None, "unit": None}
+    pattern = re.compile(
+        r"(?P<current>-?[\d.,]+)\s*(?P<unit>[a-zA-Zµ/%]+)?\s*/\s*"
+        r"(?P<low>-?[\d.,]+)\s*-\s*(?P<high>-?[\d.,]+)\s*(?P=unit)?",
+        re.IGNORECASE,
+    )
+    match = pattern.search(notes)
+    if not match:
+        return {"current": None, "target_low": None, "target_high": None, "unit": None}
+    current = extract_numeric_value(match.group("current"))
+    low = extract_numeric_value(match.group("low"))
+    high = extract_numeric_value(match.group("high"))
+    unit = match.group("unit")
+    return {"current": current, "target_low": low, "target_high": high, "unit": unit}
+
+def parse_icp_dose_schedule(notes: str) -> Dict[str, Any]:
+    if not notes:
+        return {"days": 1, "doses": [], "total": None, "unit": None}
+    days = 1
+    days_match = re.search(r"over\s+(\d+)\s+days", notes, re.IGNORECASE)
+    if days_match:
+        days = int(days_match.group(1))
+    doses: List[Tuple[int, float]] = []
+    dose_pattern = r"(?:day\s*(\d+)|first day|last day).*?(\d+(?:[.,]\d+)?)\s*(ml|g|mg)"
+    for match in re.finditer(dose_pattern, notes, re.IGNORECASE):
+        day_raw = match.group(1)
+        amount = extract_numeric_value(match.group(2))
+        if amount is None:
+            continue
+        if day_raw:
+            day = int(day_raw)
+        else:
+            text = match.group(0).lower()
+            if "last day" in text:
+                day = days
+            else:
+                day = 1
+        doses.append((day, amount))
+    doses = sorted({day: amount for day, amount in doses}.items())
+    total_match = re.search(r"total[^\\d]*(\\d+(?:[.,]\\d+)?)\\s*(ml|g|mg)", notes, re.IGNORECASE)
+    total = extract_numeric_value(total_match.group(1)) if total_match else None
+    if total is None and doses:
+        total = sum(amount for _, amount in doses)
+    unit_match = re.search(r"\b(ml|g|mg)\b", notes.lower())
+    unit = unit_match.group(1) if unit_match else None
+    if not doses:
+        single_match = re.search(r"corrective dosage of\s*(\d+(?:[.,]\d+)?)\s*(ml|g|mg)", notes, re.IGNORECASE)
+        if single_match:
+            amount = extract_numeric_value(single_match.group(1))
+            if amount is not None:
+                unit = single_match.group(2)
+                doses = [(1, amount)]
+                total = amount
+                days = 1
+    return {"days": days, "doses": doses, "total": total, "unit": unit}
 
 def get_recent_param_values(
     db: sqlite3.Connection,
@@ -1672,13 +2152,65 @@ def fetch_apex_readings(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
     return normalized
 
-def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) -> List[Dict[str, Any]]:
-    if not settings.get("host"):
-        raise ValueError("Apex host is required.")
+def map_apex_readings(settings: Dict[str, Any], readings: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+    mapping_raw = settings.get("mapping") or {}
+    if not mapping_raw:
+        raise ValueError("Apex mapping is required.")
     mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
     if not mapping:
         raise ValueError("Apex mapping is required.")
+    mapped: List[Tuple[str, Dict[str, Any]]] = []
+    for reading in readings:
+        probe_name = str(reading.get("name", "")).strip()
+        if not probe_name:
+            continue
+        param_name = mapping.get(probe_name.lower())
+        if not param_name:
+            continue
+        mapped.append((param_name, reading))
+    if not mapped:
+        raise ValueError("No Apex probes matched the mapping.")
+    return mapped
+
+def normalize_apex_readings(readings: List[Any]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for reading in readings:
+        normalized.append(
+            {
+                "name": reading.name,
+                "value": reading.value,
+                "unit": reading.unit or "",
+                "timestamp": reading.timestamp,
+            }
+        )
+    return normalized
+
+def map_apex_readings_with_mapping(readings: List[Dict[str, Any]], mapping_raw: Dict[str, str]) -> List[Tuple[str, Dict[str, Any]]]:
+    if not mapping_raw:
+        raise ValueError("Apex mapping is required.")
+    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
+    if not mapping:
+        raise ValueError("Apex mapping is required.")
+    mapped: List[Tuple[str, Dict[str, Any]]] = []
+    for reading in readings:
+        probe_name = str(reading.get("name", "")).strip()
+        if not probe_name:
+            continue
+        param_name = mapping.get(probe_name.lower())
+        if not param_name:
+            continue
+        mapped.append((param_name, reading))
+    if not mapped:
+        raise ValueError("No Apex probes matched the mapping.")
+    return mapped
+
+def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) -> List[Dict[str, Any]]:
+    if not settings.get("host"):
+        raise ValueError("Apex host is required.")
     readings = fetch_apex_readings(settings)
+    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
+    if not mapping:
+        raise ValueError("Apex mapping is required.")
     preview: List[Dict[str, Any]] = []
     for reading in readings:
         probe_name = str(reading.get("name", "")).strip()
@@ -1836,34 +2368,27 @@ def should_import_apex_sample(
 def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: Optional[sqlite3.Row]) -> Dict[str, Any]:
     if not settings.get("host"):
         raise ValueError("Apex host is required.")
-    mapping_raw = settings.get("mapping") or {}
-    if not mapping_raw:
-        raise ValueError("Apex mapping is required.")
-    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
-    if not mapping:
-        raise ValueError("Apex mapping is required.")
     readings = fetch_apex_readings(settings)
-    mapped: List[Tuple[str, Dict[str, Any]]] = []
-    for reading in readings:
-        probe_name = str(reading.get("name", "")).strip()
-        if not probe_name:
-            continue
-        param_name = mapping.get(probe_name.lower())
-        if not param_name:
-            continue
-        mapped.append((param_name, reading))
-    if not mapped:
-        raise ValueError("No Apex probes matched the mapping.")
-    tank_id = settings.get("tank_id")
-    if tank_id:
-        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
-    else:
+    mapped = map_apex_readings(settings, readings)
+    return import_apex_sample_from_mapped(db, settings, mapped, user)
+
+def import_apex_sample_from_mapped(
+    db: sqlite3.Connection,
+    settings: Dict[str, Any],
+    mapped: List[Tuple[str, Dict[str, Any]]],
+    user: Optional[sqlite3.Row],
+) -> Dict[str, Any]:
+    tank_ids = []
+    if settings.get("tank_ids"):
+        tank_ids = [int(tid) for tid in settings.get("tank_ids") if str(tid).isdigit()]
+    elif settings.get("tank_id"):
+        tank_ids = [int(settings.get("tank_id"))]
+    if not tank_ids:
         tank = one(db, "SELECT * FROM tanks ORDER BY id LIMIT 1")
-    if not tank:
-        raise ValueError("No tank available to import Apex readings.")
-    should_import, reason = should_import_apex_sample(db, tank["id"], mapped)
-    if not should_import:
-        return {"skipped": True, "reason": reason, "mapped_count": len(mapped)}
+        if not tank:
+            raise ValueError("No tank available to import Apex readings.")
+        tank_ids = [tank["id"]]
+    results = []
     taken_at = None
     for _, reading in mapped:
         dt = parse_dt_any(reading.get("timestamp"))
@@ -1871,32 +2396,45 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
             taken_at = dt
             break
     when_iso = (taken_at or datetime.utcnow()).isoformat()
-    cur = db.cursor()
-    cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank["id"], when_iso, "Imported from Apex"))
-    sample_id = cur.lastrowid
-    for param_name, reading in mapped:
-        value = reading.get("value")
-        if value is None:
+    for tank_id in tank_ids:
+        tank = one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
+        if not tank:
             continue
-        insert_sample_reading(db, sample_id, param_name, float(value), reading.get("unit", ""))
-    db.commit()
-    log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
-    return {"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped), "skipped": False}
+        should_import, reason = should_import_apex_sample(db, tank["id"], mapped)
+        if not should_import:
+            results.append({"tank_id": tank["id"], "skipped": True, "reason": reason})
+            continue
+        cur = db.cursor()
+        cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank["id"], when_iso, "Imported from Apex"))
+        sample_id = cur.lastrowid
+        for param_name, reading in mapped:
+            value = reading.get("value")
+            if value is None:
+                continue
+            insert_sample_reading(db, sample_id, param_name, float(value), reading.get("unit", ""))
+        db.commit()
+        log_audit(db, user, "apex-import", {"tank_id": tank["id"], "sample_id": sample_id})
+        results.append({"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped), "skipped": False})
+    return {"imports": results, "mapped_count": len(mapped)}
 
 def apex_polling_loop() -> None:
     while True:
         db = get_db()
-        settings = get_apex_settings(db)
-        enabled = bool(settings.get("enabled"))
-        interval = int(to_float(settings.get("poll_interval_minutes")) or 15)
-        interval = max(interval, 1)
-        if enabled and settings.get("host") and settings.get("mapping"):
-            try:
-                import_apex_sample(db, settings, None)
-            except Exception as exc:
-                print(f"Apex polling error: {exc}")
+        integrations = get_apex_integrations(db)
+        intervals = []
+        for settings in integrations:
+            enabled = bool(settings.get("enabled"))
+            interval = int(to_float(settings.get("poll_interval_minutes")) or 15)
+            interval = max(interval, 1)
+            intervals.append(interval)
+            if enabled and settings.get("host") and settings.get("mapping"):
+                try:
+                    import_apex_sample(db, settings, None)
+                except Exception as exc:
+                    print(f"Apex polling error: {exc}")
         db.close()
-        time_module.sleep(interval * 60)
+        sleep_minutes = min(intervals) if intervals else 15
+        time_module.sleep(sleep_minutes * 60)
 
 def start_apex_polling() -> None:
     thread = threading.Thread(target=apex_polling_loop, name="apex-poller", daemon=True)
@@ -2247,7 +2785,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS user_tanks (user_id INTEGER NOT NULL, tank_id INTEGER NOT NULL, PRIMARY KEY (user_id, tank_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, trace_solution TEXT, trace_daily_ml REAL, nopox_daily_ml REAL, calcium_reactor_daily_ml REAL, calcium_reactor_effluent_dkh REAL, kalk_solution TEXT, kalk_daily_ml REAL, use_all_in_one INTEGER, use_alk INTEGER, use_ca INTEGER, use_mg INTEGER, use_nitrate INTEGER, use_phosphate INTEGER, use_trace INTEGER, use_nopox INTEGER, use_calcium_reactor INTEGER, use_kalkwasser INTEGER, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, trace_container_ml REAL, trace_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, kalk_container_ml REAL, kalk_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
+        CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, chemical_symbol TEXT, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
         CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, manufacturer_accuracy REAL, min_value REAL, max_value REAL, notes TEXT, workflow_data TEXT, active INTEGER DEFAULT 1);
@@ -2261,6 +2799,8 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_id, endpoint), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS icp_recommendations (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, category TEXT NOT NULL, label TEXT, value REAL, unit TEXT, notes TEXT, severity TEXT, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS icp_dose_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, label TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(sample_id, label), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
     ''')
     ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
     ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
@@ -2275,6 +2815,7 @@ def init_db() -> None:
     ensure_column(db, "users", "google_sub", "ALTER TABLE users ADD COLUMN google_sub TEXT")
     ensure_column(db, "users", "admin", "ALTER TABLE users ADD COLUMN admin INTEGER DEFAULT 0")
     ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
+    ensure_column(db, "parameter_defs", "chemical_symbol", "ALTER TABLE parameter_defs ADD COLUMN chemical_symbol TEXT")
     ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
     ensure_column(db, "additives", "brand", "ALTER TABLE additives ADD COLUMN brand TEXT")
     ensure_column(db, "additives", "group_name", "ALTER TABLE additives ADD COLUMN group_name TEXT")
@@ -2776,6 +3317,7 @@ def logout(request: Request):
 
 @app.get("/account", response_class=HTMLResponse)
 def account_settings(request: Request):
+    db = get_db()
     user = get_current_user(db, request)
     if not user:
         db.close()
@@ -3625,6 +4167,33 @@ def tank_detail(request: Request, tank_id: int):
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
     pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
+
+    latest_sample_ids = {data.get("sample_id") for data in latest_by_param_id.values() if data.get("sample_id")}
+    icp_sample_ids: set[int] = set()
+    if latest_sample_ids:
+        placeholders = ",".join("?" for _id in latest_sample_ids)
+        rows = q(
+            db,
+            f"SELECT id, notes FROM samples WHERE id IN ({placeholders})",
+            tuple(latest_sample_ids),
+        )
+        for row in rows:
+            notes = (row_get(row, "notes") or "").lower()
+            if "imported from icp" in notes:
+                icp_sample_ids.add(row_get(row, "id"))
+
+    core_params = []
+    trace_params = []
+    icp_params = []
+    for param in params:
+        latest = latest_by_param_id.get(param["name"])
+        sample_id = latest.get("sample_id") if latest else None
+        if sample_id and sample_id in icp_sample_ids:
+            icp_params.append(param)
+        elif is_trace_element(param["name"]):
+            trace_params.append(param)
+        else:
+            core_params.append(param)
     
     status_by_param_id = {}
     trend_warning_by_param = {}
@@ -3709,6 +4278,9 @@ def tank_detail(request: Request, tank_id: int):
             "selected_parameter_id": selected_parameter_id,
             "format_value": format_value,
             "low_container_alerts": low_container_alerts,
+            "core_params": core_params,
+            "trace_params": trace_params,
+            "icp_params": icp_params,
         },
     )
 
@@ -5101,7 +5673,16 @@ def sample_detail(request: Request, tank_id: int, sample_id: int):
     for r in get_sample_readings(db, sample_id):
         readings.append({"name": r["name"], "value": r["value"], "unit": (r["unit"] or "")})
     db.close()
-    return templates.TemplateResponse("sample_detail.html", {"request": request, "tank": tank, "sample": s, "readings": readings})
+    return templates.TemplateResponse(
+        "sample_detail.html",
+        {
+            "request": request,
+            "tank": tank,
+            "sample": s,
+            "readings": readings,
+            "recommendations": [],
+        },
+    )
 
 @app.get("/tanks/{tank_id}/samples/{sample_id}/edit", response_class=HTMLResponse)
 def sample_edit(request: Request, tank_id: int, sample_id: int):
@@ -5463,6 +6044,7 @@ def parameter_save(
     request: Request,
     param_id: Optional[str] = Form(None), 
     name: str = Form(...), 
+    chemical_symbol: Optional[str] = Form(None),
     unit: Optional[str] = Form(None), 
     sort_order: Optional[str] = Form(None), 
     max_daily_change: Optional[str] = Form(None), 
@@ -5492,7 +6074,19 @@ def parameter_save(
         db.close()
         return redirect("/settings/parameters")
 
-    data = (clean_name, (unit or "").strip() or None, mdc, interval, order, is_active, dt_low, dt_high, da_low, da_high)
+    data = (
+        clean_name,
+        (chemical_symbol or "").strip() or None,
+        (unit or "").strip() or None,
+        mdc,
+        interval,
+        order,
+        is_active,
+        dt_low,
+        dt_high,
+        da_low,
+        da_high,
+    )
 
     try:
         # 2. Logic for Update/Merge
@@ -5520,7 +6114,7 @@ def parameter_save(
                     cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, existing_id))
                     
@@ -5532,14 +6126,14 @@ def parameter_save(
                             
                     cur.execute("""
                         UPDATE parameter_defs 
-                        SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                             default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                         WHERE id=?""", (*data, pid))
             else:
                 # SIMPLE UPDATE
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET name=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                     WHERE id=?""", (*data, pid))
         
@@ -5549,14 +6143,14 @@ def parameter_save(
             if existing:
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                    SET chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], existing["id"]))
+                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
             else:
                 cur.execute("""
                     INSERT INTO parameter_defs 
-                    (name, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
+                    (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
 
         db.commit()
         
@@ -5650,7 +6244,9 @@ def apex_settings(request: Request):
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
-    settings = get_apex_settings(db)
+    integration_id = request.query_params.get("integration_id") or None
+    settings = get_apex_settings(db, integration_id)
+    integrations = get_apex_integrations(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = list_parameters(db)
     mapping = settings.get("mapping") or {}
@@ -5663,6 +6259,8 @@ def apex_settings(request: Request):
         {
             "request": request,
             "settings": settings,
+            "integrations": integrations,
+            "integration_id": settings.get("id"),
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
@@ -5681,17 +6279,24 @@ async def apex_settings_save(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     host = clean_apex_host(form.get("host") or "")
+    name = (form.get("name") or "").strip()
     username = (form.get("username") or "").strip()
     password = (form.get("password") or "").strip() or settings.get("password", "")
     api_token = (form.get("api_token") or "").strip() or settings.get("api_token", "")
     poll_interval = int(to_float(form.get("poll_interval_minutes")) or 15)
     mapping = build_apex_mapping_from_form(form, settings.get("mapping") or {})
+    tank_ids = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     tank_id = form.get("tank_id")
     settings.update(
         {
+            "id": settings.get("id") or (integration_id or secrets.token_hex(6)),
             "enabled": form.get("enabled") in ("on", "true", "1", True),
+            "name": name or settings.get("name") or "Apex Integration",
             "host": host,
             "username": username,
             "password": password,
@@ -5699,11 +6304,12 @@ async def apex_settings_save(request: Request):
             "poll_interval_minutes": poll_interval,
             "mapping": mapping,
             "tank_id": int(tank_id) if tank_id and str(tank_id).isdigit() else None,
+            "tank_ids": tank_ids,
         }
     )
-    save_apex_settings(db, settings)
+    save_apex_settings(db, settings["id"], settings)
     db.close()
-    return redirect("/settings/integrations/apex?success=Saved Apex settings.")
+    return redirect(f"/settings/integrations/apex?integration_id={settings['id']}&success=Saved Apex settings.")
 
 @app.post("/settings/integrations/apex/test")
 async def apex_settings_test(request: Request):
@@ -5711,7 +6317,10 @@ async def apex_settings_test(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     settings["host"] = clean_apex_host(form.get("host") or "")
     settings["username"] = (form.get("username") or "").strip()
     settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
@@ -5720,28 +6329,149 @@ async def apex_settings_test(request: Request):
         readings = fetch_apex_readings(settings)
         message = f"Connected successfully. Found {len(readings)} probes."
         db.close()
-        return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&success={urllib.parse.quote(message)}")
     except Exception as exc:
         db.close()
-        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&error={urllib.parse.quote(str(exc))}")
 
 @app.post("/settings/integrations/apex/import")
 async def apex_settings_import(request: Request):
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
-    settings = get_apex_settings(db)
+    form = await request.form()
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     try:
         result = import_apex_sample(db, settings, current_user)
-        if result.get("skipped"):
-            message = result.get("reason") or "No changes detected; import skipped."
+        imports = result.get("imports") or []
+        imported = [row for row in imports if not row.get("skipped")]
+        if not imported:
+            message = "No changes detected; import skipped."
         else:
-            message = f"Imported {result['mapped_count']} readings into sample {result['sample_id']}."
+            message = f"Imported {len(imported)} sample(s) from {result.get('mapped_count', 0)} readings."
         db.close()
-        return redirect(f"/settings/integrations/apex?success={urllib.parse.quote(message)}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&success={urllib.parse.quote(message)}")
     except Exception as exc:
         db.close()
-        return redirect(f"/settings/integrations/apex?error={urllib.parse.quote(str(exc))}")
+        return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&error={urllib.parse.quote(str(exc))}")
+
+@app.post("/settings/integrations/apex/client-import")
+async def apex_client_import(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    mapping_override = payload.get("mapping") or None
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        normalized = normalize_apex_readings(readings)
+        if mapping_override:
+            mapped = map_apex_readings_with_mapping(normalized, mapping_override)
+        else:
+            mapped = map_apex_readings(settings, normalized)
+        result = import_apex_sample_from_mapped(db, settings, mapped, current_user)
+        db.close()
+        message = f"Imported {result.get('mapped_count', 0)} readings."
+        return JSONResponse({"success": message, "result": result})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+@app.post("/settings/integrations/apex/client-test")
+async def apex_client_test(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        db.close()
+        return JSONResponse({"success": f"Connected successfully. Found {len(readings)} probes."})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+@app.post("/settings/integrations/apex/client-probes")
+async def apex_client_probes(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        probes = sorted({reading.name for reading in readings if reading.name})
+        settings["last_probe_list"] = probes
+        settings["last_probe_loaded_at"] = datetime.utcnow().isoformat()
+        save_apex_settings(db, settings["id"], settings)
+        db.close()
+        return JSONResponse({"success": f"Loaded {len(probes)} probes.", "probes": probes})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+@app.post("/settings/integrations/apex/client-preview")
+async def apex_client_preview(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    mapping_override = payload.get("mapping") or None
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        normalized = normalize_apex_readings(readings)
+        mapping = mapping_override or settings.get("mapping") or {}
+        mapped = map_apex_readings_with_mapping(normalized, mapping)
+        preview = []
+        for param_name, reading in mapped:
+            preview.append(
+                {
+                    "probe": reading.get("name"),
+                    "parameter": param_name,
+                    "value": reading.get("value"),
+                    "unit": reading.get("unit", ""),
+                    "timestamp": reading.get("timestamp"),
+                }
+            )
+        db.close()
+        return JSONResponse({"success": f"Previewed {len(preview)} mapped probes.", "preview": preview})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
 @app.post("/settings/integrations/apex/probes", response_class=HTMLResponse)
 async def apex_settings_probes(request: Request):
@@ -5749,7 +6479,10 @@ async def apex_settings_probes(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     settings["host"] = clean_apex_host(form.get("host") or "")
     settings["username"] = (form.get("username") or "").strip()
     settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
@@ -5758,6 +6491,7 @@ async def apex_settings_probes(request: Request):
     settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
     tank_id = form.get("tank_id")
     settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
+    settings["tank_ids"] = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     mapping = settings.get("mapping") or {}
     parameters = list_parameters(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
@@ -5768,17 +6502,20 @@ async def apex_settings_probes(request: Request):
         probes = sorted({str(r["name"]) for r in readings if r.get("name")})
         settings["last_probe_list"] = probes
         settings["last_probe_loaded_at"] = datetime.utcnow().isoformat()
-        save_apex_settings(db, settings)
+        save_apex_settings(db, settings["id"], settings)
     except Exception as exc:
         error = str(exc)
     auto_mapping = infer_apex_auto_mapping(probes, parameters)
     last_probe_loaded_at = settings.get("last_probe_loaded_at")
+    integrations = get_apex_integrations(db)
     db.close()
     return templates.TemplateResponse(
         "apex_settings.html",
         {
             "request": request,
             "settings": settings,
+            "integrations": integrations,
+            "integration_id": settings.get("id"),
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
@@ -5797,7 +6534,10 @@ async def apex_settings_preview(request: Request):
     current_user = get_current_user(db, request)
     require_admin(current_user)
     form = await request.form()
-    settings = get_apex_settings(db)
+    integration_id = (form.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    settings = get_apex_settings(db, integration_id)
     settings["host"] = clean_apex_host(form.get("host") or "")
     settings["username"] = (form.get("username") or "").strip()
     settings["password"] = (form.get("password") or "").strip() or settings.get("password", "")
@@ -5806,6 +6546,7 @@ async def apex_settings_preview(request: Request):
     settings["enabled"] = form.get("enabled") in ("on", "true", "1", True)
     tank_id = form.get("tank_id")
     settings["tank_id"] = int(tank_id) if tank_id and str(tank_id).isdigit() else None
+    settings["tank_ids"] = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     parameters = list_parameters(db)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     probes = settings.get("last_probe_list") or []
@@ -5817,12 +6558,15 @@ async def apex_settings_preview(request: Request):
         preview = preview_apex_mapping(settings, mapping or auto_mapping)
     except Exception as exc:
         error = str(exc)
+    integrations = get_apex_integrations(db)
     db.close()
     return templates.TemplateResponse(
         "apex_settings.html",
         {
             "request": request,
             "settings": settings,
+            "integrations": integrations,
+            "integration_id": settings.get("id"),
             "parameters": parameters,
             "probes": probes,
             "mapping": mapping,
@@ -6279,7 +7023,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
     if volume_l is None or strength in (None, 0): error = "Tank volume or additive strength is missing/invalid."
     else:
         volume = float(volume_l) * (float(net_percent) / 100.0)
-        dose_ml = (float(desired_change) / float(strength)) * (volume / 100.0)
+        dose_ml = (float(desired_change) * volume * 1000.0) / float(strength)
         pname = (additive['parameter'] or '').strip()
         pdef = one(db, "SELECT * FROM parameter_defs WHERE name=?", (pname,))
         if not pdef and pname:
@@ -6295,7 +7039,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
             if limit_change is not None and float(limit_change) > 0 and float(desired_change) > float(limit_change):
                 days = int(math.ceil(float(desired_change) / float(limit_change)))
                 daily_change = float(desired_change) / float(days)
-                daily_ml = (daily_change / float(strength)) * (volume / 100.0)
+                daily_ml = (daily_change * volume * 1000.0) / float(strength)
         except Exception: pass
     tanks = get_visible_tanks(db, request)
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
@@ -6318,7 +7062,7 @@ def dose_plan(request: Request):
         check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
     except Exception: check_map = {}
     tanks = get_visible_tanks(db, request)
-    pdefs = q(db, "SELECT name, unit, max_daily_change FROM parameter_defs")
+    pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
     all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
     additives_by_group: Dict[str, List[sqlite3.Row]] = {}
@@ -6344,6 +7088,8 @@ def dose_plan(request: Request):
     top_deficit = None
     plans = []
     grand_total_ml = 0.0
+    latest_icp_by_tank: Dict[int, Dict[str, Any]] = {}
+    icp_sample_ids: List[int] = []
     for t in tanks:
         tank_id = int(t["id"])
         prof = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
@@ -6362,8 +7108,37 @@ def dose_plan(request: Request):
         latest_map = get_latest_per_parameter(db, tank_id)
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
+        icp_sample = one(
+            db,
+            "SELECT id, taken_at FROM samples WHERE tank_id=? AND lower(notes) LIKE ? ORDER BY taken_at DESC LIMIT 1",
+            (tank_id, "%imported from icp%"),
+        )
+        if icp_sample:
+            latest_icp_by_tank[tank_id] = {
+                "id": icp_sample["id"],
+                "taken_at": parse_dt_any(icp_sample["taken_at"]),
+            }
+            icp_sample_ids.append(icp_sample["id"])
 
         targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
+        targets_by_param = {row_get(t, "parameter"): t for t in targets if row_get(t, "parameter")}
+        for pname, pdef in pdef_map.items():
+            if pname in targets_by_param:
+                continue
+            if not is_trace_element(pname):
+                continue
+            default_low = row_get(pdef, "default_target_low")
+            default_high = row_get(pdef, "default_target_high")
+            if default_low is None and default_high is None:
+                continue
+            targets_by_param[pname] = {
+                "parameter": pname,
+                "target_low": default_low,
+                "target_high": default_high,
+                "unit": row_get(pdef, "unit"),
+                "enabled": 1,
+            }
+        targets = list(targets_by_param.values())
         tank_rows = []
         for tr in targets:
             pname = tr["parameter"]
@@ -6445,7 +7220,7 @@ def dose_plan(request: Request):
                 strength = a["strength"]
                 if strength in (None, 0) or eff_vol_l is None: total_ml = None
                 else:
-                    try: total_ml = (float(delta) / float(strength)) * (float(eff_vol_l) / 100.0)
+                    try: total_ml = (float(delta) * float(eff_vol_l) * 1000.0) / float(strength)
                     except Exception: total_ml = None
                 per_day_ml = None if total_ml is None else (float(total_ml) / float(days))
                 schedule = []
@@ -6496,7 +7271,119 @@ def dose_plan(request: Request):
                     try: plan_total_ml += float(_a.get("total_ml") or 0)
                     except Exception: pass
         grand_total_ml += plan_total_ml
-        plans.append({"tank": t, "latest_taken": latest_taken, "eff_vol_l": eff_vol_l, "net_pct": net_pct, "rows": tank_rows, "total_ml": plan_total_ml})
+        icp_info = latest_icp_by_tank.get(tank_id)
+        plans.append(
+            {
+                "tank": t,
+                "latest_taken": latest_taken,
+                "eff_vol_l": eff_vol_l,
+                "net_pct": net_pct,
+                "rows": tank_rows,
+                "total_ml": plan_total_ml,
+                "icp_recommendations": [],
+                "icp_sample": icp_info,
+                "targets_by_param": targets_by_param,
+            }
+        )
+    icp_check_map: Dict[Tuple[int, str], int] = {}
+    if icp_sample_ids:
+        placeholders = ",".join("?" for _ in icp_sample_ids)
+        icp_check_rows = q(
+            db,
+            f"SELECT sample_id, label, checked FROM icp_dose_checks WHERE sample_id IN ({placeholders})",
+            tuple(icp_sample_ids),
+        )
+        icp_check_map = {
+            (row_get(r, "sample_id"), row_get(r, "label")): int(row_get(r, "checked") or 0)
+            for r in icp_check_rows
+        }
+    for plan in plans:
+        icp_info = plan.get("icp_sample")
+        if not icp_info:
+            continue
+        targets_by_param = plan.get("targets_by_param") or {}
+        sample_values = { }
+        for reading in get_sample_readings(db, icp_info["id"]):
+            name = row_get(reading, "name") or ""
+            normalized = normalize_icp_name(name)
+            sample_values[normalized] = {
+                "name": name,
+                "value": row_get(reading, "value"),
+                "unit": row_get(reading, "unit"),
+            }
+        rec_rows = q(
+            db,
+            """
+            SELECT label, value, unit, notes
+            FROM icp_recommendations
+            WHERE sample_id=? AND category='dose'
+            ORDER BY id ASC
+            """,
+            (icp_info["id"],),
+        )
+        for row in rec_rows:
+            label = row_get(row, "label") or "Dose"
+            notes = row_get(row, "notes") or ""
+            range_info = parse_icp_notes_range(notes)
+            schedule_info = parse_icp_dose_schedule(notes)
+            normalized_label = normalize_icp_name(label)
+            matched_reading = sample_values.get(normalized_label)
+            parameter_name = matched_reading["name"] if matched_reading else label
+            current_value = None
+            current_unit = None
+            if matched_reading:
+                current_value = matched_reading["value"]
+                current_unit = matched_reading["unit"]
+            elif range_info["current"] is not None and (range_info["target_low"] is not None or range_info["target_high"] is not None):
+                current_value = range_info["current"]
+                current_unit = range_info["unit"]
+            target_low = None
+            target_high = None
+            target_unit = current_unit or range_info["unit"]
+            target_row = targets_by_param.get(parameter_name) or targets_by_param.get(label)
+            if target_row:
+                target_low = row_get(target_row, "target_low") or row_get(target_row, "low")
+                target_high = row_get(target_row, "target_high") or row_get(target_row, "high")
+                if row_get(target_row, "unit"):
+                    target_unit = row_get(target_row, "unit")
+                elif parameter_name in pdef_map and pdef_map[parameter_name]["unit"]:
+                    target_unit = pdef_map[parameter_name]["unit"]
+            days = schedule_info["days"]
+            total_value = row_get(row, "value")
+            if total_value is None:
+                total_value = schedule_info["total"]
+            per_day_value = None
+            if total_value is not None and days:
+                try:
+                    per_day_value = float(total_value) / float(days)
+                except Exception:
+                    per_day_value = None
+            additive_options = [{"id": a["id"], "name": a["name"]} for a in all_additives]
+            selected_additive_id = None
+            for additive in additive_options:
+                if label.lower() in additive["name"].lower() or additive["name"].lower() in label.lower():
+                    selected_additive_id = additive["id"]
+                    break
+            plan["icp_recommendations"].append(
+                {
+                    "label": label,
+                    "parameter_name": parameter_name,
+                    "value": total_value,
+                    "unit": row_get(row, "unit") or schedule_info["unit"],
+                    "notes": notes,
+                    "current": current_value,
+                    "target_low": range_info["target_low"] if range_info["target_low"] is not None else target_low,
+                    "target_high": range_info["target_high"] if range_info["target_high"] is not None else target_high,
+                    "target_unit": target_unit,
+                    "days": days,
+                    "per_day_value": per_day_value,
+                    "schedule_doses": schedule_info["doses"],
+                    "additives": additive_options,
+                    "selected_additive_id": selected_additive_id,
+                    "checked": icp_check_map.get((icp_info["id"], label), 0),
+                    "sample_id": icp_info["id"],
+                }
+            )
     db.close()
     available_parameters_sorted = sorted(available_parameters, key=lambda s: s.lower())
     dose_plan_summary = {
@@ -6520,6 +7407,7 @@ def dose_plan(request: Request):
 def icp_import(request: Request):
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
     pdf_available = importlib.util.find_spec("PyPDF2") is not None
     db.close()
     return templates.TemplateResponse(
@@ -6527,13 +7415,18 @@ def icp_import(request: Request):
         {
             "request": request,
             "tanks": tanks,
+            "parameters": parameters,
             "mapped": [],
             "mapped_payload": "",
             "raw_count": 0,
+            "raw_preview": [],
+            "raw_results": [],
             "error": request.query_params.get("error"),
             "success": request.query_params.get("success"),
             "selected_tank": "",
             "pdf_available": pdf_available,
+            "recommendations": {"help": [], "dose": []},
+            "recommendations_payload": "",
         },
     )
 
@@ -6545,27 +7438,47 @@ async def icp_preview(request: Request):
     selected_tank = (form.get("tank_id") or "").strip()
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
     pdf_available = importlib.util.find_spec("PyPDF2") is not None
     try:
         if url:
-            content = fetch_triton_html(url)
+            content, meta = fetch_triton_html(url)
             results = parse_triton_html(content)
+            recommendations = {"help": [], "dose": []}
         elif upload and getattr(upload, "filename", ""):
             data = await upload.read()
             filename = upload.filename.lower()
             if filename.endswith(".csv"):
                 results = parse_triton_csv(data)
+                recommendations = {"help": [], "dose": []}
             elif filename.endswith(".pdf"):
                 if not pdf_available:
                     raise ValueError("PDF parsing requires PyPDF2. Install it and rebuild the container.")
                 results = parse_triton_pdf(data)
+                recommendations = {"help": [], "dose": []}
             else:
                 raise ValueError("Unsupported file type. Upload CSV or PDF.")
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
         if not results:
+            if url:
+                summary = summarize_triton_html(content, meta)
+                raise ValueError(
+                    "No ICP values found. Please verify the URL or file. "
+                    f"{summary}."
+                )
             raise ValueError("No ICP values found. Please verify the URL or file.")
         mapped = map_icp_to_parameters(db, results)
+        enhanced_results = []
+        for row in results:
+            raw_name = row.get("name") or ""
+            enhanced_results.append({**row, "normalized": normalize_icp_name(raw_name)})
+        mapped_lookup = {}
+        for row in mapped:
+            source = row.get("source") or ""
+            mapped_lookup[normalize_icp_name(source)] = row.get("parameter")
+        raw_preview = enhanced_results[:10]
+        recommendations_payload = ""
     except Exception as exc:
         db.close()
         return templates.TemplateResponse(
@@ -6573,24 +7486,36 @@ async def icp_preview(request: Request):
             {
                 "request": request,
                 "tanks": tanks,
+                "parameters": parameters,
                 "mapped": [],
-            "mapped_payload": "",
-            "raw_count": 0,
-            "error": str(exc),
-            "success": None,
-            "selected_tank": selected_tank,
-            "pdf_available": pdf_available,
-        },
-    )
+                "mapped_payload": "",
+                "raw_count": 0,
+                "raw_preview": [],
+                "raw_results": [],
+                "mapped_lookup": {},
+                "recommendations": {"help": [], "dose": []},
+                "recommendations_payload": "",
+                "error": str(exc),
+                "success": None,
+                "selected_tank": selected_tank,
+                "pdf_available": pdf_available,
+            },
+        )
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
         {
             "request": request,
             "tanks": tanks,
+            "parameters": parameters,
             "mapped": mapped,
             "mapped_payload": json.dumps(mapped),
             "raw_count": len(results),
+            "raw_preview": raw_preview,
+            "raw_results": enhanced_results,
+            "mapped_lookup": mapped_lookup,
+            "recommendations": recommendations,
+            "recommendations_payload": recommendations_payload,
             "error": None,
             "success": None,
             "selected_tank": selected_tank,
@@ -6603,16 +7528,43 @@ async def icp_import_submit(request: Request):
     form = await request.form()
     tank_id = form.get("tank_id")
     payload = form.get("mapped_payload")
+    recommendations_payload = form.get("recommendations_payload")
     if not tank_id or not payload:
-        return redirect("/tools/icp?error=Missing tank or preview data.")
+        map_count = form.get("map_count")
+        if not map_count:
+            return redirect("/tools/icp?error=Missing tank or preview data.")
     try:
         tank_id_int = int(tank_id)
     except Exception:
         return redirect("/tools/icp?error=Invalid tank selected.")
-    try:
-        mapped = json.loads(payload)
-    except Exception:
-        return redirect("/tools/icp?error=Unable to read preview payload.")
+    mapped: List[Dict[str, Any]] = []
+    if payload:
+        try:
+            mapped = json.loads(payload)
+        except Exception:
+            return redirect("/tools/icp?error=Unable to read preview payload.")
+    else:
+        try:
+            map_count_int = int(map_count or 0)
+        except Exception:
+            return redirect("/tools/icp?error=Invalid mapping data.")
+        for idx in range(map_count_int):
+            param_name = (form.get(f"map_{idx}") or "").strip()
+            if not param_name:
+                continue
+            raw_name = (form.get(f"raw_name_{idx}") or "").strip()
+            raw_value = form.get(f"raw_value_{idx}")
+            raw_unit = (form.get(f"raw_unit_{idx}") or "").strip()
+            if raw_value is None:
+                continue
+            mapped.append(
+                {
+                    "parameter": param_name,
+                    "value": raw_value,
+                    "unit": raw_unit,
+                    "source": raw_name,
+                }
+            )
     db = get_db()
     user = get_current_user(db, request)
     tank = get_tank_for_user(db, user, tank_id_int)
@@ -6676,6 +7628,28 @@ async def dose_plan_check(request: Request):
         elif not checked:
             db.execute("DELETE FROM dose_logs WHERE tank_id=? AND additive_id=? AND logged_at LIKE ? AND reason=?", (tank_id, additive_id, date_like, reason))
     except Exception: pass
+    db.commit()
+    db.close()
+    return {"ok": True, "checked": checked}
+
+@app.post("/tools/icp-dose/check")
+async def icp_dose_check(request: Request):
+    form = await request.form()
+    sample_id_raw = (form.get("sample_id") or "").strip()
+    label = (form.get("label") or "").strip()
+    checked = 1 if str(form.get("checked") or "").lower() in ("1", "true", "on", "yes") else 0
+    try:
+        sample_id = int(sample_id_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid sample id")
+    if not label:
+        raise HTTPException(status_code=400, detail="Missing label")
+    db = get_db()
+    now_iso = datetime.utcnow().isoformat()
+    db.execute(
+        "INSERT INTO icp_dose_checks (sample_id, label, checked, checked_at) VALUES (?, ?, ?, ?) ON CONFLICT(sample_id, label) DO UPDATE SET checked=excluded.checked, checked_at=excluded.checked_at",
+        (sample_id, label, checked, now_iso),
+    )
     db.commit()
     db.close()
     return {"ok": True, "checked": checked}

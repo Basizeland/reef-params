@@ -36,7 +36,12 @@
                 <div class="d-flex justify-content-between align-items-start gap-2">
                   <div>
                     <div class="fw-semibold">{{ p.name }}</div>
-                    <div class="text-muted small">{{ p.unit or "Unit not set" }}</div>
+                    <div class="text-muted small">
+                      {{ p.unit or "Unit not set" }}
+                      {% if p.chemical_symbol %}
+                        <span class="ms-2 text-uppercase">({{ p.chemical_symbol }})</span>
+                      {% endif %}
+                    </div>
                   </div>
                   <a href="/settings/parameters/{{ p.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
                 </div>

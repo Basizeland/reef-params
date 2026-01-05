@@ -19,18 +19,35 @@
     <form class="mt-4" method="post" action="/settings/integrations/apex/save">
       <div class="row g-3">
         <div class="col-md-6">
+          <label class="form-label">Integration</label>
+          <select class="form-select" name="integration_id">
+            {% for integration in integrations %}
+              <option value="{{ integration.id }}" {% if integration_id == integration.id %}selected{% endif %}>
+                {{ integration.name or integration.host or ("Integration " ~ loop.index) }}
+              </option>
+            {% endfor %}
+            <option value="new">+ New integration</option>
+          </select>
+          <div class="form-text">Create one integration per Apex or share a single Apex across tanks.</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Integration Name</label>
+          <input class="form-control" name="name" value="{{ settings.name }}" placeholder="e.g. Apex Living Room" />
+        </div>
+        <div class="col-md-6">
           <label class="form-label">Apex Base URL</label>
           <input class="form-control" name="host" value="{{ settings.host }}" placeholder="http://192.168.1.50" />
           <div class="form-text">Use the local IP of your Apex controller.</div>
         </div>
         <div class="col-md-6">
-          <label class="form-label">Tank</label>
-          <select class="form-select" name="tank_id">
-            <option value="">Select a tank</option>
+          <label class="form-label">Tanks</label>
+          <select class="form-select" name="tank_ids" multiple>
             {% for tank in tanks %}
-              <option value="{{ tank.id }}" {% if settings.tank_id == tank.id %}selected{% endif %}>{{ tank.name }}</option>
+              {% set is_selected = (tank.id in settings.tank_ids) or (settings.tank_id == tank.id) %}
+              <option value="{{ tank.id }}" {% if is_selected %}selected{% endif %}>{{ tank.name }}</option>
             {% endfor %}
           </select>
+          <div class="form-text">Select one or more tanks to import readings into.</div>
         </div>
         <div class="col-md-4">
           <label class="form-label">Username</label>
@@ -51,7 +68,12 @@
         <div class="col-md-3 d-flex align-items-end">
           <div class="form-check">
             <input class="form-check-input" type="checkbox" name="enabled" id="apex-enabled" {% if settings.enabled %}checked{% endif %} />
-            <label class="form-check-label" for="apex-enabled">Enable integration</label>
+            <label class="form-check-label" for="apex-enabled">Enable server polling</label>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="form-text">
+            Server polling requires the Apex to be reachable from this server. Leave off for browser-based imports.
           </div>
         </div>
         <div class="col-12">
@@ -135,9 +157,267 @@
       </div>
     {% endif %}
 
+    <div class="mt-4 d-none" id="apex-browser-preview">
+      <h3 class="h6 text-uppercase text-muted">Browser Preview</h3>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Probe</th>
+              <th>Parameter</th>
+              <th>Value</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
     <form class="mt-4" method="post" action="/settings/integrations/apex/import">
-      <button class="btn btn-outline-primary" type="submit">Import Now</button>
+      <input type="hidden" name="integration_id" value="{{ integration_id }}">
+      <button class="btn btn-outline-primary" type="submit">Import Now (Server)</button>
+      <button class="btn btn-outline-secondary" type="button" id="apex-client-import" data-integration-id="{{ integration_id }}">
+        Import via Browser
+      </button>
     </form>
+
+    <div class="card border-0 bg-light mt-3">
+      <div class="card-body">
+        <h3 class="h6 text-uppercase text-muted mb-2">Browser import tools</h3>
+        <div class="text-muted small mb-3">
+          If the Apex is only reachable from your browser network, paste the Apex payload here and use the buttons below.
+        </div>
+        <textarea class="form-control" id="apex-browser-payload" rows="6" placeholder="Paste Apex status payload (XML or JSON)"></textarea>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button class="btn btn-outline-secondary" type="button" data-apex-action="test">Test via Browser</button>
+          <button class="btn btn-outline-secondary" type="button" data-apex-action="probes">Load Probes via Browser</button>
+          <button class="btn btn-outline-secondary" type="button" data-apex-action="preview">Preview via Browser</button>
+          <button class="btn btn-outline-primary" type="button" data-apex-action="import">Import Payload</button>
+        </div>
+        <div class="form-text mt-2">
+          Tip: Open your Apex status URL in a new tab and copy the response if the browser fetch fails due to CORS.
+        </div>
+      </div>
+    </div>
   </div>
 </div>
+
+<div class="apex-loading d-none align-items-center justify-content-center" id="apex-loading-overlay">
+  <div class="text-center">
+    <div class="spinner-border text-primary" role="status">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <div class="mt-3 fw-semibold">Working on Apex integration…</div>
+  </div>
+</div>
+
+<style>
+  .apex-loading {
+    position: fixed;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.85);
+    z-index: 1050;
+  }
+</style>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const overlay = document.getElementById("apex-loading-overlay");
+    const forms = document.querySelectorAll("form[action^='/settings/integrations/apex']");
+    forms.forEach((form) => {
+      form.addEventListener("submit", () => {
+        if (overlay) {
+          overlay.classList.remove("d-none");
+          overlay.classList.add("d-flex");
+        }
+        const buttons = form.querySelectorAll("button, input[type='submit']");
+        buttons.forEach((button) => button.setAttribute("disabled", "disabled"));
+      });
+    });
+  });
+</script>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const button = document.getElementById("apex-client-import");
+    const overlay = document.getElementById("apex-loading-overlay");
+    const hostInput = document.querySelector("input[name='host']");
+    const payloadInput = document.getElementById("apex-browser-payload");
+    if (!button || !hostInput) return;
+
+    const showOverlay = () => {
+      if (!overlay) return;
+      overlay.classList.remove("d-none");
+      overlay.classList.add("d-flex");
+    };
+
+    const buildUrls = (rawHost) => {
+      const trimmed = (rawHost || "").trim();
+      if (!trimmed) return [];
+      const endpoints = ["/cgi-bin/status.xml", "/rest/status", "/rest/status.json", "/rest/"];
+      if (trimmed.includes("://")) {
+        try {
+          const url = new URL(trimmed);
+          if (url.pathname && url.pathname !== "/") {
+            return [url.toString()];
+          }
+          return endpoints.map((endpoint) => `${url.origin}${endpoint}`);
+        } catch (err) {
+          return [];
+        }
+      }
+      if (trimmed.includes("/")) {
+        const [hostOnly, ...pathParts] = trimmed.split("/");
+        const path = `/${pathParts.join("/")}`;
+        return [`http://${hostOnly}${path}`, `https://${hostOnly}${path}`];
+      }
+      return [
+        ...endpoints.map((endpoint) => `http://${trimmed}${endpoint}`),
+        ...endpoints.map((endpoint) => `https://${trimmed}${endpoint}`),
+      ];
+    };
+
+    const fetchPayload = async (rawHost) => {
+      const urls = buildUrls(rawHost);
+      let lastError = null;
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, { cache: "no-store", credentials: "omit" });
+          if (!response.ok) {
+            lastError = new Error(`Request failed (${response.status})`);
+            continue;
+          }
+          const text = await response.text();
+          if (text) {
+            return { payload: text, source: url };
+          }
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError || new Error("Unable to reach Apex from the browser.");
+    };
+
+    const postClientAction = async (action, payloadText, mapping) => {
+      const endpointMap = {
+        import: "/settings/integrations/apex/client-import",
+        test: "/settings/integrations/apex/client-test",
+        probes: "/settings/integrations/apex/client-probes",
+        preview: "/settings/integrations/apex/client-preview",
+      };
+      const endpoint = endpointMap[action];
+      if (!endpoint) {
+        throw new Error("Unknown browser action.");
+      }
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          integration_id: button.dataset.integrationId || "",
+          payload: payloadText,
+          mapping,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Browser action failed.");
+      }
+      return data;
+    };
+
+    const collectMapping = () => {
+      const mapping = {};
+      const probeInputs = Array.from(document.querySelectorAll("input[name='probe_name']"));
+      const paramSelects = Array.from(document.querySelectorAll("select[name='param_name']"));
+      probeInputs.forEach((input, index) => {
+        const probe = input.value;
+        const select = paramSelects[index];
+        const param = select ? select.value : "";
+        if (probe && param) {
+          mapping[probe] = param;
+        }
+      });
+      return mapping;
+    };
+
+    button.addEventListener("click", async () => {
+      const host = hostInput.value;
+      if (!host) {
+        alert("Enter the Apex host before importing.");
+        return;
+      }
+      showOverlay();
+      button.setAttribute("disabled", "disabled");
+      try {
+        const payload = await fetchPayload(host);
+        if (payloadInput) {
+          payloadInput.value = payload.payload;
+        }
+        const data = await postClientAction("import", payload.payload, collectMapping());
+        alert(data.success || "Imported Apex readings.");
+        window.location.reload();
+      } catch (err) {
+        alert(err?.message || "Unable to import from Apex via browser. Paste the payload below and use Import Payload.");
+        if (payloadInput) {
+          payloadInput.focus();
+        }
+      } finally {
+        button.removeAttribute("disabled");
+        if (overlay) {
+          overlay.classList.add("d-none");
+          overlay.classList.remove("d-flex");
+        }
+      }
+    });
+
+    const actionButtons = Array.from(document.querySelectorAll("[data-apex-action]"));
+    actionButtons.forEach((actionButton) => {
+      actionButton.addEventListener("click", async () => {
+        const payloadText = payloadInput ? payloadInput.value.trim() : "";
+        if (!payloadText) {
+          alert("Paste the Apex payload before running a browser action.");
+          return;
+        }
+        const action = actionButton.dataset.apexAction;
+        showOverlay();
+        actionButton.setAttribute("disabled", "disabled");
+        try {
+          const data = await postClientAction(action, payloadText, collectMapping());
+          if (data.preview && Array.isArray(data.preview)) {
+            const previewWrap = document.getElementById("apex-browser-preview");
+            if (previewWrap) {
+              const tbody = previewWrap.querySelector("tbody");
+              if (tbody) {
+                tbody.innerHTML = "";
+                data.preview.forEach((row) => {
+                  const tr = document.createElement("tr");
+                  tr.innerHTML = `
+                    <td class="fw-semibold">${row.probe || ""}</td>
+                    <td>${row.parameter || ""}</td>
+                    <td>${row.value ?? ""} ${row.unit || ""}</td>
+                    <td class="text-muted small">${row.timestamp || ""}</td>
+                  `;
+                  tbody.appendChild(tr);
+                });
+              }
+              previewWrap.classList.remove("d-none");
+            }
+            return;
+          }
+          alert(data.success || "Browser action completed.");
+          window.location.reload();
+        } catch (err) {
+          alert(err?.message || "Browser action failed.");
+        } finally {
+          actionButton.removeAttribute("disabled");
+          if (overlay) {
+            overlay.classList.add("d-none");
+            overlay.classList.remove("d-flex");
+          }
+        }
+      });
+    });
+  });
+</script>
 {% endblock %}
