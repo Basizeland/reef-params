@@ -540,7 +540,7 @@
   </section>
 {% endif %}
 
-{% macro render_latest(title, param_list, show_hint=True) %}
+{% macro render_latest(title, param_list, show_hint=True, value_map=latest_vals) %}
   <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
     <h4 class="mb-0 h5 fw-bold">{{ title }}</h4>
     {% if show_hint %}
@@ -549,7 +549,7 @@
   </div>
   <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
   {% for p in param_list %}
-    {% set p_data = latest_vals.get(p.id) %}
+    {% set p_data = value_map.get(p.id) %}
     {% set val = p_data.value if p_data else None %}
     {% set taken_at = p_data.taken_at if p_data else None %}
     {% set sample_id = p_data.sample_id if p_data else None %}
@@ -619,8 +619,17 @@
 {% macro render_icp_grouped(groups) %}
   <div class="card shadow-sm mb-5 icp-compact-card">
     <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <h4 class="mb-0 h5 fw-bold">ICP Results</h4>
-      <span class="text-muted small">Grouped by Triton categories.</span>
+      <div>
+        <h4 class="mb-0 h5 fw-bold">ICP Results</h4>
+        {% if latest_icp_taken_at %}
+          <div class="text-muted small">Latest ICP import {{ latest_icp_taken_at|time_ago }} ({{ latest_icp_taken_at|dtfmt }})</div>
+        {% else %}
+          <div class="text-muted small">Grouped by Triton categories.</div>
+        {% endif %}
+      </div>
+      {% if latest_icp_taken_at %}
+        <span class="text-muted small">Grouped by Triton categories.</span>
+      {% endif %}
     </div>
     <div class="card-body">
       {% for group in groups %}
@@ -693,7 +702,7 @@
 {% endif %}
 
 <section data-section-id="latest-readings" data-section-label="Latest Readings">
-  {{ render_latest("Latest Readings", core_params) }}
+  {{ render_latest("Latest Readings", core_params, True, latest_manual_vals) }}
 </section>
 
 {% if trace_params %}

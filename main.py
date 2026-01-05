@@ -2748,6 +2748,39 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
     
     return latest_map
 
+def get_latest_non_icp_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
+    latest_map: Dict[str, Dict[str, Any]] = {}
+    mode = values_mode(db)
+    if mode == "sample_values":
+        rows = q(db, """
+            SELECT pd.name, sv.value, s.taken_at, s.id AS sample_id
+            FROM sample_values sv
+            JOIN samples s ON s.id = sv.sample_id
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE s.tank_id=?
+              AND (s.notes IS NULL OR lower(s.notes) NOT LIKE '%imported from icp%')
+            ORDER BY s.taken_at DESC, s.id DESC
+        """, (tank_id,))
+    else:
+        rows = q(db, """
+            SELECT p.name, p.value, s.taken_at, s.id AS sample_id
+            FROM parameters p
+            JOIN samples s ON s.id = p.sample_id
+            WHERE s.tank_id=?
+              AND (s.notes IS NULL OR lower(s.notes) NOT LIKE '%imported from icp%')
+            ORDER BY s.taken_at DESC, s.id DESC
+        """, (tank_id,))
+
+    for r in rows:
+        name = r["name"]
+        if name not in latest_map:
+            latest_map[name] = {
+                "value": r["value"],
+                "taken_at": parse_dt_any(r["taken_at"]),
+                "sample_id": r["sample_id"],
+            }
+    return latest_map
+
 def get_latest_and_previous_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
     latest_map: Dict[str, Dict[str, Any]] = {}
     mode = values_mode(db)
@@ -4312,6 +4345,7 @@ def tank_detail(request: Request, tank_id: int):
     ]
     
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
+    latest_manual_by_param_id = get_latest_non_icp_per_parameter(db, tank_id)
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
     pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
@@ -4329,6 +4363,15 @@ def tank_detail(request: Request, tank_id: int):
             notes = (row_get(row, "notes") or "").lower()
             if "imported from icp" in notes:
                 icp_sample_ids.add(row_get(row, "id"))
+    latest_icp_taken_at = None
+    if icp_sample_ids:
+        placeholders = ",".join("?" for _id in icp_sample_ids)
+        latest_icp_row = one(
+            db,
+            f"SELECT MAX(taken_at) AS taken_at FROM samples WHERE id IN ({placeholders})",
+            tuple(icp_sample_ids),
+        )
+        latest_icp_taken_at = parse_dt_any(row_get(latest_icp_row, "taken_at")) if latest_icp_row else None
 
     core_params = []
     trace_params = []
@@ -4412,6 +4455,7 @@ def tank_detail(request: Request, tank_id: int):
             "recent_samples": recent_samples,
             "sample_values": sample_values,
             "latest_vals": latest_by_param_id,
+            "latest_manual_vals": latest_manual_by_param_id,
             "status_by_param_id": status_by_param_id,
             "trend_warning_by_param": trend_warning_by_param,
             "trend_alert_params": trend_alert_params,
@@ -4431,6 +4475,7 @@ def tank_detail(request: Request, tank_id: int):
             "icp_params": icp_params,
             "icp_grouped_params": build_parameter_groups(icp_params),
             "trace_param_names": [row_get(p, "name") for p in params if is_trace_element(row_get(p, "name"))],
+            "latest_icp_taken_at": latest_icp_taken_at,
         },
     )
 
