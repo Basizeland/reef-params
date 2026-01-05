@@ -68,7 +68,12 @@
         <div class="col-md-3 d-flex align-items-end">
           <div class="form-check">
             <input class="form-check-input" type="checkbox" name="enabled" id="apex-enabled" {% if settings.enabled %}checked{% endif %} />
-            <label class="form-check-label" for="apex-enabled">Enable integration</label>
+            <label class="form-check-label" for="apex-enabled">Enable server polling</label>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="form-text">
+            Server polling requires the Apex to be reachable from this server. Leave off for browser-based imports.
           </div>
         </div>
         <div class="col-12">
@@ -154,7 +159,10 @@
 
     <form class="mt-4" method="post" action="/settings/integrations/apex/import">
       <input type="hidden" name="integration_id" value="{{ integration_id }}">
-      <button class="btn btn-outline-primary" type="submit">Import Now</button>
+      <button class="btn btn-outline-primary" type="submit">Import Now (Server)</button>
+      <button class="btn btn-outline-secondary" type="button" id="apex-client-import" data-integration-id="{{ integration_id }}">
+        Import via Browser
+      </button>
     </form>
   </div>
 </div>
@@ -190,6 +198,103 @@
         const buttons = form.querySelectorAll("button, input[type='submit']");
         buttons.forEach((button) => button.setAttribute("disabled", "disabled"));
       });
+    });
+  });
+</script>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const button = document.getElementById("apex-client-import");
+    const overlay = document.getElementById("apex-loading-overlay");
+    const hostInput = document.querySelector("input[name='host']");
+    if (!button || !hostInput) return;
+
+    const showOverlay = () => {
+      if (!overlay) return;
+      overlay.classList.remove("d-none");
+      overlay.classList.add("d-flex");
+    };
+
+    const buildUrls = (rawHost) => {
+      const trimmed = (rawHost || "").trim();
+      if (!trimmed) return [];
+      const endpoints = ["/cgi-bin/status.xml", "/rest/status", "/rest/status.json", "/rest/"];
+      if (trimmed.includes("://")) {
+        try {
+          const url = new URL(trimmed);
+          if (url.pathname && url.pathname !== "/") {
+            return [url.toString()];
+          }
+          return endpoints.map((endpoint) => `${url.origin}${endpoint}`);
+        } catch (err) {
+          return [];
+        }
+      }
+      if (trimmed.includes("/")) {
+        const [hostOnly, ...pathParts] = trimmed.split("/");
+        const path = `/${pathParts.join("/")}`;
+        return [`http://${hostOnly}${path}`, `https://${hostOnly}${path}`];
+      }
+      return [
+        ...endpoints.map((endpoint) => `http://${trimmed}${endpoint}`),
+        ...endpoints.map((endpoint) => `https://${trimmed}${endpoint}`),
+      ];
+    };
+
+    const fetchPayload = async (rawHost) => {
+      const urls = buildUrls(rawHost);
+      let lastError = null;
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, { cache: "no-store", credentials: "omit" });
+          if (!response.ok) {
+            lastError = new Error(`Request failed (${response.status})`);
+            continue;
+          }
+          const text = await response.text();
+          if (text) {
+            return { payload: text, source: url };
+          }
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError || new Error("Unable to reach Apex from the browser.");
+    };
+
+    button.addEventListener("click", async () => {
+      const host = hostInput.value;
+      if (!host) {
+        alert("Enter the Apex host before importing.");
+        return;
+      }
+      showOverlay();
+      button.setAttribute("disabled", "disabled");
+      try {
+        const payload = await fetchPayload(host);
+        const response = await fetch("/settings/integrations/apex/client-import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            integration_id: button.dataset.integrationId || "",
+            payload: payload.payload,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Client import failed.");
+        }
+        alert(data.success || "Imported Apex readings.");
+        window.location.reload();
+      } catch (err) {
+        alert(err?.message || "Unable to import from Apex via browser.");
+      } finally {
+        button.removeAttribute("disabled");
+        if (overlay) {
+          overlay.classList.add("d-none");
+          overlay.classList.remove("d-flex");
+        }
+      }
     });
   });
 </script>

@@ -225,11 +225,28 @@ def _add_cache_buster(url: str) -> str:
     return urllib.parse.urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
 
-def _parse_payload(content: str) -> Any:
+def parse_apex_payload(content: str) -> Any:
     try:
         return json.loads(content)
     except json.JSONDecodeError:
         return _parse_xml_payload(content)
+
+
+def readings_from_payload(content: str) -> List[ApexReading]:
+    payload = parse_apex_payload(content)
+    probes = _extract_probe_list(payload)
+    readings: List[ApexReading] = []
+    for probe in probes:
+        reading = _parse_probe(probe)
+        if reading:
+            readings.append(reading)
+    if not readings:
+        raise ValueError("No probe readings found in Apex response")
+    return readings
+
+
+def _parse_payload(content: str) -> Any:
+    return parse_apex_payload(content)
 
 
 def _parse_xml_payload(content: str) -> Dict[str, Any]:

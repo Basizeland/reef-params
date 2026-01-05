@@ -21,7 +21,7 @@ from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from integrations.apex import ApexClient
+from integrations.apex import ApexClient, readings_from_payload
 from html.parser import HTMLParser
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
@@ -2152,13 +2152,33 @@ def fetch_apex_readings(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
     return normalized
 
-def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) -> List[Dict[str, Any]]:
-    if not settings.get("host"):
-        raise ValueError("Apex host is required.")
+def map_apex_readings(settings: Dict[str, Any], readings: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+    mapping_raw = settings.get("mapping") or {}
+    if not mapping_raw:
+        raise ValueError("Apex mapping is required.")
     mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
     if not mapping:
         raise ValueError("Apex mapping is required.")
+    mapped: List[Tuple[str, Dict[str, Any]]] = []
+    for reading in readings:
+        probe_name = str(reading.get("name", "")).strip()
+        if not probe_name:
+            continue
+        param_name = mapping.get(probe_name.lower())
+        if not param_name:
+            continue
+        mapped.append((param_name, reading))
+    if not mapped:
+        raise ValueError("No Apex probes matched the mapping.")
+    return mapped
+
+def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) -> List[Dict[str, Any]]:
+    if not settings.get("host"):
+        raise ValueError("Apex host is required.")
     readings = fetch_apex_readings(settings)
+    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
+    if not mapping:
+        raise ValueError("Apex mapping is required.")
     preview: List[Dict[str, Any]] = []
     for reading in readings:
         probe_name = str(reading.get("name", "")).strip()
@@ -2316,24 +2336,16 @@ def should_import_apex_sample(
 def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: Optional[sqlite3.Row]) -> Dict[str, Any]:
     if not settings.get("host"):
         raise ValueError("Apex host is required.")
-    mapping_raw = settings.get("mapping") or {}
-    if not mapping_raw:
-        raise ValueError("Apex mapping is required.")
-    mapping = {str(k).strip().lower(): str(v).strip() for k, v in mapping_raw.items() if k and v}
-    if not mapping:
-        raise ValueError("Apex mapping is required.")
     readings = fetch_apex_readings(settings)
-    mapped: List[Tuple[str, Dict[str, Any]]] = []
-    for reading in readings:
-        probe_name = str(reading.get("name", "")).strip()
-        if not probe_name:
-            continue
-        param_name = mapping.get(probe_name.lower())
-        if not param_name:
-            continue
-        mapped.append((param_name, reading))
-    if not mapped:
-        raise ValueError("No Apex probes matched the mapping.")
+    mapped = map_apex_readings(settings, readings)
+    return import_apex_sample_from_mapped(db, settings, mapped, user)
+
+def import_apex_sample_from_mapped(
+    db: sqlite3.Connection,
+    settings: Dict[str, Any],
+    mapped: List[Tuple[str, Dict[str, Any]]],
+    user: Optional[sqlite3.Row],
+) -> Dict[str, Any]:
     tank_ids = []
     if settings.get("tank_ids"):
         tank_ids = [int(tid) for tid in settings.get("tank_ids") if str(tid).isdigit()]
@@ -6313,6 +6325,41 @@ async def apex_settings_import(request: Request):
     except Exception as exc:
         db.close()
         return redirect(f"/settings/integrations/apex?integration_id={settings.get('id')}&error={urllib.parse.quote(str(exc))}")
+
+@app.post("/settings/integrations/apex/client-import")
+async def apex_client_import(request: Request):
+    payload = await request.json()
+    integration_id = (payload.get("integration_id") or "").strip() or None
+    if integration_id == "new":
+        integration_id = None
+    content = payload.get("payload") or ""
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    settings = get_apex_settings(db, integration_id)
+    if not content:
+        db.close()
+        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+    try:
+        readings = readings_from_payload(content)
+        normalized = []
+        for reading in readings:
+            normalized.append(
+                {
+                    "name": reading.name,
+                    "value": reading.value,
+                    "unit": reading.unit or "",
+                    "timestamp": reading.timestamp,
+                }
+            )
+        mapped = map_apex_readings(settings, normalized)
+        result = import_apex_sample_from_mapped(db, settings, mapped, current_user)
+        db.close()
+        message = f"Imported {result.get('mapped_count', 0)} readings."
+        return JSONResponse({"success": message, "result": result})
+    except Exception as exc:
+        db.close()
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
 @app.post("/settings/integrations/apex/probes", response_class=HTMLResponse)
 async def apex_settings_probes(request: Request):
