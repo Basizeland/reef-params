@@ -2977,68 +2977,6 @@ def init_db() -> None:
             WHERE name=? AND default_target_low IS NULL
         """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
 
-    # MIGRATION: Normalize parameter names to canonical defaults
-    cur.execute("PRAGMA foreign_keys = OFF;")
-    db.commit()
-    param_rows = q(db, "SELECT id, name FROM parameter_defs")
-    for row in param_rows:
-        old_name = row["name"]
-        canonical_name = normalize_param_name(old_name)
-        if canonical_name == old_name:
-            continue
-        existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (canonical_name,))
-        existing_id = existing["id"] if existing else None
-        if existing_id and existing_id != row["id"]:
-            if table_exists(db, "sample_values"):
-                cur.execute(
-                    """
-                    DELETE FROM sample_values
-                    WHERE parameter_id=?
-                      AND EXISTS (
-                          SELECT 1 FROM sample_values sv2
-                          WHERE sv2.sample_id=sample_values.sample_id
-                            AND sv2.parameter_id=?
-                      )
-                    """,
-                    (row["id"], existing_id),
-                )
-                cur.execute(
-                    "UPDATE sample_values SET parameter_id=? WHERE parameter_id=?",
-                    (existing_id, row["id"]),
-                )
-            if table_exists(db, "sample_value_kits"):
-                cur.execute(
-                    """
-                    DELETE FROM sample_value_kits
-                    WHERE parameter_id=?
-                      AND EXISTS (
-                          SELECT 1 FROM sample_value_kits svk2
-                          WHERE svk2.sample_id=sample_value_kits.sample_id
-                            AND svk2.parameter_id=?
-                      )
-                    """,
-                    (row["id"], existing_id),
-                )
-                cur.execute(
-                    "UPDATE sample_value_kits SET parameter_id=? WHERE parameter_id=?",
-                    (existing_id, row["id"]),
-                )
-            cur.execute("DELETE FROM parameter_defs WHERE id=?", (row["id"],))
-        else:
-            cur.execute("UPDATE parameter_defs SET name=? WHERE id=?", (canonical_name, row["id"]))
-        for tbl, col in (
-            ("parameters", "name"),
-            ("targets", "parameter"),
-            ("additives", "parameter"),
-            ("test_kits", "parameter"),
-            ("dosing_entries", "parameter"),
-            ("dose_plan_checks", "parameter"),
-        ):
-            if table_exists(db, tbl):
-                cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (canonical_name, old_name))
-    db.commit()
-    cur.execute("PRAGMA foreign_keys = ON;")
-
     # Seed common additives if missing (strength = change per 1 mL / 100 L)
     default_additives = [
         ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend.", "All-in-one solutions"),
