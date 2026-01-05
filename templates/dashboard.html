@@ -226,6 +226,7 @@
           <p class="text-muted small mb-3">Select the parameters you want to show in each tank card.</p>
           <div class="row g-2">
             {% for group in dashboard_parameter_groups %}
+              {% set group_index = loop.index %}
               <div class="col-12">
                 <div class="text-uppercase text-muted small fw-semibold mb-1">{{ group.name }}</div>
               </div>
@@ -238,10 +239,10 @@
                       type="checkbox"
                       name="dashboard_params"
                       value="{{ param_name }}"
-                      id="dashboard-param-{{ loop.parent.index }}-{{ loop.index }}"
+                      id="dashboard-param-{{ group_index }}-{{ loop.index }}"
                       {% if param_name in selected_dashboard_parameters %}checked{% endif %}
                     >
-                    <label class="form-check-label" for="dashboard-param-{{ loop.parent.index }}-{{ loop.index }}">
+                    <label class="form-check-label" for="dashboard-param-{{ group_index }}-{{ loop.index }}">
                       {{ param_name }}
                     </label>
                   </div>
