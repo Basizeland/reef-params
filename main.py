@@ -2304,6 +2304,8 @@ def get_sample_readings(db: sqlite3.Connection, sample_id: int) -> List[sqlite3.
 
 def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
     cur = db.cursor()
+    if pname:
+        pname = normalize_param_name(pname)
     mode = values_mode(db)
     if mode == "sample_values":
         pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
