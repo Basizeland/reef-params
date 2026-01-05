@@ -88,6 +88,11 @@
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/targets"><i class="bi bi-bullseye"></i> Targets</a></li>
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/profile"><i class="bi bi-pencil-square"></i> Edit Tank</a></li>
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/export"><i class="bi bi-file-earmark-spreadsheet"></i> Export Excel</a></li>
+        <li>
+          <button class="dropdown-item" type="button" data-bs-toggle="modal" data-bs-target="#reorderSectionsModal">
+            <i class="bi bi-list"></i> Reorder Sections
+          </button>
+        </li>
         <li><hr class="dropdown-divider"></li>
         <li>
              <form method="post" action="/tanks/{{ tank.id }}/delete" onsubmit="return confirm('Really delete?');" class="d-inline">
@@ -96,9 +101,6 @@
         </li>
       </ul>
     </div>
-    <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#reorderSectionsModal">
-      <i class="bi bi-list"></i> Reorder Sections
-    </button>
   </div>
 </div>
 

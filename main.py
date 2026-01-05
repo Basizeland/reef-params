@@ -4346,6 +4346,9 @@ def tank_detail(request: Request, tank_id: int):
     
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
     latest_manual_by_param_id = get_latest_non_icp_per_parameter(db, tank_id)
+    latest_display_by_param_id = dict(latest_by_param_id)
+    for name, data in latest_manual_by_param_id.items():
+        latest_display_by_param_id[name] = data
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
     pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
@@ -4455,7 +4458,7 @@ def tank_detail(request: Request, tank_id: int):
             "recent_samples": recent_samples,
             "sample_values": sample_values,
             "latest_vals": latest_by_param_id,
-            "latest_manual_vals": latest_manual_by_param_id,
+            "latest_manual_vals": latest_display_by_param_id,
             "status_by_param_id": status_by_param_id,
             "trend_warning_by_param": trend_warning_by_param,
             "trend_alert_params": trend_alert_params,
