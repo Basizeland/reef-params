@@ -70,14 +70,23 @@
   </div>
 {% endif %}
 
+{% if success %}
+  <div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
 <div class="d-flex align-items-center justify-content-between mb-4">
   <div>
     <h2 class="h5 mb-1">Tank overview</h2>
     <div class="text-muted small">Latest readings per tank</div>
   </div>
-  <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
-    <i class="bi bi-arrow-down-up"></i> Reorder Tanks
-  </a>
+  <div class="d-flex flex-wrap gap-2">
+    <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#dashboardCardSettings">
+      <i class="bi bi-sliders"></i> Customize Cards
+    </button>
+    <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
+      <i class="bi bi-arrow-down-up"></i> Reorder Tanks
+    </a>
+  </div>
 </div>
 
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">
@@ -202,6 +211,46 @@
             <div class="small text-muted">Start tracking a new aquarium.</div>
         </div>
     </a>
+  </div>
+</div>
+
+<div class="modal fade" id="dashboardCardSettings" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="/settings/dashboard-cards">
+        <div class="modal-header">
+          <h5 class="modal-title">Choose dashboard card parameters</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">Select the parameters you want to show in each tank card.</p>
+          <div class="row g-2">
+            {% for p in dashboard_parameters %}
+              {% set param_name = p.name if p.name is defined else p["name"] %}
+              <div class="col-6 col-md-4 col-lg-3">
+                <div class="form-check">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    name="dashboard_params"
+                    value="{{ param_name }}"
+                    id="dashboard-param-{{ loop.index }}"
+                    {% if param_name in selected_dashboard_parameters %}checked{% endif %}
+                  >
+                  <label class="form-check-label" for="dashboard-param-{{ loop.index }}">
+                    {{ param_name }}
+                  </label>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save selection</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 {% endblock %}

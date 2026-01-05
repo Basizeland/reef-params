@@ -1093,6 +1093,31 @@ def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
     )
     db.commit()
 
+
+def get_user_setting(db: sqlite3.Connection, user_id: int, key: str) -> Any:
+    row = one(db, "SELECT value FROM user_settings WHERE user_id=? AND key=?", (user_id, key))
+    if not row:
+        return None
+    try:
+        return json.loads(row["value"])
+    except json.JSONDecodeError:
+        return None
+
+
+def set_user_setting(db: sqlite3.Connection, user_id: int, key: str, value: Any) -> None:
+    db.execute(
+        "INSERT INTO user_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (user_id, key, json.dumps(value), datetime.utcnow().isoformat()),
+    )
+    db.commit()
+
+
+def delete_user_setting(db: sqlite3.Connection, user_id: int, key: str) -> None:
+    db.execute("DELETE FROM user_settings WHERE user_id=? AND key=?", (user_id, key))
+    db.commit()
+
+DASHBOARD_CARD_PARAMS_KEY = "dashboard_card_parameters"
 APEX_SETTINGS_KEY = "apex_integration_settings"
 def _normalize_apex_integration(settings: Dict[str, Any]) -> Dict[str, Any]:
     settings.setdefault("id", "default")
@@ -2798,6 +2823,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL, FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_id, endpoint), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (user_id, key), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS icp_recommendations (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, category TEXT NOT NULL, label TEXT, value REAL, unit TEXT, notes TEXT, severity TEXT, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS icp_dose_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, label TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(sample_id, label), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -3006,9 +3032,17 @@ async def auth_middleware(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
+    selected_parameters = []
+    if user:
+        selected_parameters = get_user_setting(db, user["id"], DASHBOARD_CARD_PARAMS_KEY) or []
+    available_parameters = list_parameters(db)
+    if not selected_parameters:
+        selected_parameters = [row_get(p, "name") for p in available_parameters if row_get(p, "name")]
+    normalized_selected = {normalize_param_name(name).lower() for name in selected_parameters if name}
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -3020,7 +3054,7 @@ def dashboard(request: Request):
         out_of_range = 0
         overdue_count = 0
         for pname, p in pdefs.items():
-            if (pname or "").strip().lower() == "trace elements":
+            if normalized_selected and normalize_param_name(pname).lower() not in normalized_selected:
                 continue
             data = latest_map.get(pname)
             if not data or not data.get("latest"):
@@ -3115,9 +3149,31 @@ def dashboard(request: Request):
             "request": request,
             "tank_cards": tank_cards,
             "reminders": reminders,
+            "dashboard_parameters": available_parameters,
+            "selected_dashboard_parameters": selected_parameters,
+            "success": request.query_params.get("success"),
             "extra_css": ["/static/dashboard.css"],
         },
     )
+
+
+@app.post("/settings/dashboard-cards")
+async def dashboard_cards_save(request: Request):
+    db = get_db()
+    try:
+        user = get_current_user(db, request)
+        if not user:
+            return redirect("/auth/login")
+        form = await request.form()
+        selected = [val.strip() for val in form.getlist("dashboard_params") if val and val.strip()]
+        if selected:
+            set_user_setting(db, user["id"], DASHBOARD_CARD_PARAMS_KEY, selected)
+        else:
+            delete_user_setting(db, user["id"], DASHBOARD_CARD_PARAMS_KEY)
+        log_audit(db, user, "dashboard-cards-update", {"count": len(selected)})
+        return redirect("/?success=Dashboard card settings updated.")
+    finally:
+        db.close()
 
 @app.get("/insights", response_class=HTMLResponse)
 def insights(request: Request):
