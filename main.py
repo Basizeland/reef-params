@@ -2310,9 +2310,8 @@ def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, va
     if mode == "sample_values":
         pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
         if not pd:
-            cur.execute("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, 0)", (pname, unit or None))
-            pid = cur.lastrowid
-        else: pid = pd["id"]
+            return
+        pid = pd["id"]
         cur.execute("INSERT INTO sample_values (sample_id, parameter_id, value) VALUES (?, ?, ?)", (sample_id, pid, value))
         if test_kit_id:
             cur.execute(
