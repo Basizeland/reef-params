@@ -52,6 +52,12 @@ def get_columns(conn: sqlite3.Connection, table: str) -> List[str]:
     cursor = conn.execute(f"PRAGMA table_info({table})")
     return [row[1] for row in cursor.fetchall()]
 
+
+def get_pg_columns(inspector, table: str) -> List[str]:
+    if not inspector.has_table(table):
+        return []
+    return [col["name"] for col in inspector.get_columns(table)]
+
 def get_foreign_keys(conn: sqlite3.Connection, table: str) -> List[dict]:
     cursor = conn.execute(f"PRAGMA foreign_key_list({table})")
     return [{"table": row[2], "from": row[3], "to": row[4]} for row in cursor.fetchall()]
@@ -113,13 +119,31 @@ def main() -> None:
 
     with engine.begin() as pg_conn:
         for table in DEFAULT_TABLE_ORDER:
-            columns = get_columns(sqlite_conn, table)
-            if not columns:
+            sqlite_columns = get_columns(sqlite_conn, table)
+            if not sqlite_columns:
                 continue
+            pg_columns = set(get_pg_columns(inspector, table))
+            columns = [col for col in sqlite_columns if col in pg_columns]
+            if not columns:
+                print(
+                    f"Skipped {table} because no matching columns exist in Postgres.",
+                    file=sys.stderr,
+                )
+                continue
+            if len(columns) != len(sqlite_columns):
+                missing_columns = ", ".join(
+                    col for col in sqlite_columns if col not in pg_columns
+                )
+                print(
+                    f"Skipping columns not present in Postgres for {table}: {missing_columns}",
+                    file=sys.stderr,
+                )
             insert_sql = text(
                 f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(':' + c for c in columns)})"
             )
-            foreign_keys = get_foreign_keys(sqlite_conn, table)
+            foreign_keys = [
+                fk for fk in get_foreign_keys(sqlite_conn, table) if fk["from"] in columns
+            ]
             skipped = 0
             for row in iter_rows(sqlite_conn, table, columns):
                 if foreign_keys:
