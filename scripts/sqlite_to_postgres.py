@@ -52,6 +52,22 @@ def get_columns(conn: sqlite3.Connection, table: str) -> List[str]:
     cursor = conn.execute(f"PRAGMA table_info({table})")
     return [row[1] for row in cursor.fetchall()]
 
+def get_foreign_keys(conn: sqlite3.Connection, table: str) -> List[dict]:
+    cursor = conn.execute(f"PRAGMA foreign_key_list({table})")
+    return [{"table": row[2], "from": row[3], "to": row[4]} for row in cursor.fetchall()]
+
+
+def get_column_values(
+    conn: sqlite3.Connection, table: str, column: str, cache: dict[tuple[str, str], set]
+) -> set:
+    key = (table, column)
+    if key in cache:
+        return cache[key]
+    cursor = conn.execute(f"SELECT {column} FROM {table}")
+    values = {row[0] for row in cursor.fetchall()}
+    cache[key] = values
+    return values
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Migrate data from SQLite to Postgres.")
@@ -93,6 +109,8 @@ def main() -> None:
                 for ddl in missing:
                     pg_conn.execute(text(ddl))
 
+    fk_cache: dict[tuple[str, str], set] = {}
+
     with engine.begin() as pg_conn:
         for table in DEFAULT_TABLE_ORDER:
             columns = get_columns(sqlite_conn, table)
@@ -101,8 +119,30 @@ def main() -> None:
             insert_sql = text(
                 f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(':' + c for c in columns)})"
             )
+            foreign_keys = get_foreign_keys(sqlite_conn, table)
+            skipped = 0
             for row in iter_rows(sqlite_conn, table, columns):
+                if foreign_keys:
+                    valid = True
+                    for fk in foreign_keys:
+                        value = row.get(fk["from"])
+                        if value is None:
+                            continue
+                        ref_values = get_column_values(
+                            sqlite_conn, fk["table"], fk["to"], fk_cache
+                        )
+                        if value not in ref_values:
+                            valid = False
+                            break
+                    if not valid:
+                        skipped += 1
+                        continue
                 pg_conn.execute(insert_sql, row)
+            if skipped:
+                print(
+                    f"Skipped {skipped} orphaned row(s) in {table} due to missing foreign keys.",
+                    file=sys.stderr,
+                )
 
     sqlite_conn.close()
 
