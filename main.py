@@ -3735,6 +3735,7 @@ async def tank_new(request: Request):
         tuple(profile_fields.values()),
     )
     if table_exists(db, "targets"):
+        cur = cursor(db)
         inspector = inspect(db._conn)
         cols = {column["name"] for column in inspector.get_columns("targets")}
         has_target_cols = "target_low" in cols
