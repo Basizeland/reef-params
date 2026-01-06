@@ -2035,15 +2035,22 @@ class DBConnection:
     def __init__(self, conn: Connection) -> None:
         self._conn = conn
 
+    def _is_failed_transaction(self, exc: SQLAlchemyError) -> bool:
+        message = str(exc).lower()
+        return "infailedsqltransaction" in message or "transaction is aborted" in message
+
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
-        try:
-            if isinstance(sql, TextClause):
-                return self._conn.execute(sql, params or {})
-            prepared_sql, bound = _prepare_sql(sql, params)
-            return self._conn.execute(text(prepared_sql), bound)
-        except SQLAlchemyError:
-            self._conn.rollback()
-            raise
+        for attempt in range(2):
+            try:
+                if isinstance(sql, TextClause):
+                    return self._conn.execute(sql, params or {})
+                prepared_sql, bound = _prepare_sql(sql, params)
+                return self._conn.execute(text(prepared_sql), bound)
+            except SQLAlchemyError as exc:
+                self._conn.rollback()
+                if attempt == 0 and self._is_failed_transaction(exc):
+                    continue
+                raise
 
     def commit(self) -> None:
         self._conn.commit()
