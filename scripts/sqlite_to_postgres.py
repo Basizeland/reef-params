@@ -86,7 +86,7 @@ def main() -> None:
     except ImportError as exc:
         raise RuntimeError(
             "psycopg is not available. Install with `pip install -r requirements.txt` "
-            "or `pip install psycopg[binary]`."
+            "or `pip install psycopg-binary`."
         ) from exc
 
     sqlite_path = os.path.expanduser(args.sqlite_path)
