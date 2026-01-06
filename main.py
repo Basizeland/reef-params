@@ -2146,6 +2146,23 @@ def table_exists(db: DBConnection, name: str) -> bool:
     inspector = inspect(db._conn)
     return inspector.has_table(name)
 
+def reset_additives_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM additives
+        )
+        SELECT setval(
+            pg_get_serial_sequence('additives', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
 def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, details: Any = "") -> None:
     if not user:
         return
@@ -6627,10 +6644,21 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
             (*data, int(additive_id)),
         )
     else:
-        cur.execute(
-            "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            data,
-        )
+        try:
+            cur.execute(
+                "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                data,
+            )
+        except IntegrityError as exc:
+            orig = getattr(exc, "orig", None)
+            if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation):
+                reset_additives_sequence(db)
+                cur.execute(
+                    "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    data,
+                )
+            else:
+                raise
     db.commit()
     db.close()
     return redirect("/additives")
