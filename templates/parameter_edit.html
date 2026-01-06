@@ -7,6 +7,12 @@
       <a class="btn btn-outline-secondary" href="/settings/parameters">Back</a>
     </div>
 
+    {% if error %}
+      <div class="alert alert-danger" role="alert">
+        {{ error }}
+      </div>
+    {% endif %}
+
     <form method="post" action="/settings/parameters/save">
       {% if param %}
         <input type="hidden" name="param_id" value="{{ param.id }}" />

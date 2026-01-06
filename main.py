@@ -6080,16 +6080,50 @@ def parameter_save(
         db.commit()
         
     except IntegrityError:
-        print("Database Integrity Error ignored.")
         db.rollback()
-        
-    except Exception as e:
-        print(f"Error saving parameter: {e}")
+        param_payload = {
+            "id": int(param_id) if param_id and str(param_id).strip().isdigit() else None,
+            "name": clean_name,
+            "chemical_symbol": (chemical_symbol or "").strip() or None,
+            "unit": (unit or "").strip() or None,
+            "sort_order": order,
+            "max_daily_change": mdc,
+            "test_interval_days": interval,
+            "active": is_active,
+            "default_target_low": dt_low,
+            "default_target_high": dt_high,
+            "default_alert_low": da_low,
+            "default_alert_high": da_high,
+        }
+        return templates.TemplateResponse(
+            "parameter_edit.html",
+            {"request": request, "param": param_payload, "error": "Parameter name already exists."},
+            status_code=400,
+        )
+    except Exception:
         db.rollback()
-        
+        param_payload = {
+            "id": int(param_id) if param_id and str(param_id).strip().isdigit() else None,
+            "name": clean_name,
+            "chemical_symbol": (chemical_symbol or "").strip() or None,
+            "unit": (unit or "").strip() or None,
+            "sort_order": order,
+            "max_daily_change": mdc,
+            "test_interval_days": interval,
+            "active": is_active,
+            "default_target_low": dt_low,
+            "default_target_high": dt_high,
+            "default_alert_low": da_low,
+            "default_alert_high": da_high,
+        }
+        return templates.TemplateResponse(
+            "parameter_edit.html",
+            {"request": request, "param": param_payload, "error": "Unable to save parameter."},
+            status_code=400,
+        )
     finally:
         db.close()
-        
+
     return redirect("/settings/parameters")
 
 @app.post("/settings/parameters/{param_id}/delete")
