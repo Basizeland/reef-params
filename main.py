@@ -57,11 +57,11 @@ def require_pandas():
 
 def normalize_param_name(name: str) -> str:
     cleaned = re.sub(r"[^a-z0-9]+", "", name.lower())
-    if cleaned in {"alkalinitykh", "alkalinity", "kh"}:
+    if cleaned in {"alkalinitykh", "alkalinitydkh", "alkalinity", "kh"}:
         return "Alkalinity/KH"
-    if cleaned in {"calcium", "ca"}:
+    if cleaned in {"calcium", "ca", "calciumca"}:
         return "Calcium"
-    if cleaned in {"magnesium", "mg"}:
+    if cleaned in {"magnesium", "mg", "magnesiummg"}:
         return "Magnesium"
     if cleaned in {"nitrate", "no3"}:
         return "Nitrate"
@@ -1093,6 +1093,31 @@ def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
     )
     db.commit()
 
+
+def get_user_setting(db: sqlite3.Connection, user_id: int, key: str) -> Any:
+    row = one(db, "SELECT value FROM user_settings WHERE user_id=? AND key=?", (user_id, key))
+    if not row:
+        return None
+    try:
+        return json.loads(row["value"])
+    except json.JSONDecodeError:
+        return None
+
+
+def set_user_setting(db: sqlite3.Connection, user_id: int, key: str, value: Any) -> None:
+    db.execute(
+        "INSERT INTO user_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (user_id, key, json.dumps(value), datetime.utcnow().isoformat()),
+    )
+    db.commit()
+
+
+def delete_user_setting(db: sqlite3.Connection, user_id: int, key: str) -> None:
+    db.execute("DELETE FROM user_settings WHERE user_id=? AND key=?", (user_id, key))
+    db.commit()
+
+DASHBOARD_CARD_PARAMS_KEY = "dashboard_card_parameters"
 APEX_SETTINGS_KEY = "apex_integration_settings"
 def _normalize_apex_integration(settings: Dict[str, Any]) -> Dict[str, Any]:
     settings.setdefault("id", "default")
@@ -1296,6 +1321,114 @@ def is_trace_element(name: str) -> bool:
 
 def filter_trace_parameters(parameters: List[sqlite3.Row]) -> List[sqlite3.Row]:
     return [p for p in parameters if not is_trace_element(row_get(p, "name"))]
+
+def normalize_group_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+TRITON_PARAMETER_GROUPS: Dict[str, List[str]] = {
+    "Unwanted heavy metals": [
+        "Aluminium",
+        "Antimony",
+        "Arsenic",
+        "Lead",
+        "Cadmium",
+        "Copper",
+        "Lanthanum",
+        "Mercury",
+        "Scandium",
+        "Selenium",
+        "Titanium",
+        "Tungsten",
+        "Tin",
+    ],
+    "Macro-Elements": [
+        "Chloride",
+        "Sodium",
+        "Calcium",
+        "Magnesium",
+        "Potassium",
+        "Bromide",
+        "Boron",
+        "Fluoride",
+        "Strontium",
+        "Sulphur",
+    ],
+    "Li-Group": [
+        "Lithium",
+        "Nickel",
+        "Molybdenum",
+    ],
+    "I-Group": [
+        "Vanadium",
+        "Zinc",
+        "Manganese",
+        "Iodine",
+    ],
+    "Fe-Group": [
+        "Chromium",
+        "Cobalt",
+        "Iron",
+    ],
+    "Ba-Group": [
+        "Barium",
+        "Beryllium",
+    ],
+    "Si-Group": [
+        "Silicon",
+    ],
+    "Nutrient-Group": [
+        "Phosphorus",
+        "Phosphate",
+    ],
+    "Salinity": [
+        "Salinity",
+    ],
+}
+
+TRITON_GROUP_ORDER = [
+    "Macro-Elements",
+    "Nutrient-Group",
+    "Salinity",
+    "Li-Group",
+    "I-Group",
+    "Fe-Group",
+    "Ba-Group",
+    "Si-Group",
+    "Unwanted heavy metals",
+    "Other",
+]
+
+TRITON_GROUP_LOOKUP = {
+    normalize_group_name(name): group
+    for group, items in TRITON_PARAMETER_GROUPS.items()
+    for name in items
+}
+
+TRITON_NON_TRACE_GROUPS = {"Macro-Elements", "Nutrient-Group", "Salinity"}
+TRITON_TRACE_ELEMENT_NAMES = {
+    normalize_probe_label(name)
+    for group, items in TRITON_PARAMETER_GROUPS.items()
+    if group not in TRITON_NON_TRACE_GROUPS
+    for name in items
+}
+TRACE_ELEMENT_NAMES.update(TRITON_TRACE_ELEMENT_NAMES)
+
+def build_parameter_groups(parameters: List[sqlite3.Row]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[sqlite3.Row]] = {}
+    for param in parameters:
+        name = row_get(param, "name") or ""
+        group = TRITON_GROUP_LOOKUP.get(normalize_group_name(name), "Other")
+        grouped.setdefault(group, []).append(param)
+    for items in grouped.values():
+        items.sort(key=lambda row: (row_get(row, "name") or "").lower())
+    ordered = []
+    for group in TRITON_GROUP_ORDER:
+        if group in grouped:
+            ordered.append({"name": group, "items": grouped[group]})
+    for group in sorted(grouped.keys(), key=lambda s: s.lower()):
+        if group not in TRITON_GROUP_ORDER:
+            ordered.append({"name": group, "items": grouped[group]})
+    return ordered
 
 ICP_ELEMENT_ALIASES = {
     "al": "aluminium",
@@ -2279,13 +2412,14 @@ def get_sample_readings(db: sqlite3.Connection, sample_id: int) -> List[sqlite3.
 
 def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
     cur = db.cursor()
+    if pname:
+        pname = normalize_param_name(pname)
     mode = values_mode(db)
     if mode == "sample_values":
         pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
         if not pd:
-            cur.execute("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, 0)", (pname, unit or None))
-            pid = cur.lastrowid
-        else: pid = pd["id"]
+            return
+        pid = pd["id"]
         cur.execute("INSERT INTO sample_values (sample_id, parameter_id, value) VALUES (?, ?, ?)", (sample_id, pid, value))
         if test_kit_id:
             cur.execute(
@@ -2614,6 +2748,39 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
     
     return latest_map
 
+def get_latest_non_icp_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
+    latest_map: Dict[str, Dict[str, Any]] = {}
+    mode = values_mode(db)
+    if mode == "sample_values":
+        rows = q(db, """
+            SELECT pd.name, sv.value, s.taken_at, s.id AS sample_id
+            FROM sample_values sv
+            JOIN samples s ON s.id = sv.sample_id
+            JOIN parameter_defs pd ON pd.id = sv.parameter_id
+            WHERE s.tank_id=?
+              AND (s.notes IS NULL OR lower(s.notes) NOT LIKE '%imported from icp%')
+            ORDER BY s.taken_at DESC, s.id DESC
+        """, (tank_id,))
+    else:
+        rows = q(db, """
+            SELECT p.name, p.value, s.taken_at, s.id AS sample_id
+            FROM parameters p
+            JOIN samples s ON s.id = p.sample_id
+            WHERE s.tank_id=?
+              AND (s.notes IS NULL OR lower(s.notes) NOT LIKE '%imported from icp%')
+            ORDER BY s.taken_at DESC, s.id DESC
+        """, (tank_id,))
+
+    for r in rows:
+        name = r["name"]
+        if name not in latest_map:
+            latest_map[name] = {
+                "value": r["value"],
+                "taken_at": parse_dt_any(r["taken_at"]),
+                "sample_id": r["sample_id"],
+            }
+    return latest_map
+
 def get_latest_and_previous_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
     latest_map: Dict[str, Dict[str, Any]] = {}
     mode = values_mode(db)
@@ -2798,6 +2965,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL, FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_id, endpoint), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (user_id, key), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS icp_recommendations (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, category TEXT NOT NULL, label TEXT, value REAL, unit TEXT, notes TEXT, severity TEXT, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS icp_dose_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, label TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(sample_id, label), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
@@ -2921,26 +3089,6 @@ def init_db() -> None:
 
     cur.execute("SELECT COUNT(1) FROM parameter_defs")
     cnt = cur.fetchone()[0]
-    if cnt == 0:
-        defaults = [
-            ("Alkalinity/KH", "dKH", 1, 10),
-            ("Calcium", "ppm", 1, 20),
-            ("Magnesium", "ppm", 1, 30),
-            ("Phosphate", "ppm", 1, 40),
-            ("Nitrate", "ppm", 1, 50),
-            ("Salinity", "ppt", 1, 60),
-            ("Temperature", "°C", 1, 70),
-            ("Trace Elements", None, 1, 80),
-        ]
-        cur.executemany("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)", defaults)
-    else:
-        cur.execute("SELECT id FROM parameter_defs WHERE name=?", ("Trace Elements",))
-        if cur.fetchone() is None:
-            cur.execute(
-                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, ?)",
-                ("Trace Elements", None, 80),
-            )
-        
     # MIGRATION: Populate defaults if they are null
     for name, d in INITIAL_DEFAULTS.items():
         cur.execute("""
@@ -3006,9 +3154,17 @@ async def auth_middleware(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
+    selected_parameters = []
+    if user:
+        selected_parameters = get_user_setting(db, user["id"], DASHBOARD_CARD_PARAMS_KEY) or []
+    available_parameters = list_parameters(db)
+    if not selected_parameters:
+        selected_parameters = [row_get(p, "name") for p in available_parameters if row_get(p, "name")]
+    normalized_selected = {normalize_param_name(name).lower() for name in selected_parameters if name}
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
         pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -3020,6 +3176,8 @@ def dashboard(request: Request):
         out_of_range = 0
         overdue_count = 0
         for pname, p in pdefs.items():
+            if normalized_selected and normalize_param_name(pname).lower() not in normalized_selected:
+                continue
             data = latest_map.get(pname)
             if not data or not data.get("latest"):
                 continue
@@ -3113,9 +3271,32 @@ def dashboard(request: Request):
             "request": request,
             "tank_cards": tank_cards,
             "reminders": reminders,
+            "dashboard_parameters": available_parameters,
+            "dashboard_parameter_groups": build_parameter_groups(available_parameters),
+            "selected_dashboard_parameters": selected_parameters,
+            "success": request.query_params.get("success"),
             "extra_css": ["/static/dashboard.css"],
         },
     )
+
+
+@app.post("/settings/dashboard-cards")
+async def dashboard_cards_save(request: Request):
+    db = get_db()
+    try:
+        user = get_current_user(db, request)
+        if not user:
+            return redirect("/auth/login")
+        form = await request.form()
+        selected = [val.strip() for val in form.getlist("dashboard_params") if val and val.strip()]
+        if selected:
+            set_user_setting(db, user["id"], DASHBOARD_CARD_PARAMS_KEY, selected)
+        else:
+            delete_user_setting(db, user["id"], DASHBOARD_CARD_PARAMS_KEY)
+        log_audit(db, user, "dashboard-cards-update", {"count": len(selected)})
+        return redirect("/?success=Dashboard card settings updated.")
+    finally:
+        db.close()
 
 @app.get("/insights", response_class=HTMLResponse)
 def insights(request: Request):
@@ -4164,6 +4345,10 @@ def tank_detail(request: Request, tank_id: int):
     ]
     
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
+    latest_manual_by_param_id = get_latest_non_icp_per_parameter(db, tank_id)
+    latest_display_by_param_id = dict(latest_by_param_id)
+    for name, data in latest_manual_by_param_id.items():
+        latest_display_by_param_id[name] = data
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
     pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
@@ -4181,6 +4366,15 @@ def tank_detail(request: Request, tank_id: int):
             notes = (row_get(row, "notes") or "").lower()
             if "imported from icp" in notes:
                 icp_sample_ids.add(row_get(row, "id"))
+    latest_icp_taken_at = None
+    if icp_sample_ids:
+        placeholders = ",".join("?" for _id in icp_sample_ids)
+        latest_icp_row = one(
+            db,
+            f"SELECT MAX(taken_at) AS taken_at FROM samples WHERE id IN ({placeholders})",
+            tuple(icp_sample_ids),
+        )
+        latest_icp_taken_at = parse_dt_any(row_get(latest_icp_row, "taken_at")) if latest_icp_row else None
 
     core_params = []
     trace_params = []
@@ -4264,6 +4458,7 @@ def tank_detail(request: Request, tank_id: int):
             "recent_samples": recent_samples,
             "sample_values": sample_values,
             "latest_vals": latest_by_param_id,
+            "latest_manual_vals": latest_display_by_param_id,
             "status_by_param_id": status_by_param_id,
             "trend_warning_by_param": trend_warning_by_param,
             "trend_alert_params": trend_alert_params,
@@ -4281,6 +4476,9 @@ def tank_detail(request: Request, tank_id: int):
             "core_params": core_params,
             "trace_params": trace_params,
             "icp_params": icp_params,
+            "icp_grouped_params": build_parameter_groups(icp_params),
+            "trace_param_names": [row_get(p, "name") for p in params if is_trace_element(row_get(p, "name"))],
+            "latest_icp_taken_at": latest_icp_taken_at,
         },
     )
 
@@ -6025,7 +6223,14 @@ def parameters_settings(request: Request):
     db = get_db()
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("parameters.html", {"request": request, "parameters": rows})
+    return templates.TemplateResponse(
+        "parameters.html",
+        {
+            "request": request,
+            "parameters": rows,
+            "grouped_parameters": build_parameter_groups(rows),
+        },
+    )
 
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
 @app.get("/settings/parameters/new/", response_class=HTMLResponse, include_in_schema=False)

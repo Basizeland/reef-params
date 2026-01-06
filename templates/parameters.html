@@ -30,28 +30,33 @@
           </div>
         </div>
         <div class="row g-2">
-          {% for p in parameters %}
-            <div class="col-md-6">
-              <div class="parameter-card border rounded-3 p-3 h-100">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                  <div>
-                    <div class="fw-semibold">{{ p.name }}</div>
-                    <div class="text-muted small">
-                      {{ p.unit or "Unit not set" }}
-                      {% if p.chemical_symbol %}
-                        <span class="ms-2 text-uppercase">({{ p.chemical_symbol }})</span>
-                      {% endif %}
-                    </div>
-                  </div>
-                  <a href="/settings/parameters/{{ p.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
-                </div>
-                {% if p.test_interval_days %}
-                  <div class="mt-2">
-                    <span class="badge bg-light text-secondary border">{{ p.test_interval_days }} day interval</span>
-                  </div>
-                {% endif %}
-              </div>
+          {% for group in grouped_parameters %}
+            <div class="col-12">
+              <div class="text-uppercase text-muted small fw-semibold mb-2">{{ group.name }}</div>
             </div>
+            {% for p in group["items"] %}
+              <div class="col-md-6">
+                <div class="parameter-card border rounded-3 p-3 h-100">
+                  <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                      <div class="fw-semibold">{{ p.name }}</div>
+                      <div class="text-muted small">
+                        {{ p.unit or "Unit not set" }}
+                        {% if p.chemical_symbol %}
+                          <span class="ms-2 text-uppercase">({{ p.chemical_symbol }})</span>
+                        {% endif %}
+                      </div>
+                    </div>
+                    <a href="/settings/parameters/{{ p.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+                  </div>
+                  {% if p.test_interval_days %}
+                    <div class="mt-2">
+                      <span class="badge bg-light text-secondary border">{{ p.test_interval_days }} day interval</span>
+                    </div>
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
           {% endfor %}
         </div>
       </div>

@@ -88,6 +88,11 @@
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/targets"><i class="bi bi-bullseye"></i> Targets</a></li>
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/profile"><i class="bi bi-pencil-square"></i> Edit Tank</a></li>
         <li><a class="dropdown-item" href="/tanks/{{ tank.id }}/export"><i class="bi bi-file-earmark-spreadsheet"></i> Export Excel</a></li>
+        <li>
+          <button class="dropdown-item" type="button" data-bs-toggle="modal" data-bs-target="#reorderSectionsModal">
+            <i class="bi bi-list"></i> Reorder Sections
+          </button>
+        </li>
         <li><hr class="dropdown-divider"></li>
         <li>
              <form method="post" action="/tanks/{{ tank.id }}/delete" onsubmit="return confirm('Really delete?');" class="d-inline">
@@ -110,8 +115,10 @@
   </div>
 {% endif %}
 
+<div id="tank-detail-sections">
 {% set has_dosing = tank.use_all_in_one or tank.use_alk or tank.use_kalkwasser or tank.use_ca or tank.use_mg or tank.use_nitrate or tank.use_phosphate or tank.use_trace or tank.use_nopox or tank.use_calcium_reactor or tank.all_in_one_solution or tank.alk_solution or tank.kalk_solution or tank.ca_solution or tank.mg_solution or tank.nitrate_solution or tank.phosphate_solution or tank.trace_solution or tank.nopox_daily_ml or tank.all_in_one_daily_ml or tank.alk_daily_ml or tank.kalk_daily_ml or tank.ca_daily_ml or tank.mg_daily_ml or tank.nitrate_daily_ml or tank.phosphate_daily_ml or tank.trace_daily_ml or tank.calcium_reactor_daily_ml or tank.calcium_reactor_effluent_dkh or (extra_dosing_entries and extra_dosing_entries|length > 0) %}
 {% if has_dosing %}
+  <section data-section-id="dosing" data-section-label="Daily Dosing">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0 h5 fw-bold">Daily Dosing</h4>
     <a class="btn btn-outline-secondary btn-sm" href="/tanks/{{ tank.id }}/dosing-settings">
@@ -532,9 +539,10 @@
     </div>
   </div>
   {% endif %}
+  </section>
 {% endif %}
 
-{% macro render_latest(title, param_list, show_hint=True) %}
+{% macro render_latest(title, param_list, show_hint=True, value_map=latest_vals) %}
   <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
     <h4 class="mb-0 h5 fw-bold">{{ title }}</h4>
     {% if show_hint %}
@@ -543,7 +551,7 @@
   </div>
   <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 g-3 mb-5">
   {% for p in param_list %}
-    {% set p_data = latest_vals.get(p.id) %}
+    {% set p_data = value_map.get(p.id) %}
     {% set val = p_data.value if p_data else None %}
     {% set taken_at = p_data.taken_at if p_data else None %}
     {% set sample_id = p_data.sample_id if p_data else None %}
@@ -610,6 +618,84 @@
   </div>
 {% endmacro %}
 
+{% macro render_icp_grouped(groups) %}
+  <div class="card shadow-sm mb-5 icp-compact-card">
+    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <h4 class="mb-0 h5 fw-bold">ICP Results</h4>
+        {% if latest_icp_taken_at %}
+          <div class="text-muted small">Latest ICP import {{ latest_icp_taken_at|time_ago }} ({{ latest_icp_taken_at|dtfmt }})</div>
+        {% else %}
+          <div class="text-muted small">Grouped by Triton categories.</div>
+        {% endif %}
+      </div>
+      {% if latest_icp_taken_at %}
+        <span class="text-muted small">Grouped by Triton categories.</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% for group in groups %}
+        {% set group_id = "icp-group-" ~ loop.index %}
+        <button
+          class="btn btn-link text-decoration-none text-muted small fw-semibold text-uppercase mb-2 d-flex align-items-center gap-2 collapsed icp-group-toggle"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#{{ group_id }}"
+          aria-expanded="false"
+          aria-controls="{{ group_id }}"
+        >
+          <i class="bi bi-chevron-down"></i>
+          {{ group.name }}
+        </button>
+        <div class="collapse" id="{{ group_id }}">
+          <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-xl-6 g-2 mb-3 icp-compact-grid">
+            {% for p in group["items"] %}
+            {% set p_data = latest_vals.get(p.id) %}
+            {% set val = p_data.value if p_data else None %}
+            {% set taken_at = p_data.taken_at if p_data else None %}
+            {% set sample_id = p_data.sample_id if p_data else None %}
+            {% set target = target_map.get(p.name) %}
+
+            {% set status_class = "border-secondary-subtle" %}
+            {% if val is not none and target %}
+                {% if (target.alert_low and val < target.alert_low) or (target.alert_high and val > target.alert_high) %}
+                    {% set status_class = "border-danger bg-danger-subtle text-danger" %}
+                {% elif (target.target_low and target.target_high and val >= target.target_low and val <= target.target_high) %}
+                    {% set status_class = "border-success bg-success-subtle text-success" %}
+                {% else %}
+                    {% set status_class = "border-warning bg-warning-subtle" %}
+                {% endif %}
+            {% endif %}
+
+            <div class="col">
+              <div class="card h-100 {{ status_class }} shadow-sm position-relative icp-compact-tile">
+                {% if sample_id %}
+                  <a class="stretched-link" href="/tanks/{{ tank.id }}/samples/{{ sample_id }}" aria-label="View {{ p.name }} reading"></a>
+                {% endif %}
+                <div class="card-body p-2">
+                  <div class="d-flex justify-content-between align-items-start mb-1">
+                    <div class="text-muted small text-uppercase fw-bold">{{ p.name }}</div>
+                    {% if taken_at %}
+                      <span class="badge bg-light text-secondary border fw-normal icp-compact-time">
+                        {{ taken_at|time_ago }}
+                      </span>
+                    {% endif %}
+                  </div>
+                  <div class="d-flex align-items-baseline gap-1">
+                    <span class="fw-bold icp-compact-value">{{ val|fmt2 if val is not none else "-" }}</span>
+                    <span class="text-muted small">{{ p.unit }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endmacro %}
+
 {% if trend_alert_params %}
   <div class="alert alert-warning small mb-4">
     <div class="fw-semibold">Trend alerts</div>
@@ -617,16 +703,23 @@
   </div>
 {% endif %}
 
-{{ render_latest("Latest Readings", core_params) }}
+<section data-section-id="latest-readings" data-section-label="Latest Readings">
+  {{ render_latest("Latest Readings", core_params, True, latest_manual_vals) }}
+</section>
 
 {% if trace_params %}
-  {{ render_latest("Trace Elements", trace_params, False) }}
+  <section data-section-id="trace-elements" data-section-label="Trace Elements">
+    {{ render_latest("Trace Elements", trace_params, False) }}
+  </section>
 {% endif %}
 
 {% if icp_params %}
-  {{ render_latest("ICP Results", icp_params, False) }}
+  <section data-section-id="icp-results" data-section-label="ICP Results">
+    {{ render_icp_grouped(icp_grouped_params) }}
+  </section>
 {% endif %}
 
+<section data-section-id="trend-analysis" data-section-label="Trend Analysis">
 <div class="card shadow-sm mb-4">
   <div class="card-header bg-white py-3 d-flex flex-column gap-2">
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 w-100">
@@ -639,8 +732,9 @@
       <div class="d-flex align-items-center gap-2 flex-wrap">
         {% for p in params %}
           {% set param_key = p.key %}
+          {% set is_trace = p.name in trace_param_names %}
           <div class="form-check form-check-inline mb-0">
-            <input class="form-check-input" type="checkbox" name="trend-param" data-param-toggle data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
+            <input class="form-check-input" type="checkbox" name="trend-param" data-param-toggle data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" data-trace="{{ 'true' if is_trace else 'false' }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
             <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
           </div>
         {% endfor %}
@@ -649,6 +743,13 @@
         <input class="form-check-input" type="checkbox" id="toggle-dose-events" checked>
         <label class="form-check-label small" for="toggle-dose-events">Show dosing events</label>
       </div>
+      <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="toggle-all-params">
+        <label class="form-check-label small" for="toggle-all-params">Show all parameters</label>
+      </div>
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#trendDefaultsModal">
+        <i class="bi bi-sliders"></i> Edit defaults
+      </button>
       <div class="text-muted small">Compare up to 3 parameters at once.</div>
     </div>
   </div>
@@ -659,7 +760,9 @@
     <div class="d-flex flex-column gap-2 text-muted small mt-3" id="historyStats" aria-live="polite"></div>
   </div>
 </div>
+</section>
 
+<section data-section-id="recent-logs" data-section-label="Recent Logs">
 <div class="card shadow-sm">
   <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0 fw-bold">Recent Logs</h5>
@@ -685,7 +788,7 @@
               {% if p.name not in ['Temperature', 'Salinity'] %}
                 {% set sv = sample_values.get(s.id, {}) %}
                 {% set val = sv.get(p.id) %}
-                <span class="badge bg-light text-dark border">
+                <span class="badge bg-light text-dark border" data-param-cell="{{ p.key }}">
                   {{ p.name }}:
                   {% if val is not none %}
                     {{ val|fmt2 }} {{ p.unit }}
@@ -708,7 +811,7 @@
           <th class="ps-3">Date</th>
           {% for p in params %}
             {% if p.name not in ['Temperature', 'Salinity'] %}
-                <th class="text-center">{{ p.name }}</th>
+                <th class="text-center" data-param-col="{{ p.key }}">{{ p.name }}</th>
             {% endif %}
           {% endfor %}
           <th class="text-end pe-3">Actions</th>
@@ -721,7 +824,7 @@
             
             {% for p in params %}
               {% if p.name not in ['Temperature', 'Salinity'] %}
-                  <td class="text-center">
+                  <td class="text-center" data-param-col="{{ p.key }}">
                      {% set sv = sample_values.get(s.id, {}) %}
                      {% set val = sv.get(p.id) %}
                      
@@ -746,6 +849,56 @@
     </table>
   </div>
 </div>
+</section>
+</div>
+
+<div class="modal fade" id="reorderSectionsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Reorder tank detail sections</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">Move sections up or down to customize your tank detail layout.</p>
+        <div class="d-flex flex-column gap-2" id="sectionOrderList"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" id="resetSectionOrder">Reset</button>
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="trendDefaultsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Trend defaults</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">Choose which parameters are shown by default. Use the toggle to reveal all parameters later.</p>
+        <div class="row g-2">
+          {% for p in params %}
+            {% set param_key = p.key %}
+            <div class="col-6 col-md-4 col-lg-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="default-param-{{ param_key }}" data-default-param value="{{ param_key }}">
+                <label class="form-check-label small" for="default-param-{{ param_key }}">{{ p.name }}</label>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" id="resetTrendDefaults">Reset</button>
+        <button type="button" class="btn btn-primary" id="saveTrendDefaults" data-bs-dismiss="modal">Save defaults</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
   document.addEventListener('DOMContentLoaded', function() {
@@ -753,11 +906,17 @@
           const seriesMap = {{ series_map|tojson|safe }};
           const targets = {{ chart_targets_map|tojson|safe }};
           const paramsMeta = {{ params|tojson|safe }};
+          const allParamKeys = paramsMeta.map((param) => param.key);
           const doseLogEvents = {{ dose_log_events|tojson|safe }};
           const stabilityScores = {{ stability_score_by_param|tojson|safe }};
           const ctx = document.getElementById('historyChart');
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
           const showDoseToggle = document.getElementById('toggle-dose-events');
+          const showAllToggle = document.getElementById('toggle-all-params');
+          const saveDefaultsButton = document.getElementById('saveTrendDefaults');
+          const resetDefaultsButton = document.getElementById('resetTrendDefaults');
+          const defaultInputs = Array.from(document.querySelectorAll('[data-default-param]'));
+          const tankId = {{ tank.id }};
           
           if (!ctx) return;
 
@@ -1084,6 +1243,91 @@
             });
           }
 
+          const defaultsKey = `tankTrendDefaults-${tankId}`;
+          const showAllKey = `tankTrendShowAll-${tankId}`;
+          const defaultParamLabels = ['Alkalinity', 'Calcium', 'Magnesium', 'Nitrate', 'Phosphate', 'Salinity'];
+          const defaultParamKeys = paramsMeta
+            .filter((param) => defaultParamLabels.includes(param.name))
+            .map((param) => param.key);
+          const paramColumnEls = Array.from(document.querySelectorAll('[data-param-col]'));
+          const paramCellEls = Array.from(document.querySelectorAll('[data-param-cell]'));
+
+          function loadDefaults() {
+            try {
+              return JSON.parse(localStorage.getItem(defaultsKey) || '[]');
+            } catch (err) {
+              return [];
+            }
+          }
+
+          function saveDefaults(values) {
+            localStorage.setItem(defaultsKey, JSON.stringify(values));
+          }
+
+          function setDefaultInputs(values) {
+            defaultInputs.forEach((input) => {
+              input.checked = values.includes(input.value);
+            });
+          }
+
+          function updateDefaultInputsFromSelection() {
+            const values = defaultInputs.filter((input) => input.checked).map((input) => input.value);
+            saveDefaults(values);
+          }
+
+          function applyVisibility() {
+            const defaults = loadDefaults();
+            paramToggles.forEach((box) => {
+              const wrapper = box.closest('.form-check');
+              if (!wrapper) return;
+              const allowedByDefaults = showAllToggle?.checked || defaults.length === 0 ? true : defaults.includes(box.value);
+              wrapper.classList.toggle('d-none', !allowedByDefaults);
+              if (!allowedByDefaults) {
+                box.checked = false;
+              }
+            });
+            const visibleKeys = showAllToggle?.checked || defaults.length === 0 ? null : new Set(defaults);
+            paramColumnEls.forEach((el) => {
+              const key = el.dataset.paramCol;
+              if (!key) return;
+              const visible = !visibleKeys || visibleKeys.has(key);
+              el.classList.toggle('d-none', !visible);
+            });
+            paramCellEls.forEach((el) => {
+              const key = el.dataset.paramCell;
+              if (!key) return;
+              const visible = !visibleKeys || visibleKeys.has(key);
+              el.classList.toggle('d-none', !visible);
+            });
+          }
+
+          if (showAllToggle) {
+            const stored = localStorage.getItem(showAllKey);
+            showAllToggle.checked = stored === null ? true : stored === 'true';
+            showAllToggle.addEventListener('change', () => {
+              localStorage.setItem(showAllKey, String(showAllToggle.checked));
+              applyVisibility();
+              renderChart();
+            });
+          }
+
+          if (saveDefaultsButton) {
+            saveDefaultsButton.addEventListener('click', () => {
+              updateDefaultInputsFromSelection();
+              applyVisibility();
+              renderChart();
+            });
+          }
+
+          if (resetDefaultsButton) {
+            resetDefaultsButton.addEventListener('click', () => {
+              localStorage.removeItem(defaultsKey);
+              setDefaultInputs(defaultParamKeys);
+              applyVisibility();
+              renderChart();
+            });
+          }
+
           paramToggles.forEach((box) => {
             box.addEventListener('change', (event) => {
               const checked = paramToggles.filter((item) => item.checked);
@@ -1097,7 +1341,105 @@
             showDoseToggle.addEventListener('change', renderChart);
           }
 
+          const defaults = loadDefaults();
+          const initialDefaults = defaults.length ? defaults : defaultParamKeys;
+          if (defaultInputs.length) {
+            setDefaultInputs(initialDefaults);
+          }
+          if (!defaults.length) {
+            saveDefaults(initialDefaults);
+          }
+          if (showAllToggle && defaults.length > 0) {
+            showAllToggle.checked = false;
+          }
+          applyVisibility();
+
           renderChart();
+
+          const sectionsContainer = document.getElementById('tank-detail-sections');
+          const orderList = document.getElementById('sectionOrderList');
+          const resetButton = document.getElementById('resetSectionOrder');
+          if (sectionsContainer && orderList) {
+            const sections = Array.from(sectionsContainer.querySelectorAll('[data-section-id]'));
+            const sectionById = {};
+            sections.forEach((section) => {
+              sectionById[section.dataset.sectionId] = section;
+            });
+            const orderKey = `tankDetailOrder-${tankId}`;
+            const defaultOrder = sections.map((section) => section.dataset.sectionId);
+            let order = [];
+            try {
+              order = JSON.parse(localStorage.getItem(orderKey) || '[]');
+            } catch (err) {
+              order = [];
+            }
+            order = order.filter((id) => id in sectionById);
+            defaultOrder.forEach((id) => {
+              if (!order.includes(id)) order.push(id);
+            });
+
+            const applyOrder = () => {
+              order.forEach((id) => {
+                const section = sectionById[id];
+                if (section) {
+                  sectionsContainer.appendChild(section);
+                }
+              });
+            };
+
+            const persistOrder = () => {
+              localStorage.setItem(orderKey, JSON.stringify(order));
+            };
+
+            const renderOrderList = () => {
+              orderList.innerHTML = '';
+              order.forEach((id, index) => {
+                const section = sectionById[id];
+                if (!section) return;
+                const label = section.dataset.sectionLabel || id;
+                const row = document.createElement('div');
+                row.className = 'd-flex align-items-center justify-content-between border rounded px-2 py-2';
+                row.innerHTML = `
+                  <span class="fw-semibold">${label}</span>
+                  <span class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-move="up" ${index === 0 ? 'disabled' : ''}>
+                      <i class="bi bi-arrow-up"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-move="down" ${index === order.length - 1 ? 'disabled' : ''}>
+                      <i class="bi bi-arrow-down"></i>
+                    </button>
+                  </span>
+                `;
+                row.querySelectorAll('button[data-move]').forEach((button) => {
+                  button.addEventListener('click', () => {
+                    const direction = button.dataset.move;
+                    const nextIndex = direction === 'up' ? index - 1 : index + 1;
+                    if (nextIndex < 0 || nextIndex >= order.length) return;
+                    const updated = [...order];
+                    const [moved] = updated.splice(index, 1);
+                    updated.splice(nextIndex, 0, moved);
+                    order = updated;
+                    persistOrder();
+                    applyOrder();
+                    renderOrderList();
+                  });
+                });
+                orderList.appendChild(row);
+              });
+            };
+
+            applyOrder();
+            renderOrderList();
+
+            if (resetButton) {
+              resetButton.addEventListener('click', () => {
+                order = [...defaultOrder];
+                localStorage.removeItem(orderKey);
+                applyOrder();
+                renderOrderList();
+              });
+            }
+          }
       } catch (err) {
           console.error("Chart Error:", err);
       }
