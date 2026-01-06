@@ -6023,7 +6023,11 @@ def parameter_save(
             # Check if we are renaming
             if old_name and clean_name and old_name != clean_name:
                 # Does the target name already exist?
-                existing = one(db, "SELECT id FROM parameter_defs WHERE LOWER(name)=LOWER(?)", (clean_name,))
+                existing = one(
+                    db,
+                    "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+                    (clean_name,),
+                )
                 
                 if existing and int(existing["id"]) != pid:
                     # MERGE SCENARIO: 
@@ -6064,7 +6068,11 @@ def parameter_save(
         
         # 3. Logic for Insert
         else:
-            existing = one(db, "SELECT id FROM parameter_defs WHERE LOWER(name)=LOWER(?)", (clean_name,))
+            existing = one(
+                db,
+                "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+                (clean_name,),
+            )
             if existing:
                 cur.execute("""
                     UPDATE parameter_defs 
@@ -6079,8 +6087,12 @@ def parameter_save(
 
         db.commit()
         
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+        message = "Unable to save parameter."
+        error_text = str(getattr(exc, "orig", exc)).lower()
+        if "unique" in error_text or "duplicate" in error_text:
+            message = "Parameter name already exists."
         param_payload = {
             "id": int(param_id) if param_id and str(param_id).strip().isdigit() else None,
             "name": clean_name,
@@ -6097,7 +6109,7 @@ def parameter_save(
         }
         return templates.TemplateResponse(
             "parameter_edit.html",
-            {"request": request, "param": param_payload, "error": "Unable to save parameter. Check for duplicate names."},
+            {"request": request, "param": param_payload, "error": message},
             status_code=400,
         )
     except Exception:
@@ -6152,7 +6164,11 @@ async def parameter_bulk_add(request: Request):
         if not name:
             continue
         unit = parts[1] if len(parts) > 1 and parts[1] else default_unit
-        existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (name,))
+        existing = one(
+            db,
+            "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+            (name,),
+        )
         if existing:
             cur.execute(
                 "UPDATE parameter_defs SET unit=COALESCE(unit, ?) WHERE id=?",
@@ -6164,7 +6180,7 @@ async def parameter_bulk_add(request: Request):
                 INSERT INTO parameter_defs (name, unit, active, sort_order)
                 VALUES (?, ?, 1, 0)
                 """,
-                (name, unit),
+                (name.strip(), unit),
             )
     db.commit()
     db.close()
