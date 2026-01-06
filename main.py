@@ -2184,6 +2184,23 @@ def reset_parameter_defs_sequence(db: DBConnection) -> None:
         """
     )
 
+def reset_tanks_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM tanks
+        )
+        SELECT setval(
+            pg_get_serial_sequence('tanks', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
 def insert_parameter_def(db: DBConnection, name: str, unit: Optional[str], active: int, sort_order: int) -> None:
     try:
         db.execute(
@@ -3632,11 +3649,25 @@ async def tank_new(request: Request):
     user = get_current_user(db, request)
     max_order = one(db, "SELECT MAX(sort_order) AS max_order FROM tanks")
     next_order = ((max_order["max_order"] or 0) if max_order else 0) + 1
-    tank_id = execute_insert_returning_id(
-        db,
-        "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
-        (name, volume_l, next_order, user["id"] if user else None),
-    )
+    try:
+        tank_id = execute_insert_returning_id(
+            db,
+            "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
+            (name, volume_l, next_order, user["id"] if user else None),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "tanks_pkey":
+            reset_tanks_sequence(db)
+            tank_id = execute_insert_returning_id(
+                db,
+                "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
+                (name, volume_l, next_order, user["id"] if user else None),
+            )
+        else:
+            db.close()
+            raise
     if tank_id is None:
         db.close()
         raise HTTPException(status_code=500, detail="Failed to create tank")
