@@ -58,7 +58,11 @@ def main() -> None:
     parser.add_argument("--postgres-url", required=True, help="Postgres SQLAlchemy URL.")
     args = parser.parse_args()
 
-    sqlite_conn = sqlite3.connect(args.sqlite_path)
+    sqlite_path = os.path.expanduser(args.sqlite_path)
+    if not os.path.exists(sqlite_path):
+        raise FileNotFoundError(f"SQLite database not found: {sqlite_path}")
+
+    sqlite_conn = sqlite3.connect(sqlite_path)
     sqlite_conn.row_factory = sqlite3.Row
 
     postgres_url = normalize_database_url(args.postgres_url)
