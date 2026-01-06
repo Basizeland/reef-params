@@ -6156,9 +6156,9 @@ def parameter_delete(request: Request, param_id: int):
         if table_exists(db, "sample_values"):
             db.execute("DELETE FROM sample_values WHERE parameter_id=?", (param_id,))
         if param_name:
-            for tbl in ("parameters", "targets"):
+            for tbl, col in (("parameters", "name"), ("targets", "parameter")):
                 if table_exists(db, tbl):
-                    db.execute(f"DELETE FROM {tbl} WHERE parameter=?", (param_name,))
+                    db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (param_name,))
         db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
         db.commit()
         return redirect("/settings/parameters")
