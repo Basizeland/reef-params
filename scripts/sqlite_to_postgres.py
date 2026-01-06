@@ -58,6 +58,14 @@ def main() -> None:
     parser.add_argument("--postgres-url", required=True, help="Postgres SQLAlchemy URL.")
     args = parser.parse_args()
 
+    try:
+        import psycopg  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "psycopg is not available. Install with `pip install -r requirements.txt` "
+            "or `pip install psycopg[binary]`."
+        ) from exc
+
     sqlite_path = os.path.expanduser(args.sqlite_path)
     if not os.path.exists(sqlite_path):
         raise FileNotFoundError(f"SQLite database not found: {sqlite_path}")
