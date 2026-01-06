@@ -2090,8 +2090,12 @@ class CursorProxy:
 
     def execute(self, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
         result = self.db.execute(sql, params)
-        if result.lastrowid is not None:
-            self.lastrowid = result.lastrowid
+        try:
+            lastrowid = result.lastrowid
+        except AttributeError:
+            lastrowid = None
+        if lastrowid is not None:
+            self.lastrowid = lastrowid
         return result
 
     def executemany(self, sql: str, seq_of_params: List[Tuple[Any, ...]]):
