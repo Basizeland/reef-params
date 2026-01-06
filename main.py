@@ -36,7 +36,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reef.bsizeland.com")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
 
 app = FastAPI(title="Reef Tank Parameters")
 
@@ -209,7 +209,7 @@ def send_email(recipient: str, subject: str, text_body: str, html_body: str | No
 
 def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
     app_name = os.environ.get("APP_NAME", "Reef Metrics")
-    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
+    base_url = PUBLIC_BASE_URL or "https://reefmetrics.app"
     subject = f"Welcome to {app_name}"
     text_body = (
         f"Hi {username or recipient},\n\n"
@@ -795,7 +795,7 @@ def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
 
 def send_daily_summary_email(db: Connection, user: Dict[str, Any]) -> Tuple[bool, str]:
     app_name = os.environ.get("APP_NAME", "Reef Metrics")
-    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
+    base_url = PUBLIC_BASE_URL or "https://reefmetrics.app"
     summary = build_daily_summary(db, user)
     subject = f"{app_name} Daily Summary"
     lines = [f"Daily summary for {summary['date']}:"]
