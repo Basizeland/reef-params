@@ -33,6 +33,8 @@ class User(Base, DictMixin):
     password_hash = Column(String, nullable=True)
     password_salt = Column(String, nullable=True)
     google_sub = Column(String, nullable=True)
+    last_login_at = Column(String, nullable=True)
+    is_admin = Column(Integer, default=0)
     created_at = Column(String, nullable=False)
     admin = Column(Integer, default=0)
 
