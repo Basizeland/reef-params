@@ -8,7 +8,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sqlalchemy import create_engine, text
 
-from database import normalize_database_url
+from database import normalize_database_url, Base
+import models  # noqa: F401
 
 
 DEFAULT_TABLE_ORDER: List[str] = [
@@ -76,6 +77,8 @@ def main() -> None:
     postgres_url = normalize_database_url(args.postgres_url)
 
     engine = create_engine(postgres_url, connect_args={"sslmode": "require"})
+
+    Base.metadata.create_all(engine)
 
     with engine.begin() as pg_conn:
         for table in DEFAULT_TABLE_ORDER:
