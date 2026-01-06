@@ -5950,7 +5950,11 @@ def parameters_settings(request: Request):
     db = get_db()
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("parameters.html", {"request": request, "parameters": rows})
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(
+        "parameters.html",
+        {"request": request, "parameters": rows, "error": error},
+    )
 
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
 @app.get("/settings/parameters/new/", response_class=HTMLResponse, include_in_schema=False)
@@ -6141,10 +6145,28 @@ def parameter_save(
 @app.post("/settings/parameters/{param_id}/delete")
 def parameter_delete(request: Request, param_id: int):
     db = get_db()
-    db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
-    db.commit()
-    db.close()
-    return redirect("/settings/parameters")
+    param = one(db, "SELECT id, name FROM parameter_defs WHERE id=?", (param_id,))
+    if not param:
+        db.close()
+        return redirect("/settings/parameters")
+    param_name = row_get(param, "name")
+    try:
+        if table_exists(db, "sample_value_kits"):
+            db.execute("DELETE FROM sample_value_kits WHERE parameter_id=?", (param_id,))
+        if table_exists(db, "sample_values"):
+            db.execute("DELETE FROM sample_values WHERE parameter_id=?", (param_id,))
+        if param_name:
+            for tbl in ("parameters", "targets"):
+                if table_exists(db, tbl):
+                    db.execute(f"DELETE FROM {tbl} WHERE parameter=?", (param_name,))
+        db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
+        db.commit()
+        return redirect("/settings/parameters")
+    except IntegrityError:
+        db.rollback()
+        return redirect("/settings/parameters?error=Unable+to+delete+parameter+with+existing+references.")
+    finally:
+        db.close()
 
 @app.post("/settings/parameters/bulk-add")
 async def parameter_bulk_add(request: Request):

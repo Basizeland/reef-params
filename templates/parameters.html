@@ -15,6 +15,12 @@
   </div>
 </div>
 
+{% if error %}
+  <div class="alert alert-danger" role="alert">
+    {{ error }}
+  </div>
+{% endif %}
+
 <div class="row g-3">
   <div class="col-lg-8">
     <div class="card shadow-sm border-0">
