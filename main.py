@@ -2167,6 +2167,41 @@ def reset_additives_sequence(db: DBConnection) -> None:
         """
     )
 
+def reset_parameter_defs_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM parameter_defs
+        )
+        SELECT setval(
+            pg_get_serial_sequence('parameter_defs', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def insert_parameter_def(db: DBConnection, name: str, unit: Optional[str], active: int, sort_order: int) -> None:
+    try:
+        db.execute(
+            "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)",
+            (name, unit, active, sort_order),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "parameter_defs_pkey":
+            reset_parameter_defs_sequence(db)
+            db.execute(
+                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)",
+                (name, unit, active, sort_order),
+            )
+        else:
+            raise
+
 def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, details: Any = "") -> None:
     if not user:
         return
@@ -2402,11 +2437,7 @@ def insert_sample_reading(db: Connection, sample_id: int, pname: str, value: flo
     if mode == "sample_values":
         pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
         if not pd:
-            execute_with_retry(
-                db,
-                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, 0)",
-                (pname, unit or None),
-            )
+            insert_parameter_def(db, pname, unit or None, 1, 0)
             pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
         pid = pd["id"] if pd else None
         if pid is None:
@@ -2817,19 +2848,11 @@ def init_db() -> None:
                 ("Trace Elements", None, 1, 80),
             ]
             for entry in defaults:
-                execute_with_retry(
-                    db,
-                    "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)",
-                    entry,
-                )
+                insert_parameter_def(db, entry[0], entry[1], entry[2], entry[3])
         else:
             trace = one(db, "SELECT id FROM parameter_defs WHERE name=?", ("Trace Elements",))
             if trace is None:
-                execute_with_retry(
-                    db,
-                    "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, ?)",
-                    ("Trace Elements", None, 80),
-                )
+                insert_parameter_def(db, "Trace Elements", None, 1, 80)
 
         for name, d in INITIAL_DEFAULTS.items():
             execute_with_retry(
@@ -6084,10 +6107,26 @@ def parameter_save(
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
                     WHERE id=?""", (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
             else:
-                cur.execute("""
-                    INSERT INTO parameter_defs 
-                    (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
+                try:
+                    cur.execute("""
+                        INSERT INTO parameter_defs 
+                        (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        data,
+                    )
+                except IntegrityError as exc:
+                    orig = getattr(exc, "orig", None)
+                    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                    if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "parameter_defs_pkey":
+                        reset_parameter_defs_sequence(db)
+                        cur.execute("""
+                            INSERT INTO parameter_defs 
+                            (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            data,
+                        )
+                    else:
+                        raise
 
         db.commit()
         
@@ -6197,13 +6236,7 @@ async def parameter_bulk_add(request: Request):
                 (unit, existing["id"]),
             )
         else:
-            cur.execute(
-                """
-                INSERT INTO parameter_defs (name, unit, active, sort_order)
-                VALUES (?, ?, 1, 0)
-                """,
-                (name.strip(), unit),
-            )
+            insert_parameter_def(db, name.strip(), unit, 1, 0)
     db.commit()
     db.close()
     return redirect("/settings/parameters")
