@@ -53,10 +53,10 @@ def get_columns(conn: sqlite3.Connection, table: str) -> List[str]:
     return [row[1] for row in cursor.fetchall()]
 
 
-def get_pg_columns(inspector, table: str) -> List[str]:
+def get_pg_columns(inspector, table: str) -> List[dict]:
     if not inspector.has_table(table):
         return []
-    return [col["name"] for col in inspector.get_columns(table)]
+    return inspector.get_columns(table)
 
 def get_foreign_keys(conn: sqlite3.Connection, table: str) -> List[dict]:
     cursor = conn.execute(f"PRAGMA foreign_key_list({table})")
@@ -122,7 +122,28 @@ def main() -> None:
             sqlite_columns = get_columns(sqlite_conn, table)
             if not sqlite_columns:
                 continue
-            pg_columns = set(get_pg_columns(inspector, table))
+            pg_columns_info = get_pg_columns(inspector, table)
+            if not pg_columns_info:
+                print(
+                    f"Skipped {table} because it does not exist in Postgres.",
+                    file=sys.stderr,
+                )
+                continue
+            pg_columns = {col["name"] for col in pg_columns_info}
+            missing_required = [
+                col["name"]
+                for col in pg_columns_info
+                if not col.get("nullable", True)
+                and col.get("default") is None
+                and col["name"] not in sqlite_columns
+            ]
+            if missing_required:
+                print(
+                    f"Skipped {table} because required columns are missing in SQLite: "
+                    f"{', '.join(missing_required)}",
+                    file=sys.stderr,
+                )
+                continue
             columns = [col for col in sqlite_columns if col in pg_columns]
             if not columns:
                 print(
@@ -138,6 +159,13 @@ def main() -> None:
                     f"Skipping columns not present in Postgres for {table}: {missing_columns}",
                     file=sys.stderr,
                 )
+            required_columns = {
+                col["name"]
+                for col in pg_columns_info
+                if not col.get("nullable", True)
+                and col.get("default") is None
+                and col["name"] in columns
+            }
             insert_sql = text(
                 f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(':' + c for c in columns)})"
             )
@@ -145,7 +173,11 @@ def main() -> None:
                 fk for fk in get_foreign_keys(sqlite_conn, table) if fk["from"] in columns
             ]
             skipped = 0
+            skipped_nulls = 0
             for row in iter_rows(sqlite_conn, table, columns):
+                if required_columns and any(row.get(col) is None for col in required_columns):
+                    skipped_nulls += 1
+                    continue
                 if foreign_keys:
                     valid = True
                     for fk in foreign_keys:
@@ -165,6 +197,11 @@ def main() -> None:
             if skipped:
                 print(
                     f"Skipped {skipped} orphaned row(s) in {table} due to missing foreign keys.",
+                    file=sys.stderr,
+                )
+            if skipped_nulls:
+                print(
+                    f"Skipped {skipped_nulls} row(s) in {table} due to missing required values.",
                     file=sys.stderr,
                 )
 
