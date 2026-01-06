@@ -6023,9 +6023,9 @@ def parameter_save(
             # Check if we are renaming
             if old_name and clean_name and old_name != clean_name:
                 # Does the target name already exist?
-                existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (clean_name,))
+                existing = one(db, "SELECT id FROM parameter_defs WHERE LOWER(name)=LOWER(?)", (clean_name,))
                 
-                if existing:
+                if existing and int(existing["id"]) != pid:
                     # MERGE SCENARIO: 
                     existing_id = int(existing["id"])
                     
@@ -6064,13 +6064,13 @@ def parameter_save(
         
         # 3. Logic for Insert
         else:
-            existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (clean_name,))
+            existing = one(db, "SELECT id FROM parameter_defs WHERE LOWER(name)=LOWER(?)", (clean_name,))
             if existing:
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
+                    WHERE id=?""", (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
             else:
                 cur.execute("""
                     INSERT INTO parameter_defs 
@@ -6097,7 +6097,7 @@ def parameter_save(
         }
         return templates.TemplateResponse(
             "parameter_edit.html",
-            {"request": request, "param": param_payload, "error": "Parameter name already exists."},
+            {"request": request, "param": param_payload, "error": "Unable to save parameter. Check for duplicate names."},
             status_code=400,
         )
     except Exception:
