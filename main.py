@@ -1,4 +1,5 @@
 import os
+import psycopg
 from sqlalchemy import text, inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.elements import TextClause
@@ -2036,6 +2037,10 @@ class DBConnection:
         self._conn = conn
         self._needs_rollback = False
 
+    def _is_failed_transaction(self, exc: SQLAlchemyError) -> bool:
+        orig = getattr(exc, "orig", None)
+        return isinstance(orig, psycopg.errors.InFailedSqlTransaction)
+
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
         if self._needs_rollback:
             self._conn.rollback()
@@ -2045,9 +2050,15 @@ class DBConnection:
                 return self._conn.execute(sql, params or {})
             prepared_sql, bound = _prepare_sql(sql, params)
             return self._conn.execute(text(prepared_sql), bound)
-        except SQLAlchemyError:
+        except SQLAlchemyError as exc:
             self._needs_rollback = True
             self._conn.rollback()
+            if self._is_failed_transaction(exc):
+                self._needs_rollback = False
+                if isinstance(sql, TextClause):
+                    return self._conn.execute(sql, params or {})
+                prepared_sql, bound = _prepare_sql(sql, params)
+                return self._conn.execute(text(prepared_sql), bound)
             raise
 
     def commit(self) -> None:
