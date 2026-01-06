@@ -2,7 +2,7 @@ import os
 from sqlalchemy import text, inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.elements import TextClause
-from sqlalchemy.exc import OperationalError, IntegrityError
+from sqlalchemy.exc import OperationalError, IntegrityError, SQLAlchemyError
 import re
 import math
 import json
@@ -2036,10 +2036,14 @@ class DBConnection:
         self._conn = conn
 
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
-        if isinstance(sql, TextClause):
-            return self._conn.execute(sql, params or {})
-        prepared_sql, bound = _prepare_sql(sql, params)
-        return self._conn.execute(text(prepared_sql), bound)
+        try:
+            if isinstance(sql, TextClause):
+                return self._conn.execute(sql, params or {})
+            prepared_sql, bound = _prepare_sql(sql, params)
+            return self._conn.execute(text(prepared_sql), bound)
+        except SQLAlchemyError:
+            self._conn.rollback()
+            raise
 
     def commit(self) -> None:
         self._conn.commit()
