@@ -6,7 +6,7 @@ from typing import Iterable, List
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 from database import normalize_database_url, Base
 import models  # noqa: F401
@@ -79,6 +79,19 @@ def main() -> None:
     engine = create_engine(postgres_url, connect_args={"sslmode": "require"})
 
     Base.metadata.create_all(engine)
+
+    inspector = inspect(engine)
+    if inspector.has_table("users"):
+        existing_columns = {col["name"] for col in inspector.get_columns("users")}
+        missing = []
+        if "last_login_at" not in existing_columns:
+            missing.append("ALTER TABLE users ADD COLUMN last_login_at TEXT")
+        if "is_admin" not in existing_columns:
+            missing.append("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+        if missing:
+            with engine.begin() as pg_conn:
+                for ddl in missing:
+                    pg_conn.execute(text(ddl))
 
     with engine.begin() as pg_conn:
         for table in DEFAULT_TABLE_ORDER:
