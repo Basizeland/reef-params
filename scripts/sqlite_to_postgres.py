@@ -4,6 +4,8 @@ from typing import Iterable, List
 
 from sqlalchemy import create_engine, text
 
+from database import normalize_database_url
+
 
 DEFAULT_TABLE_ORDER: List[str] = [
     "users",
@@ -55,12 +57,7 @@ def main() -> None:
     sqlite_conn = sqlite3.connect(args.sqlite_path)
     sqlite_conn.row_factory = sqlite3.Row
 
-    if args.postgres_url.startswith("postgres://"):
-        postgres_url = args.postgres_url.replace("postgres://", "postgresql+psycopg://", 1)
-    elif args.postgres_url.startswith("postgresql://"):
-        postgres_url = args.postgres_url.replace("postgresql://", "postgresql+psycopg://", 1)
-    else:
-        postgres_url = args.postgres_url
+    postgres_url = normalize_database_url(args.postgres_url)
 
     engine = create_engine(postgres_url, connect_args={"sslmode": "require"})
 

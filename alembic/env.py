@@ -6,7 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from database import Base, SQLALCHEMY_DATABASE_URL
+from database import Base, SQLALCHEMY_DATABASE_URL, normalize_database_url
 import models  # noqa: F401
 
 config = context.config
@@ -14,10 +14,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 database_url = os.environ.get("DATABASE_URL") or SQLALCHEMY_DATABASE_URL
-if database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
-if database_url.startswith("postgresql://"):
-    database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+database_url = normalize_database_url(database_url)
 
 config.set_main_option("sqlalchemy.url", database_url)
 
