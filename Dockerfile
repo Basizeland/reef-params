@@ -4,7 +4,8 @@ WORKDIR /app
 
 # Install Python deps
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt \
+    && python -c "import psycopg"
 
 # Copy app code
 COPY . /app
@@ -17,4 +18,6 @@ ENV DATABASE_PATH=/data/reef.db
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000"]
+RUN chmod +x /app/scripts/entrypoint.sh
+
+CMD ["/app/scripts/entrypoint.sh"]

@@ -2,7 +2,7 @@ import os
 from sqlalchemy import text, inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.elements import TextClause
-from sqlalchemy.exc import OperationalError, IntegrityError
+from sqlalchemy.exc import OperationalError, IntegrityError, SQLAlchemyError
 import re
 import math
 import json
@@ -2034,18 +2034,29 @@ def _prepare_sql(sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None) -> T
 class DBConnection:
     def __init__(self, conn: Connection) -> None:
         self._conn = conn
+        self._needs_rollback = False
 
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
-        if isinstance(sql, TextClause):
-            return self._conn.execute(sql, params or {})
-        prepared_sql, bound = _prepare_sql(sql, params)
-        return self._conn.execute(text(prepared_sql), bound)
+        if self._needs_rollback:
+            self._conn.rollback()
+            self._needs_rollback = False
+        try:
+            if isinstance(sql, TextClause):
+                return self._conn.execute(sql, params or {})
+            prepared_sql, bound = _prepare_sql(sql, params)
+            return self._conn.execute(text(prepared_sql), bound)
+        except SQLAlchemyError:
+            self._needs_rollback = True
+            self._conn.rollback()
+            raise
 
     def commit(self) -> None:
         self._conn.commit()
+        self._needs_rollback = False
 
     def rollback(self) -> None:
         self._conn.rollback()
+        self._needs_rollback = False
 
     def close(self) -> None:
         self._conn.close()
