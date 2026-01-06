@@ -2051,8 +2051,13 @@ class DBConnection:
             raise
 
     def commit(self) -> None:
-        self._conn.commit()
-        self._needs_rollback = False
+        try:
+            self._conn.commit()
+            self._needs_rollback = False
+        except SQLAlchemyError:
+            self._needs_rollback = True
+            self._conn.rollback()
+            raise
 
     def rollback(self) -> None:
         self._conn.rollback()
