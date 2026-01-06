@@ -2435,11 +2435,14 @@ def get_sample_readings(db: Connection, sample_id: int) -> List[Dict[str, Any]]:
 def insert_sample_reading(db: Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
     mode = values_mode(db)
     if mode == "sample_values":
-        pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
+        pd = one(
+            db,
+            "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+            (pname,),
+        )
         if not pd:
-            insert_parameter_def(db, pname, unit or None, 1, 0)
-            pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
-        pid = pd["id"] if pd else None
+            return
+        pid = pd["id"]
         if pid is None:
             return
         execute_with_retry(
