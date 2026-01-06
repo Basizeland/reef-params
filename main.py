@@ -496,12 +496,11 @@ def collect_dosing_notifications(
         params.extend([owner_user_id, owner_user_id])
     rows = q(
         db,
-        f"""SELECT t.id AS tank_id, t.name AS tank_name, p.*
+        f"""SELECT DISTINCT t.id AS tank_id, t.name AS tank_name, p.*
             FROM tank_profiles p
             JOIN tanks t ON t.id = p.tank_id
             LEFT JOIN user_tanks ut ON ut.tank_id = t.id
-            {where_clause}
-            GROUP BY p.tank_id""",
+            {where_clause}""",
         tuple(params),
     )
     extra_entries = q(
