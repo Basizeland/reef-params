@@ -39,8 +39,8 @@
                   </div>
                   <div class="col-12 col-md-4">
                     <label class="form-label fw-bold">Remaining (ml)</label>
-                    <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="ml">
-                    <div class="d-flex align-items-center gap-2 mt-2">
+                    <div class="input-group">
+                      <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" value="{{ entry.remaining_ml if entry.remaining_ml is not none else '' }}" placeholder="ml">
                       <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Refill</button>
                       <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row" aria-label="Remove row">
                         <i class="bi bi-trash"></i>
@@ -73,8 +73,8 @@
                 </div>
                 <div class="col-12 col-md-4">
                   <label class="form-label fw-bold">Remaining (ml)</label>
-                  <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" placeholder="ml">
-                  <div class="d-flex align-items-center gap-2 mt-2">
+                  <div class="input-group">
+                    <input type="number" step="any" name="dosing_remaining_ml[]" class="form-control" placeholder="ml">
                     <button type="button" class="btn btn-outline-secondary btn-sm autofill-remaining">Refill</button>
                     <button type="button" class="btn btn-outline-danger btn-sm remove-dosing-row" aria-label="Remove row">
                       <i class="bi bi-trash"></i>
