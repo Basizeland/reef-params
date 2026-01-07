@@ -3870,6 +3870,7 @@ async def tank_delete(tank_id: int):
                 if table_exists(db, "parameters"):
                     db.execute(f"DELETE FROM parameters WHERE sample_id IN ({placeholders})", tuple(sample_ids))
             db.execute("DELETE FROM samples WHERE tank_id=?", (tank_id,))
+        db.commit()
         db.execute("DELETE FROM tanks WHERE id=?", (tank_id,))
         db.commit()
         return redirect("/")
