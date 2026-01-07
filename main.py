@@ -7996,12 +7996,15 @@ async def admin_user_tanks(request: Request, user_id: int):
             db.close()
             missing_param = ",".join(str(tid) for tid in missing_ids)
             return redirect(f"/admin/users?error=Unable+to+assign+tanks:+{urllib.parse.quote(missing_param)}")
-        log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
         db.commit()
     except IntegrityError:
         db.rollback()
         db.close()
         return redirect("/admin/users?error=Unable+to+assign+tanks+to+this+user")
+    try:
+        log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
+    except Exception:
+        pass
     db.close()
     return redirect("/admin/users?success=Tank+access+updated")
 
