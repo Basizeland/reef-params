@@ -2268,6 +2268,24 @@ def reset_tank_journal_sequence(db: DBConnection) -> None:
         """
     )
 
+def insert_tank_journal(db: DBConnection, tank_id: int, entry_date: str, entry_type: str, title: str, notes: str) -> None:
+    try:
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (tank_id, entry_date, entry_type, title, notes),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "tank_journal_pkey")):
+            reset_tank_journal_sequence(db)
+            db.execute(
+                "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+                (tank_id, entry_date, entry_type, title, notes),
+            )
+        else:
+            raise
+
 def insert_parameter_def(db: DBConnection, name: str, unit: Optional[str], active: int, sort_order: int) -> None:
     try:
         db.execute(
@@ -4434,10 +4452,7 @@ async def tank_journal_add(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    db.execute(
-        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-        (tank_id, entry_iso, entry_type, title, notes),
-    )
+    insert_tank_journal(db, tank_id, entry_iso, entry_type, title, notes)
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/journal")
@@ -4505,15 +4520,13 @@ def maintenance_task_complete(request: Request, tank_id: int, task_id: int):
             "UPDATE tank_maintenance_tasks SET last_completed_at=?, next_due_at=? WHERE id=? AND tank_id=?",
             (now.isoformat(), next_due.isoformat(), task_id, tank_id),
         )
-        db.execute(
-            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-            (
-                tank_id,
-                now.isoformat(),
-                "maintenance",
-                f"Completed: {task['title']}",
-                "Scheduled maintenance task completed.",
-            ),
+        insert_tank_journal(
+            db,
+            tank_id,
+            now.isoformat(),
+            "maintenance",
+            f"Completed: {task['title']}",
+            "Scheduled maintenance task completed.",
         )
         db.commit()
     db.close()
@@ -5341,15 +5354,13 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         if old_value != new_value:
             changed.append(f"{key}: {old_value} → {new_value}")
     if changed:
-        db.execute(
-            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-            (
-                tank_id,
-                datetime.utcnow().isoformat(),
-                "dosing",
-                "Updated dosing settings",
-                "; ".join(changed),
-            ),
+        insert_tank_journal(
+            db,
+            tank_id,
+            datetime.utcnow().isoformat(),
+            "dosing",
+            "Updated dosing settings",
+            "; ".join(changed),
         )
     db.commit()
     db.close()
@@ -5438,34 +5449,14 @@ async def dosing_container_action(request: Request, tank_id: int):
                 (tank_id, container_key),
             )
             label = row_get(entry, "solution") or row_get(entry, "parameter") or "Dosing"
-            try:
-                db.execute(
-                    "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                    (
-                        tank_id,
-                        datetime.utcnow().isoformat(),
-                        "dosing",
-                        f"Refilled {label} container",
-                        f"Reset remaining volume to {capacity} ml.",
-                    ),
-                )
-            except IntegrityError as exc:
-                orig = getattr(exc, "orig", None)
-                constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
-                if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "tank_journal_pkey")):
-                    reset_tank_journal_sequence(db)
-                    db.execute(
-                        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                        (
-                            tank_id,
-                            datetime.utcnow().isoformat(),
-                            "dosing",
-                            f"Refilled {label} container",
-                            f"Reset remaining volume to {capacity} ml.",
-                        ),
-                    )
-                else:
-                    raise
+            insert_tank_journal(
+                db,
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                f"Refilled {label} container",
+                f"Reset remaining volume to {capacity} ml.",
+            )
             db.commit()
     else:
         if container_key not in mapping:
@@ -5494,34 +5485,14 @@ async def dosing_container_action(request: Request, tank_id: int):
                 "nopox": "NoPox",
             }
             label = label_map.get(container_key, container_key)
-            try:
-                db.execute(
-                    "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                    (
-                        tank_id,
-                        datetime.utcnow().isoformat(),
-                        "dosing",
-                        f"Refilled {label} container",
-                        f"Reset remaining volume to {capacity} ml.",
-                    ),
-                )
-            except IntegrityError as exc:
-                orig = getattr(exc, "orig", None)
-                constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
-                if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "tank_journal_pkey")):
-                    reset_tank_journal_sequence(db)
-                    db.execute(
-                        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                        (
-                            tank_id,
-                            datetime.utcnow().isoformat(),
-                            "dosing",
-                            f"Refilled {label} container",
-                            f"Reset remaining volume to {capacity} ml.",
-                        ),
-                    )
-                else:
-                    raise
+            insert_tank_journal(
+                db,
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                f"Refilled {label} container",
+                f"Reset remaining volume to {capacity} ml.",
+            )
             db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
