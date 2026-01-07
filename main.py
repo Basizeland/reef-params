@@ -2201,6 +2201,23 @@ def reset_tanks_sequence(db: DBConnection) -> None:
         """
     )
 
+def reset_targets_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM targets
+        )
+        SELECT setval(
+            pg_get_serial_sequence('targets', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
 def insert_parameter_def(db: DBConnection, name: str, unit: Optional[str], active: int, sort_order: int) -> None:
     try:
         db.execute(
@@ -3751,15 +3768,39 @@ async def tank_new(request: Request):
                 continue
             unit = row_get(p, "unit") or ""
             if has_target_cols:
-                cur.execute(
-                    "INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-                    (tank_id, pname, target_low, target_high, alert_low, alert_high, unit),
-                )
+                try:
+                    cur.execute(
+                        "INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                        (tank_id, pname, target_low, target_high, alert_low, alert_high, unit),
+                    )
+                except IntegrityError as exc:
+                    orig = getattr(exc, "orig", None)
+                    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                    if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "targets_pkey":
+                        reset_targets_sequence(db)
+                        cur.execute(
+                            "INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                            (tank_id, pname, target_low, target_high, alert_low, alert_high, unit),
+                        )
+                    else:
+                        raise
             else:
-                cur.execute(
-                    "INSERT INTO targets (tank_id, parameter, low, high, unit, enabled) VALUES (?, ?, ?, ?, ?, 1)",
-                    (tank_id, pname, target_low, target_high, unit),
-                )
+                try:
+                    cur.execute(
+                        "INSERT INTO targets (tank_id, parameter, low, high, unit, enabled) VALUES (?, ?, ?, ?, ?, 1)",
+                        (tank_id, pname, target_low, target_high, unit),
+                    )
+                except IntegrityError as exc:
+                    orig = getattr(exc, "orig", None)
+                    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                    if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "targets_pkey":
+                        reset_targets_sequence(db)
+                        cur.execute(
+                            "INSERT INTO targets (tank_id, parameter, low, high, unit, enabled) VALUES (?, ?, ?, ?, ?, 1)",
+                            (tank_id, pname, target_low, target_high, unit),
+                        )
+                    else:
+                        raise
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
