@@ -53,7 +53,11 @@ if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
     sentry_sdk.init(
         dsn=sentry_dsn,
         integrations=[FastApiIntegration()],
+        send_default_pii=os.environ.get("SENTRY_SEND_DEFAULT_PII", "false").lower() in {"1", "true", "yes", "on"},
+        enable_logs=os.environ.get("SENTRY_ENABLE_LOGS", "true").lower() in {"1", "true", "yes", "on"},
         traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        profile_session_sample_rate=float(os.environ.get("SENTRY_PROFILE_SESSION_SAMPLE_RATE", "0.0")),
+        profile_lifecycle=os.environ.get("SENTRY_PROFILE_LIFECYCLE"),
     )
 
 def get_pandas():
