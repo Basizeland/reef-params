@@ -2268,6 +2268,23 @@ def reset_tank_journal_sequence(db: DBConnection) -> None:
         """
     )
 
+def reset_audit_logs_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM audit_logs
+        )
+        SELECT setval(
+            pg_get_serial_sequence('audit_logs', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
 def insert_tank_journal(db: DBConnection, tank_id: int, entry_date: str, entry_type: str, title: str, notes: str) -> None:
     try:
         db.execute(
@@ -2282,6 +2299,24 @@ def insert_tank_journal(db: DBConnection, tank_id: int, entry_date: str, entry_t
             db.execute(
                 "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
                 (tank_id, entry_date, entry_type, title, notes),
+            )
+        else:
+            raise
+
+def insert_audit_log(db: DBConnection, user_id: int, action: str, details: str, created_at: str) -> None:
+    try:
+        db.execute(
+            "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, action, details, created_at),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "audit_logs_pkey")):
+            reset_audit_logs_sequence(db)
+            db.execute(
+                "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, action, details, created_at),
             )
         else:
             raise
@@ -2310,11 +2345,7 @@ def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, detai
     if isinstance(details, (dict, list)):
         details = json.dumps(details, default=str)
     try:
-        execute_with_retry(
-            db,
-            "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
-            (user["id"], action, details, datetime.utcnow().isoformat()),
-        )
+        insert_audit_log(db, user["id"], action, str(details), datetime.utcnow().isoformat())
         db.commit()
     except Exception:
         pass
@@ -2943,6 +2974,8 @@ def init_db() -> None:
                 reset_samples_sequence(db)
             if table_exists(db, "tank_journal"):
                 reset_tank_journal_sequence(db)
+            if table_exists(db, "audit_logs"):
+                reset_audit_logs_sequence(db)
 
         if table_exists(db, "user_tanks"):
             execute_with_retry(
