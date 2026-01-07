@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">ICP Import</h1>
+    <div class="text-muted small">Import Triton ICP results from URL, CSV, or PDF.</div>
+  </div>
+</div>
+
+{% if error %}
+  <div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+{% if success %}
+  <div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-body">
+    <form method="post" action="/tools/icp/preview" enctype="multipart/form-data">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <label class="form-label">Tank</label>
+          <select class="form-select" name="tank_id" required>
+            <option value="">Select tank</option>
+            {% for tank in tanks %}
+              <option value="{{ tank.id }}" {% if selected_tank == tank.id|string %}selected{% endif %}>{{ tank.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-8">
+          <label class="form-label">Triton URL (preferred)</label>
+          <input class="form-control" name="icp_url" placeholder="https://www.triton-lab.de/en/showroom/icp-oes/XXXXXX">
+        </div>
+        <div class="col-lg-4">
+          <label class="form-label">CSV/PDF upload</label>
+          <input class="form-control" type="file" name="icp_file" accept="{% if pdf_available %}.csv,.pdf{% else %}.csv{% endif %}">
+          {% if pdf_available %}
+            <div class="form-text">PDF parsing requires PyPDF2 installed in the backend image.</div>
+          {% else %}
+            <div class="form-text text-warning">PDF parsing is disabled until PyPDF2 is installed.</div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-primary" type="submit">Preview Import</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if mapped %}
+  <div class="card shadow-sm border-0">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div>
+          <h5 class="mb-1">Preview</h5>
+          <div class="text-muted small">Mapped {{ mapped|length }} of {{ raw_count }} results.</div>
+        </div>
+        <form method="post" action="/tools/icp/import" class="d-flex flex-wrap gap-2 align-items-end">
+          <input type="hidden" name="tank_id" value="{{ selected_tank }}">
+          <input type="hidden" name="mapped_payload" value="{{ mapped_payload }}">
+          <button class="btn btn-outline-primary" type="submit">Import Sample</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Value</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in mapped %}
+              <tr>
+                <td class="fw-semibold">{{ row.parameter }}</td>
+                <td>{{ row.value }} {{ row.unit }}</td>
+                <td class="text-muted small">{{ row.source }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
