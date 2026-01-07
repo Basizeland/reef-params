@@ -1,4 +1,5 @@
 import os
+import psycopg
 from sqlalchemy import text, inspect
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.elements import TextClause
@@ -495,12 +496,11 @@ def collect_dosing_notifications(
         params.extend([owner_user_id, owner_user_id])
     rows = q(
         db,
-        f"""SELECT t.id AS tank_id, t.name AS tank_name, p.*
+        f"""SELECT DISTINCT t.id AS tank_id, t.name AS tank_name, p.*
             FROM tank_profiles p
             JOIN tanks t ON t.id = p.tank_id
             LEFT JOIN user_tanks ut ON ut.tank_id = t.id
-            {where_clause}
-            GROUP BY p.tank_id""",
+            {where_clause}""",
         tuple(params),
     )
     extra_entries = q(
@@ -981,11 +981,11 @@ def get_visible_tanks(db: Connection, request: Request) -> List[Dict[str, Any]]:
     if user:
         return q(
             db,
-            """SELECT DISTINCT t.*
+            """SELECT DISTINCT ON (t.id) t.*
                FROM tanks t
                LEFT JOIN user_tanks ut ON ut.tank_id = t.id
                WHERE t.owner_user_id=? OR ut.user_id=?
-               ORDER BY COALESCE(t.sort_order, 0), t.name""",
+               ORDER BY t.id, COALESCE(t.sort_order, 0), t.name""",
             (user["id"], user["id"]),
         )
     return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
@@ -1014,10 +1014,11 @@ def get_tank_for_user(db: Connection, user: Optional[Dict[str, Any]], tank_id: i
     if user:
         return one(
             db,
-            """SELECT DISTINCT t.*
+            """SELECT DISTINCT ON (t.id) t.*
                FROM tanks t
                LEFT JOIN user_tanks ut ON ut.tank_id = t.id
-               WHERE t.id=? AND (t.owner_user_id=? OR ut.user_id=?)""",
+               WHERE t.id=? AND (t.owner_user_id=? OR ut.user_id=?)
+               ORDER BY t.id""",
             (tank_id, user["id"], user["id"]),
         )
     return one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
@@ -2036,6 +2037,10 @@ class DBConnection:
         self._conn = conn
         self._needs_rollback = False
 
+    def _is_failed_transaction(self, exc: SQLAlchemyError) -> bool:
+        orig = getattr(exc, "orig", None)
+        return isinstance(orig, psycopg.errors.InFailedSqlTransaction)
+
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
         if self._needs_rollback:
             self._conn.rollback()
@@ -2045,14 +2050,25 @@ class DBConnection:
                 return self._conn.execute(sql, params or {})
             prepared_sql, bound = _prepare_sql(sql, params)
             return self._conn.execute(text(prepared_sql), bound)
+        except SQLAlchemyError as exc:
+            self._needs_rollback = True
+            self._conn.rollback()
+            if self._is_failed_transaction(exc):
+                self._needs_rollback = False
+                if isinstance(sql, TextClause):
+                    return self._conn.execute(sql, params or {})
+                prepared_sql, bound = _prepare_sql(sql, params)
+                return self._conn.execute(text(prepared_sql), bound)
+            raise
+
+    def commit(self) -> None:
+        try:
+            self._conn.commit()
+            self._needs_rollback = False
         except SQLAlchemyError:
             self._needs_rollback = True
             self._conn.rollback()
             raise
-
-    def commit(self) -> None:
-        self._conn.commit()
-        self._needs_rollback = False
 
     def rollback(self) -> None:
         self._conn.rollback()
@@ -2075,8 +2091,12 @@ class CursorProxy:
 
     def execute(self, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
         result = self.db.execute(sql, params)
-        if result.lastrowid is not None:
-            self.lastrowid = result.lastrowid
+        try:
+            lastrowid = result.lastrowid
+        except AttributeError:
+            lastrowid = None
+        if lastrowid is not None:
+            self.lastrowid = lastrowid
         return result
 
     def executemany(self, sql: str, seq_of_params: List[Tuple[Any, ...]]):
@@ -2098,7 +2118,22 @@ def execute_with_retry(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dic
 
 def execute_insert_returning_id(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> Optional[int]:
     if engine.dialect.name == "postgresql":
-        result = db.execute(f"{sql} RETURNING id", params)
+        try:
+            result = db.execute(f"{sql} RETURNING id", params)
+        except IntegrityError as exc:
+            orig = getattr(exc, "orig", None)
+            constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+            if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation):
+                if "INSERT INTO samples" in sql and (constraint in (None, "samples_pkey")):
+                    reset_samples_sequence(db)
+                    result = db.execute(f"{sql} RETURNING id", params)
+                elif "INSERT INTO tanks" in sql and (constraint in (None, "tanks_pkey")):
+                    reset_tanks_sequence(db)
+                    result = db.execute(f"{sql} RETURNING id", params)
+                else:
+                    raise
+            else:
+                raise
         row = result.mappings().first()
         return row["id"] if row else None
     result = db.execute(sql, params)
@@ -2131,17 +2166,186 @@ def table_exists(db: DBConnection, name: str) -> bool:
     inspector = inspect(db._conn)
     return inspector.has_table(name)
 
+def reset_additives_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM additives
+        )
+        SELECT setval(
+            pg_get_serial_sequence('additives', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_parameter_defs_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM parameter_defs
+        )
+        SELECT setval(
+            pg_get_serial_sequence('parameter_defs', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_tanks_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM tanks
+        )
+        SELECT setval(
+            pg_get_serial_sequence('tanks', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_targets_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM targets
+        )
+        SELECT setval(
+            pg_get_serial_sequence('targets', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_samples_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM samples
+        )
+        SELECT setval(
+            pg_get_serial_sequence('samples', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_tank_journal_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM tank_journal
+        )
+        SELECT setval(
+            pg_get_serial_sequence('tank_journal', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_audit_logs_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM audit_logs
+        )
+        SELECT setval(
+            pg_get_serial_sequence('audit_logs', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def insert_tank_journal(db: DBConnection, tank_id: int, entry_date: str, entry_type: str, title: str, notes: str) -> None:
+    try:
+        db.execute(
+            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+            (tank_id, entry_date, entry_type, title, notes),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "tank_journal_pkey")):
+            reset_tank_journal_sequence(db)
+            db.execute(
+                "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+                (tank_id, entry_date, entry_type, title, notes),
+            )
+        else:
+            raise
+
+def insert_audit_log(db: DBConnection, user_id: int, action: str, details: str, created_at: str) -> None:
+    try:
+        db.execute(
+            "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, action, details, created_at),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "audit_logs_pkey")):
+            reset_audit_logs_sequence(db)
+            db.execute(
+                "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, action, details, created_at),
+            )
+        else:
+            raise
+
+def insert_parameter_def(db: DBConnection, name: str, unit: Optional[str], active: int, sort_order: int) -> None:
+    try:
+        db.execute(
+            "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)",
+            (name, unit, active, sort_order),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "parameter_defs_pkey":
+            reset_parameter_defs_sequence(db)
+            db.execute(
+                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)",
+                (name, unit, active, sort_order),
+            )
+        else:
+            raise
+
 def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, details: Any = "") -> None:
     if not user:
         return
     if isinstance(details, (dict, list)):
         details = json.dumps(details, default=str)
     try:
-        execute_with_retry(
-            db,
-            "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
-            (user["id"], action, details, datetime.utcnow().isoformat()),
-        )
+        insert_audit_log(db, user["id"], action, str(details), datetime.utcnow().isoformat())
         db.commit()
     except Exception:
         pass
@@ -2364,15 +2568,14 @@ def get_sample_readings(db: Connection, sample_id: int) -> List[Dict[str, Any]]:
 def insert_sample_reading(db: Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
     mode = values_mode(db)
     if mode == "sample_values":
-        pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
+        pd = one(
+            db,
+            "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+            (pname,),
+        )
         if not pd:
-            execute_with_retry(
-                db,
-                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, 0)",
-                (pname, unit or None),
-            )
-            pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
-        pid = pd["id"] if pd else None
+            return
+        pid = pd["id"]
         if pid is None:
             return
         execute_with_retry(
@@ -2758,6 +2961,21 @@ def init_db() -> None:
         from database import Base
 
         Base.metadata.create_all(engine)
+        if engine.dialect.name == "postgresql":
+            if table_exists(db, "additives"):
+                reset_additives_sequence(db)
+            if table_exists(db, "parameter_defs"):
+                reset_parameter_defs_sequence(db)
+            if table_exists(db, "tanks"):
+                reset_tanks_sequence(db)
+            if table_exists(db, "targets"):
+                reset_targets_sequence(db)
+            if table_exists(db, "samples"):
+                reset_samples_sequence(db)
+            if table_exists(db, "tank_journal"):
+                reset_tank_journal_sequence(db)
+            if table_exists(db, "audit_logs"):
+                reset_audit_logs_sequence(db)
 
         if table_exists(db, "user_tanks"):
             execute_with_retry(
@@ -2781,19 +2999,11 @@ def init_db() -> None:
                 ("Trace Elements", None, 1, 80),
             ]
             for entry in defaults:
-                execute_with_retry(
-                    db,
-                    "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)",
-                    entry,
-                )
+                insert_parameter_def(db, entry[0], entry[1], entry[2], entry[3])
         else:
             trace = one(db, "SELECT id FROM parameter_defs WHERE name=?", ("Trace Elements",))
             if trace is None:
-                execute_with_retry(
-                    db,
-                    "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, ?)",
-                    ("Trace Elements", None, 80),
-                )
+                insert_parameter_def(db, "Trace Elements", None, 1, 80)
 
         for name, d in INITIAL_DEFAULTS.items():
             execute_with_retry(
@@ -2812,30 +3022,6 @@ def init_db() -> None:
                 ),
             )
 
-        default_additives = [
-            ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend.", "All-in-one solutions"),
-            ("Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0, "Saturated kalkwasser solution.", "All-in-one solutions"),
-        ]
-        for name, parameter, strength, unit, max_daily, notes, group_name in default_additives:
-            row = one(db, "SELECT id, active, group_name FROM additives WHERE name=? AND parameter=?", (name, parameter))
-            if row is None:
-                execute_with_retry(
-                    db,
-                    """
-                    INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, group_name, active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    (name, parameter, strength, unit, max_daily, notes, group_name),
-                )
-            else:
-                if row.get("active") == 0:
-                    execute_with_retry(db, "UPDATE additives SET active=1 WHERE id=?", (row["id"],))
-                if not row.get("group_name"):
-                    execute_with_retry(
-                        db,
-                        "UPDATE additives SET group_name=? WHERE id=?",
-                        (group_name, row["id"]),
-                    )
         db.commit()
     finally:
         db.close()
@@ -3570,11 +3756,25 @@ async def tank_new(request: Request):
     user = get_current_user(db, request)
     max_order = one(db, "SELECT MAX(sort_order) AS max_order FROM tanks")
     next_order = ((max_order["max_order"] or 0) if max_order else 0) + 1
-    tank_id = execute_insert_returning_id(
-        db,
-        "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
-        (name, volume_l, next_order, user["id"] if user else None),
-    )
+    try:
+        tank_id = execute_insert_returning_id(
+            db,
+            "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
+            (name, volume_l, next_order, user["id"] if user else None),
+        )
+    except IntegrityError as exc:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+        if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "tanks_pkey":
+            reset_tanks_sequence(db)
+            tank_id = execute_insert_returning_id(
+                db,
+                "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
+                (name, volume_l, next_order, user["id"] if user else None),
+            )
+        else:
+            db.close()
+            raise
     if tank_id is None:
         db.close()
         raise HTTPException(status_code=500, detail="Failed to create tank")
@@ -3585,6 +3785,7 @@ async def tank_new(request: Request):
             "ON CONFLICT (user_id, tank_id) DO NOTHING",
             (user["id"], tank_id),
         )
+    db.commit()
     profile_fields = {
         "tank_id": tank_id,
         "volume_l": volume_l,
@@ -3642,6 +3843,7 @@ async def tank_new(request: Request):
         tuple(profile_fields.values()),
     )
     if table_exists(db, "targets"):
+        cur = cursor(db)
         inspector = inspect(db._conn)
         cols = {column["name"] for column in inspector.get_columns("targets")}
         has_target_cols = "target_low" in cols
@@ -3657,15 +3859,39 @@ async def tank_new(request: Request):
                 continue
             unit = row_get(p, "unit") or ""
             if has_target_cols:
-                cur.execute(
-                    "INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-                    (tank_id, pname, target_low, target_high, alert_low, alert_high, unit),
-                )
+                try:
+                    cur.execute(
+                        "INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                        (tank_id, pname, target_low, target_high, alert_low, alert_high, unit),
+                    )
+                except IntegrityError as exc:
+                    orig = getattr(exc, "orig", None)
+                    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                    if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "targets_pkey":
+                        reset_targets_sequence(db)
+                        cur.execute(
+                            "INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                            (tank_id, pname, target_low, target_high, alert_low, alert_high, unit),
+                        )
+                    else:
+                        raise
             else:
-                cur.execute(
-                    "INSERT INTO targets (tank_id, parameter, low, high, unit, enabled) VALUES (?, ?, ?, ?, ?, 1)",
-                    (tank_id, pname, target_low, target_high, unit),
-                )
+                try:
+                    cur.execute(
+                        "INSERT INTO targets (tank_id, parameter, low, high, unit, enabled) VALUES (?, ?, ?, ?, ?, 1)",
+                        (tank_id, pname, target_low, target_high, unit),
+                    )
+                except IntegrityError as exc:
+                    orig = getattr(exc, "orig", None)
+                    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                    if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "targets_pkey":
+                        reset_targets_sequence(db)
+                        cur.execute(
+                            "INSERT INTO targets (tank_id, parameter, low, high, unit, enabled) VALUES (?, ?, ?, ?, ?, 1)",
+                            (tank_id, pname, target_low, target_high, unit),
+                        )
+                    else:
+                        raise
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
@@ -3706,10 +3932,43 @@ async def tank_order(request: Request, tank_id: int):
 @app.post("/tanks/{tank_id}/delete")
 async def tank_delete(tank_id: int):
     db = get_db()
-    db.execute("DELETE FROM tanks WHERE id=?", (tank_id,))
-    db.commit()
-    db.close()
-    return redirect("/")
+    try:
+        if table_exists(db, "user_tanks"):
+            db.execute("DELETE FROM user_tanks WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "tank_profiles"):
+            db.execute("DELETE FROM tank_profiles WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "targets"):
+            db.execute("DELETE FROM targets WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "dose_logs"):
+            db.execute("DELETE FROM dose_logs WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "dosing_entries"):
+            db.execute("DELETE FROM dosing_entries WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "dosing_notifications"):
+            db.execute("DELETE FROM dosing_notifications WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "tank_maintenance_tasks"):
+            db.execute("DELETE FROM tank_maintenance_tasks WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "tank_journal"):
+            db.execute("DELETE FROM tank_journal WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "samples"):
+            sample_ids = [row["id"] for row in q(db, "SELECT id FROM samples WHERE tank_id=?", (tank_id,))]
+            if sample_ids:
+                placeholders = ",".join(["?"] * len(sample_ids))
+                if table_exists(db, "sample_value_kits"):
+                    db.execute(f"DELETE FROM sample_value_kits WHERE sample_id IN ({placeholders})", tuple(sample_ids))
+                if table_exists(db, "sample_values"):
+                    db.execute(f"DELETE FROM sample_values WHERE sample_id IN ({placeholders})", tuple(sample_ids))
+                if table_exists(db, "parameters"):
+                    db.execute(f"DELETE FROM parameters WHERE sample_id IN ({placeholders})", tuple(sample_ids))
+            db.execute("DELETE FROM samples WHERE tank_id=?", (tank_id,))
+        db.commit()
+        db.execute("DELETE FROM tanks WHERE id=?", (tank_id,))
+        db.commit()
+        return redirect("/")
+    except IntegrityError:
+        db.rollback()
+        return redirect("/?error=Unable+to+delete+tank+with+existing+references.")
+    finally:
+        db.close()
 
 @app.post("/samples/{sample_id}/delete")
 async def sample_delete(sample_id: int):
@@ -4215,10 +4474,7 @@ async def tank_journal_add(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    db.execute(
-        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-        (tank_id, entry_iso, entry_type, title, notes),
-    )
+    insert_tank_journal(db, tank_id, entry_iso, entry_type, title, notes)
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/journal")
@@ -4286,15 +4542,13 @@ def maintenance_task_complete(request: Request, tank_id: int, task_id: int):
             "UPDATE tank_maintenance_tasks SET last_completed_at=?, next_due_at=? WHERE id=? AND tank_id=?",
             (now.isoformat(), next_due.isoformat(), task_id, tank_id),
         )
-        db.execute(
-            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-            (
-                tank_id,
-                now.isoformat(),
-                "maintenance",
-                f"Completed: {task['title']}",
-                "Scheduled maintenance task completed.",
-            ),
+        insert_tank_journal(
+            db,
+            tank_id,
+            now.isoformat(),
+            "maintenance",
+            f"Completed: {task['title']}",
+            "Scheduled maintenance task completed.",
         )
         db.commit()
     db.close()
@@ -5122,15 +5376,13 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         if old_value != new_value:
             changed.append(f"{key}: {old_value} → {new_value}")
     if changed:
-        db.execute(
-            "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-            (
-                tank_id,
-                datetime.utcnow().isoformat(),
-                "dosing",
-                "Updated dosing settings",
-                "; ".join(changed),
-            ),
+        insert_tank_journal(
+            db,
+            tank_id,
+            datetime.utcnow().isoformat(),
+            "dosing",
+            "Updated dosing settings",
+            "; ".join(changed),
         )
     db.commit()
     db.close()
@@ -5219,15 +5471,13 @@ async def dosing_container_action(request: Request, tank_id: int):
                 (tank_id, container_key),
             )
             label = row_get(entry, "solution") or row_get(entry, "parameter") or "Dosing"
-            db.execute(
-                "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                (
-                    tank_id,
-                    datetime.utcnow().isoformat(),
-                    "dosing",
-                    f"Refilled {label} container",
-                    f"Reset remaining volume to {capacity} ml.",
-                ),
+            insert_tank_journal(
+                db,
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                f"Refilled {label} container",
+                f"Reset remaining volume to {capacity} ml.",
             )
             db.commit()
     else:
@@ -5257,15 +5507,13 @@ async def dosing_container_action(request: Request, tank_id: int):
                 "nopox": "NoPox",
             }
             label = label_map.get(container_key, container_key)
-            db.execute(
-                "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                (
-                    tank_id,
-                    datetime.utcnow().isoformat(),
-                    "dosing",
-                    f"Refilled {label} container",
-                    f"Reset remaining volume to {capacity} ml.",
-                ),
+            insert_tank_journal(
+                db,
+                tank_id,
+                datetime.utcnow().isoformat(),
+                "dosing",
+                f"Refilled {label} container",
+                f"Reset remaining volume to {capacity} ml.",
             )
             db.commit()
     db.close()
@@ -5914,7 +6162,11 @@ def parameters_settings(request: Request):
     db = get_db()
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("parameters.html", {"request": request, "parameters": rows})
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(
+        "parameters.html",
+        {"request": request, "parameters": rows, "error": error},
+    )
 
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
 @app.get("/settings/parameters/new/", response_class=HTMLResponse, include_in_schema=False)
@@ -5987,9 +6239,13 @@ def parameter_save(
             # Check if we are renaming
             if old_name and clean_name and old_name != clean_name:
                 # Does the target name already exist?
-                existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (clean_name,))
+                existing = one(
+                    db,
+                    "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+                    (clean_name,),
+                )
                 
-                if existing:
+                if existing and int(existing["id"]) != pid:
                     # MERGE SCENARIO: 
                     existing_id = int(existing["id"])
                     
@@ -6028,41 +6284,117 @@ def parameter_save(
         
         # 3. Logic for Insert
         else:
-            existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (clean_name,))
+            existing = one(
+                db,
+                "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+                (clean_name,),
+            )
             if existing:
                 cur.execute("""
                     UPDATE parameter_defs 
-                    SET chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
+                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
                         default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
+                    WHERE id=?""", (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
             else:
-                cur.execute("""
-                    INSERT INTO parameter_defs 
-                    (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", data)
+                try:
+                    cur.execute("""
+                        INSERT INTO parameter_defs 
+                        (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        data,
+                    )
+                except IntegrityError as exc:
+                    orig = getattr(exc, "orig", None)
+                    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                    if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and constraint == "parameter_defs_pkey":
+                        reset_parameter_defs_sequence(db)
+                        cur.execute("""
+                            INSERT INTO parameter_defs 
+                            (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            data,
+                        )
+                    else:
+                        raise
 
         db.commit()
         
-    except IntegrityError:
-        print("Database Integrity Error ignored.")
+    except IntegrityError as exc:
         db.rollback()
-        
-    except Exception as e:
-        print(f"Error saving parameter: {e}")
+        message = "Unable to save parameter."
+        error_text = str(getattr(exc, "orig", exc)).lower()
+        if "unique" in error_text or "duplicate" in error_text:
+            message = "Parameter name already exists."
+        param_payload = {
+            "id": int(param_id) if param_id and str(param_id).strip().isdigit() else None,
+            "name": clean_name,
+            "chemical_symbol": (chemical_symbol or "").strip() or None,
+            "unit": (unit or "").strip() or None,
+            "sort_order": order,
+            "max_daily_change": mdc,
+            "test_interval_days": interval,
+            "active": is_active,
+            "default_target_low": dt_low,
+            "default_target_high": dt_high,
+            "default_alert_low": da_low,
+            "default_alert_high": da_high,
+        }
+        return templates.TemplateResponse(
+            "parameter_edit.html",
+            {"request": request, "param": param_payload, "error": message},
+            status_code=400,
+        )
+    except Exception:
         db.rollback()
-        
+        param_payload = {
+            "id": int(param_id) if param_id and str(param_id).strip().isdigit() else None,
+            "name": clean_name,
+            "chemical_symbol": (chemical_symbol or "").strip() or None,
+            "unit": (unit or "").strip() or None,
+            "sort_order": order,
+            "max_daily_change": mdc,
+            "test_interval_days": interval,
+            "active": is_active,
+            "default_target_low": dt_low,
+            "default_target_high": dt_high,
+            "default_alert_low": da_low,
+            "default_alert_high": da_high,
+        }
+        return templates.TemplateResponse(
+            "parameter_edit.html",
+            {"request": request, "param": param_payload, "error": "Unable to save parameter."},
+            status_code=400,
+        )
     finally:
         db.close()
-        
+
     return redirect("/settings/parameters")
 
 @app.post("/settings/parameters/{param_id}/delete")
 def parameter_delete(request: Request, param_id: int):
     db = get_db()
-    db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
-    db.commit()
-    db.close()
-    return redirect("/settings/parameters")
+    param = one(db, "SELECT id, name FROM parameter_defs WHERE id=?", (param_id,))
+    if not param:
+        db.close()
+        return redirect("/settings/parameters")
+    param_name = row_get(param, "name")
+    try:
+        if table_exists(db, "sample_value_kits"):
+            db.execute("DELETE FROM sample_value_kits WHERE parameter_id=?", (param_id,))
+        if table_exists(db, "sample_values"):
+            db.execute("DELETE FROM sample_values WHERE parameter_id=?", (param_id,))
+        if param_name:
+            for tbl, col in (("parameters", "name"), ("targets", "parameter")):
+                if table_exists(db, tbl):
+                    db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (param_name,))
+        db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
+        db.commit()
+        return redirect("/settings/parameters")
+    except IntegrityError:
+        db.rollback()
+        return redirect("/settings/parameters?error=Unable+to+delete+parameter+with+existing+references.")
+    finally:
+        db.close()
 
 @app.post("/settings/parameters/bulk-add")
 async def parameter_bulk_add(request: Request):
@@ -6082,20 +6414,18 @@ async def parameter_bulk_add(request: Request):
         if not name:
             continue
         unit = parts[1] if len(parts) > 1 and parts[1] else default_unit
-        existing = one(db, "SELECT id FROM parameter_defs WHERE name=?", (name,))
+        existing = one(
+            db,
+            "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+            (name,),
+        )
         if existing:
             cur.execute(
                 "UPDATE parameter_defs SET unit=COALESCE(unit, ?) WHERE id=?",
                 (unit, existing["id"]),
             )
         else:
-            cur.execute(
-                """
-                INSERT INTO parameter_defs (name, unit, active, sort_order)
-                VALUES (?, ?, 1, 0)
-                """,
-                (name, unit),
-            )
+            insert_parameter_def(db, name.strip(), unit, 1, 0)
     db.commit()
     db.close()
     return redirect("/settings/parameters")
@@ -6612,10 +6942,21 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
             (*data, int(additive_id)),
         )
     else:
-        cur.execute(
-            "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            data,
-        )
+        try:
+            cur.execute(
+                "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                data,
+            )
+        except IntegrityError as exc:
+            orig = getattr(exc, "orig", None)
+            if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation):
+                reset_additives_sequence(db)
+                cur.execute(
+                    "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    data,
+                )
+            else:
+                raise
     db.commit()
     db.close()
     return redirect("/additives")
@@ -7567,7 +7908,16 @@ def admin_users(request: Request):
     assignments = q(db, "SELECT user_id, tank_id FROM user_tanks")
     user_tanks_map: Dict[int, List[int]] = {}
     for row in assignments:
-        user_tanks_map.setdefault(row["user_id"], []).append(row["tank_id"])
+        user_id = row_get(row, "user_id")
+        tank_id = row_get(row, "tank_id")
+        if user_id is None or tank_id is None:
+            continue
+        try:
+            user_id_int = int(user_id)
+            tank_id_int = int(tank_id)
+        except Exception:
+            continue
+        user_tanks_map.setdefault(user_id_int, []).append(tank_id_int)
     error = request.query_params.get("error")
     success = request.query_params.get("success")
     db.close()
@@ -7625,25 +7975,38 @@ async def admin_user_delete(request: Request, user_id: int):
 @app.post("/admin/users/{user_id}/tanks")
 async def admin_user_tanks(request: Request, user_id: int):
     form = await request.form()
-    tank_ids = form.getlist("tank_ids")
+    tank_ids = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
-    db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
-    for tank_id in tank_ids:
-        try:
-            tid = int(tank_id)
-        except Exception:
-            continue
-        execute_with_retry(
-            db,
-            "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
-            (user_id, tid),
-        )
-    log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
-    db.commit()
+    try:
+        db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
+        for tank_id in tank_ids:
+            execute_with_retry(
+                db,
+                "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
+                (user_id, tank_id),
+            )
+        assigned_rows = q(db, "SELECT tank_id FROM user_tanks WHERE user_id=?", (user_id,))
+        assigned_ids = {int(row_get(row, "tank_id")) for row in assigned_rows if row_get(row, "tank_id") is not None}
+        requested_ids = set(tank_ids)
+        missing_ids = sorted(requested_ids - assigned_ids)
+        if missing_ids:
+            db.rollback()
+            db.close()
+            missing_param = ",".join(str(tid) for tid in missing_ids)
+            return redirect(f"/admin/users?error=Unable+to+assign+tanks:+{urllib.parse.quote(missing_param)}")
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        db.close()
+        return redirect("/admin/users?error=Unable+to+assign+tanks+to+this+user")
+    try:
+        log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
+    except Exception:
+        pass
     db.close()
-    return redirect("/admin/users")
+    return redirect("/admin/users?success=Tank+access+updated")
 
 @app.post("/admin/tanks/{tank_id}/assign")
 async def assign_tank(request: Request, tank_id: int):

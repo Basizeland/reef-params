@@ -19,7 +19,7 @@
 
 <div class="row g-4">
   {% for u in users %}
-    {% set assigned_ids = user_tanks_map.get(u.id, []) %}
+    {% set assigned_ids = user_tanks_map.get(u.id|int, []) %}
     <div class="col-12">
       <div class="card shadow-sm">
         <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
@@ -45,7 +45,7 @@
             <div class="text-muted small mb-2">Assigned tanks</div>
             {% if assigned_ids %}
               <div class="d-flex flex-wrap gap-2">
-                {% for t in tanks if t.id in assigned_ids %}
+                {% for t in tanks if t.id|int in assigned_ids %}
                   <span class="badge bg-light text-dark border">{{ t.name }}</span>
                 {% endfor %}
               </div>
@@ -66,7 +66,7 @@
                       name="tank_ids"
                       id="tank-{{ u.id }}-{{ t.id }}"
                       value="{{ t.id }}"
-                      {% if t.id in assigned_ids %}checked{% endif %}
+                      {% if t.id|int in assigned_ids %}checked{% endif %}
                     >
                     <label class="form-check-label" for="tank-{{ u.id }}-{{ t.id }}">
                       {{ t.name }}
