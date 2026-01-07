@@ -2930,6 +2930,19 @@ def init_db() -> None:
         from database import Base
 
         Base.metadata.create_all(engine)
+        if engine.dialect.name == "postgresql":
+            if table_exists(db, "additives"):
+                reset_additives_sequence(db)
+            if table_exists(db, "parameter_defs"):
+                reset_parameter_defs_sequence(db)
+            if table_exists(db, "tanks"):
+                reset_tanks_sequence(db)
+            if table_exists(db, "targets"):
+                reset_targets_sequence(db)
+            if table_exists(db, "samples"):
+                reset_samples_sequence(db)
+            if table_exists(db, "tank_journal"):
+                reset_tank_journal_sequence(db)
 
         if table_exists(db, "user_tanks"):
             execute_with_retry(
