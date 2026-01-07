@@ -23,10 +23,9 @@
                 <img src="/static/logo-light.png" alt="Reef Metrics" class="brand-logo-img" height="36" width="150">
             </a>
             <div class="collapse navbar-collapse me-auto" id="navbarNav">
-                <ul class="navbar-nav ms-auto">
+                <ul class="navbar-nav">
                     <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house-door"></i> Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link" href="/insights"><i class="bi bi-graph-up-arrow"></i> Insights</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/account"><i class="bi bi-person-circle"></i> Account</a></li>
                     
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
@@ -71,6 +70,8 @@
                 </ul>
             </div>
             <div class="d-flex align-items-center gap-2 ms-auto">
+                <a class="nav-link" href="/account"><i class="bi bi-person-circle"></i> Account</a>
+                <a class="nav-link" href="/auth/logout"><i class="bi bi-box-arrow-right"></i> Logout</a>
                 {% set global_notifications = global_dosing_notifications(request) %}
                 <div class="dropdown">
                     <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
