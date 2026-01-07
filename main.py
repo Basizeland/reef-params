@@ -2117,7 +2117,22 @@ def execute_with_retry(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dic
 
 def execute_insert_returning_id(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> Optional[int]:
     if engine.dialect.name == "postgresql":
-        result = db.execute(f"{sql} RETURNING id", params)
+        try:
+            result = db.execute(f"{sql} RETURNING id", params)
+        except IntegrityError as exc:
+            orig = getattr(exc, "orig", None)
+            constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+            if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation):
+                if constraint == "samples_pkey" and "INSERT INTO samples" in sql:
+                    reset_samples_sequence(db)
+                    result = db.execute(f"{sql} RETURNING id", params)
+                elif constraint == "tanks_pkey" and "INSERT INTO tanks" in sql:
+                    reset_tanks_sequence(db)
+                    result = db.execute(f"{sql} RETURNING id", params)
+                else:
+                    raise
+            else:
+                raise
         row = result.mappings().first()
         return row["id"] if row else None
     result = db.execute(sql, params)
@@ -2211,6 +2226,23 @@ def reset_targets_sequence(db: DBConnection) -> None:
         )
         SELECT setval(
             pg_get_serial_sequence('targets', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_samples_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM samples
+        )
+        SELECT setval(
+            pg_get_serial_sequence('samples', 'id'),
             COALESCE(max_id, 1),
             max_id IS NOT NULL
         )
