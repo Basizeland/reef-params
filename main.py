@@ -3842,10 +3842,42 @@ async def tank_order(request: Request, tank_id: int):
 @app.post("/tanks/{tank_id}/delete")
 async def tank_delete(tank_id: int):
     db = get_db()
-    db.execute("DELETE FROM tanks WHERE id=?", (tank_id,))
-    db.commit()
-    db.close()
-    return redirect("/")
+    try:
+        if table_exists(db, "user_tanks"):
+            db.execute("DELETE FROM user_tanks WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "tank_profiles"):
+            db.execute("DELETE FROM tank_profiles WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "targets"):
+            db.execute("DELETE FROM targets WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "dose_logs"):
+            db.execute("DELETE FROM dose_logs WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "dosing_entries"):
+            db.execute("DELETE FROM dosing_entries WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "dosing_notifications"):
+            db.execute("DELETE FROM dosing_notifications WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "tank_maintenance_tasks"):
+            db.execute("DELETE FROM tank_maintenance_tasks WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "tank_journal"):
+            db.execute("DELETE FROM tank_journal WHERE tank_id=?", (tank_id,))
+        if table_exists(db, "samples"):
+            sample_ids = [row["id"] for row in q(db, "SELECT id FROM samples WHERE tank_id=?", (tank_id,))]
+            if sample_ids:
+                placeholders = ",".join(["?"] * len(sample_ids))
+                if table_exists(db, "sample_value_kits"):
+                    db.execute(f"DELETE FROM sample_value_kits WHERE sample_id IN ({placeholders})", tuple(sample_ids))
+                if table_exists(db, "sample_values"):
+                    db.execute(f"DELETE FROM sample_values WHERE sample_id IN ({placeholders})", tuple(sample_ids))
+                if table_exists(db, "parameters"):
+                    db.execute(f"DELETE FROM parameters WHERE sample_id IN ({placeholders})", tuple(sample_ids))
+            db.execute("DELETE FROM samples WHERE tank_id=?", (tank_id,))
+        db.execute("DELETE FROM tanks WHERE id=?", (tank_id,))
+        db.commit()
+        return redirect("/")
+    except IntegrityError:
+        db.rollback()
+        return redirect("/?error=Unable+to+delete+tank+with+existing+references.")
+    finally:
+        db.close()
 
 @app.post("/samples/{sample_id}/delete")
 async def sample_delete(sample_id: int):
