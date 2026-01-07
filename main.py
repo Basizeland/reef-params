@@ -3695,6 +3695,7 @@ async def tank_new(request: Request):
             "ON CONFLICT (user_id, tank_id) DO NOTHING",
             (user["id"], tank_id),
         )
+    db.commit()
     profile_fields = {
         "tank_id": tank_id,
         "volume_l": volume_l,
