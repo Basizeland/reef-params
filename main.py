@@ -981,10 +981,11 @@ def get_visible_tanks(db: Connection, request: Request) -> List[Dict[str, Any]]:
     if user:
         return q(
             db,
-            """SELECT DISTINCT t.*
+            """SELECT t.*
                FROM tanks t
                LEFT JOIN user_tanks ut ON ut.tank_id = t.id
                WHERE t.owner_user_id=? OR ut.user_id=?
+               GROUP BY t.id
                ORDER BY COALESCE(t.sort_order, 0), t.name""",
             (user["id"], user["id"]),
         )
@@ -1014,10 +1015,11 @@ def get_tank_for_user(db: Connection, user: Optional[Dict[str, Any]], tank_id: i
     if user:
         return one(
             db,
-            """SELECT DISTINCT t.*
+            """SELECT t.*
                FROM tanks t
                LEFT JOIN user_tanks ut ON ut.tank_id = t.id
-               WHERE t.id=? AND (t.owner_user_id=? OR ut.user_id=?)""",
+               WHERE t.id=? AND (t.owner_user_id=? OR ut.user_id=?)
+               GROUP BY t.id""",
             (tank_id, user["id"], user["id"]),
         )
     return one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
