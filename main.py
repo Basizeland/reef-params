@@ -20,6 +20,8 @@ import importlib
 import importlib.util
 import smtplib
 import threading
+import logging
+import uuid
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
@@ -40,6 +42,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
 
 app = FastAPI(title="Reef Tank Parameters")
+logger = logging.getLogger("reef")
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+
+sentry_dsn = os.environ.get("SENTRY_DSN")
+if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        integrations=[FastApiIntegration()],
+        traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+    )
 
 def get_pandas():
     if importlib.util.find_spec("pandas") is None:
@@ -3035,16 +3050,46 @@ def start_background_jobs() -> None:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
     path = request.url.path
     if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
-        return await call_next(request)
+        start_time = time_module.time()
+        response = await call_next(request)
+        log_payload = {
+            "event": "request",
+            "method": request.method,
+            "path": path,
+            "status": response.status_code,
+            "duration_ms": round((time_module.time() - start_time) * 1000, 2),
+            "request_id": request_id,
+            "user_id": None,
+            "tank_id": request.query_params.get("tank_id"),
+        }
+        logger.info(json.dumps(log_payload))
+        response.headers["X-Request-Id"] = request_id
+        return response
     db = get_db()
     user = None
+    start_time = time_module.time()
     try:
         user = get_current_user(db, request)
         request.state.user = user
         if users_exist(db) and user is None:
-            return redirect("/auth/login")
+            response = redirect("/auth/login")
+            log_payload = {
+                "event": "request",
+                "method": request.method,
+                "path": path,
+                "status": response.status_code,
+                "duration_ms": round((time_module.time() - start_time) * 1000, 2),
+                "request_id": request_id,
+                "user_id": None,
+                "tank_id": request.path_params.get("tank_id") or request.query_params.get("tank_id"),
+            }
+            logger.info(json.dumps(log_payload))
+            response.headers["X-Request-Id"] = request_id
+            return response
         response = await call_next(request)
         if user:
             log_audit(
@@ -3053,6 +3098,19 @@ async def auth_middleware(request: Request, call_next):
                 f"{request.method} {path}",
                 {"status": response.status_code},
             )
+        tank_id = request.path_params.get("tank_id") or request.query_params.get("tank_id")
+        log_payload = {
+            "event": "request",
+            "method": request.method,
+            "path": path,
+            "status": response.status_code,
+            "duration_ms": round((time_module.time() - start_time) * 1000, 2),
+            "request_id": request_id,
+            "user_id": user["id"] if user else None,
+            "tank_id": tank_id,
+        }
+        logger.info(json.dumps(log_payload))
+        response.headers["X-Request-Id"] = request_id
         return response
     finally:
         db.close()
@@ -3181,6 +3239,16 @@ def dashboard(request: Request):
             "extra_css": ["/static/dashboard.css"],
         },
     )
+
+@app.get("/health")
+def health_check() -> JSONResponse:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return JSONResponse({"status": "ok"})
+    except Exception as exc:
+        logger.error(json.dumps({"event": "health_check_failed", "error": str(exc)}))
+        return JSONResponse({"status": "error", "detail": "database unavailable"}, status_code=503)
 
 @app.get("/insights", response_class=HTMLResponse)
 def insights(request: Request):
