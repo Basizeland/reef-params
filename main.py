@@ -3250,6 +3250,13 @@ def health_check() -> JSONResponse:
         logger.error(json.dumps({"event": "health_check_failed", "error": str(exc)}))
         return JSONResponse({"status": "error", "detail": "database unavailable"}, status_code=503)
 
+@app.get("/debug/sentry")
+def sentry_test() -> JSONResponse:
+    allow_test = os.environ.get("ALLOW_SENTRY_TEST", "").lower() in {"1", "true", "yes", "on"}
+    if not allow_test:
+        raise HTTPException(status_code=404, detail="Not found")
+    raise RuntimeError("Sentry test endpoint triggered")
+
 @app.get("/insights", response_class=HTMLResponse)
 def insights(request: Request):
     db = get_db()
