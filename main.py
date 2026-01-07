@@ -7957,10 +7957,12 @@ async def admin_user_tanks(request: Request, user_id: int):
         assigned_rows = q(db, "SELECT tank_id FROM user_tanks WHERE user_id=?", (user_id,))
         assigned_ids = {int(row_get(row, "tank_id")) for row in assigned_rows if row_get(row, "tank_id") is not None}
         requested_ids = set(tank_ids)
-        if requested_ids and assigned_ids != requested_ids:
+        missing_ids = sorted(requested_ids - assigned_ids)
+        if missing_ids:
             db.rollback()
             db.close()
-            return redirect("/admin/users?error=Unable+to+assign+all+selected+tanks")
+            missing_param = ",".join(str(tid) for tid in missing_ids)
+            return redirect(f"/admin/users?error=Unable+to+assign+tanks:+{urllib.parse.quote(missing_param)}")
         log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
         db.commit()
     except IntegrityError:
