@@ -19,7 +19,7 @@
 
 <div class="row g-4">
   {% for u in users %}
-    {% set assigned_ids = user_tanks_map.get(u.id, []) %}
+    {% set assigned_ids = user_tanks_map.get(u.id|int, []) %}
     <div class="col-12">
       <div class="card shadow-sm">
         <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
