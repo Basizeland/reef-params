@@ -7906,12 +7906,23 @@ async def icp_dose_check(request: Request):
 
 # --- NEW: ADVANCED EXCEL IMPORT CENTER ---
 
+def render_import_manager(request: Request, **context: Any) -> HTMLResponse:
+    backup_supported = engine.dialect.name == "sqlite"
+    return templates.TemplateResponse(
+        "import_manager.html",
+        {
+            "request": request,
+            "backup_supported": backup_supported,
+            **context,
+        },
+    )
+
 @app.get("/admin/import", response_class=HTMLResponse)
 def import_page(request: Request):
     db = get_db()
     require_admin(get_current_user(db, request))
     db.close()
-    return templates.TemplateResponse("import_manager.html", {"request": request})
+    return render_import_manager(request)
 
 @app.get("/admin/users", response_class=HTMLResponse)
 def admin_users(request: Request):
@@ -8194,6 +8205,11 @@ def backup_download(request: Request):
     db = get_db()
     require_admin(get_current_user(db, request))
     db.close()
+    if engine.dialect.name != "sqlite":
+        return render_import_manager(
+            request,
+            error="SQLite backup downloads are disabled for Postgres deployments. Use Neon backups instead.",
+        )
     return FileResponse(DB_PATH, filename="reef_backup.sqlite")
 
 @app.post("/admin/backup-restore")
@@ -8201,10 +8217,15 @@ async def backup_restore(request: Request, file: UploadFile = File(...)):
     db = get_db()
     require_admin(get_current_user(db, request))
     db.close()
+    if engine.dialect.name != "sqlite":
+        return render_import_manager(
+            request,
+            error="SQLite backup restores are disabled for Postgres deployments. Use Neon backups instead.",
+        )
     if not file.filename or not file.filename.endswith((".db", ".sqlite")):
-        return templates.TemplateResponse(
-            "import_manager.html",
-            {"request": request, "error": "Invalid backup file. Please upload a .db or .sqlite file."},
+        return render_import_manager(
+            request,
+            error="Invalid backup file. Please upload a .db or .sqlite file.",
         )
     backup_path = f"{DB_PATH}.bak-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
     temp_path = f"{DB_PATH}.restore"
@@ -8217,13 +8238,13 @@ async def backup_restore(request: Request, file: UploadFile = File(...)):
     except Exception as exc:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        return templates.TemplateResponse(
-            "import_manager.html",
-            {"request": request, "error": f"Restore failed: {exc}"},
+        return render_import_manager(
+            request,
+            error=f"Restore failed: {exc}",
         )
-    return templates.TemplateResponse(
-        "import_manager.html",
-        {"request": request, "success": "Backup restored. Please refresh the app to load the new data."},
+    return render_import_manager(
+        request,
+        success="Backup restored. Please refresh the app to load the new data.",
     )
 
 @app.get("/api/tanks")
@@ -8277,15 +8298,15 @@ def api_samples(request: Request, tank_id: int, limit: int = 50):
 async def upload_excel(request: Request, file: UploadFile = File(...)):
     pd = get_pandas()
     if pd is None:
-        return templates.TemplateResponse(
-            "import_manager.html",
-            {
-                "request": request,
-                "error": "Excel import requires pandas. Install pandas and restart the app.",
-            },
+        return render_import_manager(
+            request,
+            error="Excel import requires pandas. Install pandas and restart the app.",
         )
     if not file.filename.endswith(('.xlsx', '.xls')):
-        return templates.TemplateResponse("import_manager.html", {"request": request, "error": "Invalid format. Please upload an Excel file."})
+        return render_import_manager(
+            request,
+            error="Invalid format. Please upload an Excel file.",
+        )
     
     db = get_db()
     require_admin(get_current_user(db, request))
@@ -8349,9 +8370,12 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
                     insert_sample_reading(db, sid, p["name"], val)
         
         db.commit()
-        return templates.TemplateResponse("import_manager.html", {"request": request, "success": f"Imported {stats['samples']} samples across {stats['tanks']} new tanks."})
+        return render_import_manager(
+            request,
+            success=f"Imported {stats['samples']} samples across {stats['tanks']} new tanks.",
+        )
     except Exception as e:
-        return templates.TemplateResponse("import_manager.html", {"request": request, "error": str(e)})
+        return render_import_manager(request, error=str(e))
     finally:
         db.close()
 
