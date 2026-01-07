@@ -3994,9 +3994,13 @@ async def sample_delete(sample_id: int):
         tank_id = sample["tank_id"]
 
         # 2. Perform the deletion
+        if table_exists(db, "sample_value_kits"):
+            db.execute("DELETE FROM sample_value_kits WHERE sample_id = ?", (sample_id,))
+        if table_exists(db, "sample_values"):
+            db.execute("DELETE FROM sample_values WHERE sample_id = ?", (sample_id,))
+        if table_exists(db, "parameters"):
+            db.execute("DELETE FROM parameters WHERE sample_id = ?", (sample_id,))
         db.execute("DELETE FROM samples WHERE id = ?", (sample_id,))
-        db.execute("DELETE FROM sample_values WHERE sample_id = ?", (sample_id,))
-        db.execute("DELETE FROM sample_value_kits WHERE sample_id = ?", (sample_id,))
         db.commit()
 
         # 3. Redirect back to the tank detail page we just came from
