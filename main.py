@@ -2251,6 +2251,23 @@ def reset_samples_sequence(db: DBConnection) -> None:
         """
     )
 
+def reset_tank_journal_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM tank_journal
+        )
+        SELECT setval(
+            pg_get_serial_sequence('tank_journal', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
 def insert_parameter_def(db: DBConnection, name: str, unit: Optional[str], active: int, sort_order: int) -> None:
     try:
         db.execute(
@@ -5421,16 +5438,34 @@ async def dosing_container_action(request: Request, tank_id: int):
                 (tank_id, container_key),
             )
             label = row_get(entry, "solution") or row_get(entry, "parameter") or "Dosing"
-            db.execute(
-                "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                (
-                    tank_id,
-                    datetime.utcnow().isoformat(),
-                    "dosing",
-                    f"Refilled {label} container",
-                    f"Reset remaining volume to {capacity} ml.",
-                ),
-            )
+            try:
+                db.execute(
+                    "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        tank_id,
+                        datetime.utcnow().isoformat(),
+                        "dosing",
+                        f"Refilled {label} container",
+                        f"Reset remaining volume to {capacity} ml.",
+                    ),
+                )
+            except IntegrityError as exc:
+                orig = getattr(exc, "orig", None)
+                constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "tank_journal_pkey")):
+                    reset_tank_journal_sequence(db)
+                    db.execute(
+                        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+                        (
+                            tank_id,
+                            datetime.utcnow().isoformat(),
+                            "dosing",
+                            f"Refilled {label} container",
+                            f"Reset remaining volume to {capacity} ml.",
+                        ),
+                    )
+                else:
+                    raise
             db.commit()
     else:
         if container_key not in mapping:
@@ -5459,16 +5494,34 @@ async def dosing_container_action(request: Request, tank_id: int):
                 "nopox": "NoPox",
             }
             label = label_map.get(container_key, container_key)
-            db.execute(
-                "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
-                (
-                    tank_id,
-                    datetime.utcnow().isoformat(),
-                    "dosing",
-                    f"Refilled {label} container",
-                    f"Reset remaining volume to {capacity} ml.",
-                ),
-            )
+            try:
+                db.execute(
+                    "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        tank_id,
+                        datetime.utcnow().isoformat(),
+                        "dosing",
+                        f"Refilled {label} container",
+                        f"Reset remaining volume to {capacity} ml.",
+                    ),
+                )
+            except IntegrityError as exc:
+                orig = getattr(exc, "orig", None)
+                constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+                if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation) and (constraint in (None, "tank_journal_pkey")):
+                    reset_tank_journal_sequence(db)
+                    db.execute(
+                        "INSERT INTO tank_journal (tank_id, entry_date, entry_type, title, notes) VALUES (?, ?, ?, ?, ?)",
+                        (
+                            tank_id,
+                            datetime.utcnow().isoformat(),
+                            "dosing",
+                            f"Refilled {label} container",
+                            f"Reset remaining volume to {capacity} ml.",
+                        ),
+                    )
+                else:
+                    raise
             db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}")
