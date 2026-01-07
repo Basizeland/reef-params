@@ -654,7 +654,7 @@
   </div>
   <div class="card-body">
     <div style="height: 350px;">
-      <canvas id="historyChart"></canvas>
+      <canvas id="historyChart" data-tank-id="{{ tank.id }}"></canvas>
     </div>
     <div class="d-flex flex-column gap-2 text-muted small mt-3" id="historyStats" aria-live="polite"></div>
   </div>
@@ -758,6 +758,8 @@
           const ctx = document.getElementById('historyChart');
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
           const showDoseToggle = document.getElementById('toggle-dose-events');
+          const tankId = ctx?.dataset?.tankId;
+          const storageKey = tankId ? `reef-trend-params-${tankId}` : 'reef-trend-params';
           
           if (!ctx) return;
 
@@ -999,6 +1001,32 @@
             return checked.slice(0, 3);
           }
 
+          function restoreSelection() {
+            if (!paramToggles.length) return;
+            let stored = [];
+            try {
+              const raw = window.localStorage.getItem(storageKey);
+              stored = raw ? JSON.parse(raw) : [];
+            } catch (err) {
+              stored = [];
+            }
+            if (!Array.isArray(stored) || stored.length === 0) return;
+            const valid = new Set(paramToggles.map((box) => box.value));
+            const filtered = stored.filter((key) => valid.has(key));
+            if (!filtered.length) return;
+            paramToggles.forEach((box) => {
+              box.checked = filtered.includes(box.value);
+            });
+          }
+
+          function persistSelection() {
+            try {
+              window.localStorage.setItem(storageKey, JSON.stringify(selectedParams()));
+            } catch (err) {
+              // ignore
+            }
+          }
+
           function formatNumber(value) {
             if (value === null || typeof value === 'undefined') return '—';
             if (typeof value !== 'number') return value;
@@ -1090,6 +1118,7 @@
               if (checked.length > 3 && event && event.target) {
                 event.target.checked = false;
               }
+              persistSelection();
               renderChart();
             });
           });
@@ -1097,6 +1126,8 @@
             showDoseToggle.addEventListener('change', renderChart);
           }
 
+          restoreSelection();
+          persistSelection();
           renderChart();
       } catch (err) {
           console.error("Chart Error:", err);

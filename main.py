@@ -3063,9 +3063,18 @@ def dashboard(request: Request):
     tanks = get_visible_tanks(db, request)
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
+    pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+    available_params = [
+        {
+            "name": name,
+            "unit": (row_get(pdef, "unit") or ""),
+            "key": slug_key(name),
+        }
+        for name, pdef in pdefs.items()
+    ]
+    available_params.sort(key=lambda item: item["name"].lower())
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
-        pdefs = {p["name"]: p for p in get_active_param_defs(db)}
         targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         history_map = get_recent_param_values(db, t["id"], list(pdefs.keys()))
@@ -3134,6 +3143,7 @@ def dashboard(request: Request):
             sparkline_values = history_map.get(pname, [])
             readings.append({
                 "name": pname,
+                "key": slug_key(pname),
                 "value": latest_val,
                 "unit": (row_get(p, "unit") or ""),
                 "taken_at": latest_taken,
@@ -3167,6 +3177,7 @@ def dashboard(request: Request):
             "request": request,
             "tank_cards": tank_cards,
             "reminders": reminders,
+            "available_params": available_params,
             "extra_css": ["/static/dashboard.css"],
         },
     )
