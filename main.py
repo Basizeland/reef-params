@@ -7942,25 +7942,26 @@ async def admin_user_delete(request: Request, user_id: int):
 @app.post("/admin/users/{user_id}/tanks")
 async def admin_user_tanks(request: Request, user_id: int):
     form = await request.form()
-    tank_ids = form.getlist("tank_ids")
+    tank_ids = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
-    db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
-    for tank_id in tank_ids:
-        try:
-            tid = int(tank_id)
-        except Exception:
-            continue
-        execute_with_retry(
-            db,
-            "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
-            (user_id, tid),
-        )
-    log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
-    db.commit()
+    try:
+        db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
+        for tank_id in tank_ids:
+            execute_with_retry(
+                db,
+                "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
+                (user_id, tank_id),
+            )
+        log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        db.close()
+        return redirect("/admin/users?error=Unable+to+assign+tanks+to+this+user")
     db.close()
-    return redirect("/admin/users")
+    return redirect("/admin/users?success=Tank+access+updated")
 
 @app.post("/admin/tanks/{tank_id}/assign")
 async def assign_tank(request: Request, tank_id: int):
