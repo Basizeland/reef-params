@@ -7861,7 +7861,16 @@ def admin_users(request: Request):
     assignments = q(db, "SELECT user_id, tank_id FROM user_tanks")
     user_tanks_map: Dict[int, List[int]] = {}
     for row in assignments:
-        user_tanks_map.setdefault(row["user_id"], []).append(row["tank_id"])
+        user_id = row_get(row, "user_id")
+        tank_id = row_get(row, "tank_id")
+        if user_id is None or tank_id is None:
+            continue
+        try:
+            user_id_int = int(user_id)
+            tank_id_int = int(tank_id)
+        except Exception:
+            continue
+        user_tanks_map.setdefault(user_id_int, []).append(tank_id_int)
     error = request.query_params.get("error")
     success = request.query_params.get("success")
     db.close()
