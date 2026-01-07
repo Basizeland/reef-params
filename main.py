@@ -7954,6 +7954,13 @@ async def admin_user_tanks(request: Request, user_id: int):
                 "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
                 (user_id, tank_id),
             )
+        assigned_rows = q(db, "SELECT tank_id FROM user_tanks WHERE user_id=?", (user_id,))
+        assigned_ids = {int(row_get(row, "tank_id")) for row in assigned_rows if row_get(row, "tank_id") is not None}
+        requested_ids = set(tank_ids)
+        if requested_ids and assigned_ids != requested_ids:
+            db.rollback()
+            db.close()
+            return redirect("/admin/users?error=Unable+to+assign+all+selected+tanks")
         log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
         db.commit()
     except IntegrityError:
