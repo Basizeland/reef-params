@@ -2989,30 +2989,6 @@ def init_db() -> None:
                 ),
             )
 
-        default_additives = [
-            ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend.", "All-in-one solutions"),
-            ("Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0, "Saturated kalkwasser solution.", "All-in-one solutions"),
-        ]
-        for name, parameter, strength, unit, max_daily, notes, group_name in default_additives:
-            row = one(db, "SELECT id, active, group_name FROM additives WHERE name=? AND parameter=?", (name, parameter))
-            if row is None:
-                execute_with_retry(
-                    db,
-                    """
-                    INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, group_name, active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    (name, parameter, strength, unit, max_daily, notes, group_name),
-                )
-            else:
-                if row.get("active") == 0:
-                    execute_with_retry(db, "UPDATE additives SET active=1 WHERE id=?", (row["id"],))
-                if not row.get("group_name"):
-                    execute_with_retry(
-                        db,
-                        "UPDATE additives SET group_name=? WHERE id=?",
-                        (group_name, row["id"]),
-                    )
         db.commit()
     finally:
         db.close()
