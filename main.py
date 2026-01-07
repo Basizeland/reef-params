@@ -2123,10 +2123,10 @@ def execute_insert_returning_id(db: DBConnection, sql: str, params: Tuple[Any, .
             orig = getattr(exc, "orig", None)
             constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
             if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation):
-                if constraint == "samples_pkey" and "INSERT INTO samples" in sql:
+                if "INSERT INTO samples" in sql and (constraint in (None, "samples_pkey")):
                     reset_samples_sequence(db)
                     result = db.execute(f"{sql} RETURNING id", params)
-                elif constraint == "tanks_pkey" and "INSERT INTO tanks" in sql:
+                elif "INSERT INTO tanks" in sql and (constraint in (None, "tanks_pkey")):
                     reset_tanks_sequence(db)
                     result = db.execute(f"{sql} RETURNING id", params)
                 else:
