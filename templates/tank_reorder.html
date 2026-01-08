@@ -87,20 +87,76 @@
     moveDraggedItem(event.clientY, event.clientX);
   });
 
-  const endTouchDrag = (event) => {
-    if (!touchDragging || event.pointerId !== activePointerId) return;
-    event.preventDefault();
+  const endTouchDrag = () => {
+    if (!touchDragging) return;
     if (dragging) {
       dragging.classList.remove("opacity-50");
-      dragging.releasePointerCapture(activePointerId);
+      if (activePointerId !== null) {
+        dragging.releasePointerCapture(activePointerId);
+      }
     }
     dragging = null;
     touchDragging = false;
     activePointerId = null;
   };
 
-  list.addEventListener("pointerup", endTouchDrag);
-  list.addEventListener("pointercancel", endTouchDrag);
+  list.addEventListener("pointerup", (event) => {
+    if (event.pointerId !== activePointerId) return;
+    event.preventDefault();
+    endTouchDrag();
+  });
+  list.addEventListener("pointercancel", (event) => {
+    if (event.pointerId !== activePointerId) return;
+    event.preventDefault();
+    endTouchDrag();
+  });
+
+  list.addEventListener(
+    "touchstart",
+    (event) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      dragging = event.target.closest("[data-tank-id]");
+      if (!dragging) return;
+      touchDragging = true;
+      activePointerId = null;
+      dragging.classList.add("opacity-50");
+      event.preventDefault();
+    },
+    { passive: false }
+  );
+
+  list.addEventListener(
+    "touchmove",
+    (event) => {
+      if (!touchDragging) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      moveDraggedItem(touch.clientY, touch.clientX);
+      event.preventDefault();
+    },
+    { passive: false }
+  );
+
+  list.addEventListener(
+    "touchend",
+    (event) => {
+      if (!touchDragging) return;
+      event.preventDefault();
+      endTouchDrag();
+    },
+    { passive: false }
+  );
+
+  list.addEventListener(
+    "touchcancel",
+    (event) => {
+      if (!touchDragging) return;
+      event.preventDefault();
+      endTouchDrag();
+    },
+    { passive: false }
+  );
 
   list.addEventListener("contextmenu", (event) => {
     if (event.target.closest(".tank-drag-item")) {
