@@ -14,7 +14,7 @@
   <div class="card-body">
     <ul class="list-group" id="tankOrderList">
       {% for t in tanks %}
-        <li class="list-group-item d-flex align-items-center gap-3" draggable="true" data-tank-id="{{ t.id }}">
+        <li class="list-group-item d-flex align-items-center gap-3 tank-drag-item" draggable="true" data-tank-id="{{ t.id }}">
           <span class="text-muted"><i class="bi bi-grip-vertical"></i></span>
           <span class="fw-semibold">{{ t.name }}</span>
         </li>
@@ -27,10 +27,26 @@
   <button class="btn btn-primary" id="saveOrder">Save Order</button>
 </div>
 
+<style>
+  .tank-drag-item {
+    touch-action: none;
+  }
+</style>
+
 <script>
   const list = document.getElementById("tankOrderList");
   const saveButton = document.getElementById("saveOrder");
   let dragging = null;
+  let touchDragging = false;
+  let activePointerId = null;
+
+  const moveDraggedItem = (clientY) => {
+    const target = document.elementFromPoint(window.innerWidth / 2, clientY)?.closest("[data-tank-id]");
+    if (!target || target === dragging) return;
+    const rect = target.getBoundingClientRect();
+    const next = (clientY - rect.top) / rect.height > 0.5;
+    list.insertBefore(dragging, next ? target.nextSibling : target);
+  };
 
   list.addEventListener("dragstart", (event) => {
     dragging = event.target.closest("[data-tank-id]");
@@ -48,11 +64,45 @@
 
   list.addEventListener("dragover", (event) => {
     event.preventDefault();
-    const target = event.target.closest("[data-tank-id]");
-    if (!target || target === dragging) return;
-    const rect = target.getBoundingClientRect();
-    const next = (event.clientY - rect.top) / rect.height > 0.5;
-    list.insertBefore(dragging, next ? target.nextSibling : target);
+    moveDraggedItem(event.clientY);
+  });
+
+  list.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "touch") return;
+    dragging = event.target.closest("[data-tank-id]");
+    if (!dragging) return;
+    touchDragging = true;
+    activePointerId = event.pointerId;
+    dragging.classList.add("opacity-50");
+    dragging.setPointerCapture(activePointerId);
+    event.preventDefault();
+  });
+
+  list.addEventListener("pointermove", (event) => {
+    if (!touchDragging || event.pointerId !== activePointerId) return;
+    event.preventDefault();
+    moveDraggedItem(event.clientY);
+  });
+
+  const endTouchDrag = (event) => {
+    if (!touchDragging || event.pointerId !== activePointerId) return;
+    event.preventDefault();
+    if (dragging) {
+      dragging.classList.remove("opacity-50");
+      dragging.releasePointerCapture(activePointerId);
+    }
+    dragging = null;
+    touchDragging = false;
+    activePointerId = null;
+  };
+
+  list.addEventListener("pointerup", endTouchDrag);
+  list.addEventListener("pointercancel", endTouchDrag);
+
+  list.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(".tank-drag-item")) {
+      event.preventDefault();
+    }
   });
 
   saveButton.addEventListener("click", async () => {
