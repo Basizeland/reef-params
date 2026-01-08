@@ -979,18 +979,19 @@ async def extract_csrf_token(request: Request) -> str | None:
     if header_token:
         return header_token
     content_type = request.headers.get("content-type", "")
+    body = await request.body()
+    if not body:
+        return None
     if "application/json" in content_type:
-        body = await request.body()
-        if not body:
-            return None
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
             return None
         return payload.get("csrf_token")
-    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
-        form = await request.form()
-        return form.get("csrf_token")
+    if "application/x-www-form-urlencoded" in content_type:
+        payload = urllib.parse.parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        token_values = payload.get("csrf_token", [])
+        return token_values[0] if token_values else None
     return None
 
 def hash_password(password: str, salt: str | None = None) -> Tuple[str, str]:
