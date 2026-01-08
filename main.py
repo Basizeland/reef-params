@@ -7529,9 +7529,31 @@ def dose_plan(request: Request):
     db = get_db()
     today = date.today()
     try:
-        chk_rows = q(db, "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?", (today.isoformat(), (today + timedelta(days=60)).isoformat()))
-        check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
-    except Exception: check_map = {}
+        chk_rows = q(
+            db,
+            "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?",
+            (today.isoformat(), (today + timedelta(days=60)).isoformat()),
+        )
+        check_map = {
+            (r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0)
+            for r in chk_rows
+        }
+        latest_rows = q(
+            db,
+            "SELECT tank_id, parameter, additive_id, checked_at FROM dose_plan_checks WHERE checked=1",
+        )
+        latest_check_map: Dict[Tuple[int, str, int], datetime] = {}
+        for row in latest_rows:
+            checked_at = parse_dt_any(row_get(row, "checked_at"))
+            if not checked_at:
+                continue
+            key = (int(row["tank_id"]), row["parameter"], int(row["additive_id"]))
+            existing = latest_check_map.get(key)
+            if not existing or checked_at > existing:
+                latest_check_map[key] = checked_at
+    except Exception:
+        check_map = {}
+        latest_check_map = {}
     tanks = get_visible_tanks(db, request)
     pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
@@ -7695,14 +7717,24 @@ def dose_plan(request: Request):
                     except Exception: total_ml = None
                 per_day_ml = None if total_ml is None else (float(total_ml) / float(days))
                 schedule = []
+                latest_sample = latest_map.get(pname)
+                latest_sample_taken = latest_sample.get("taken_at") if latest_sample else None
+                last_checked_at = latest_check_map.get((tank_id, pname, a["id"]))
                 for i in range(int(days)):
                     d = (today + timedelta(days=i)).isoformat()
+                    planned_key = (tank_id, pname, a["id"], d)
+                    if planned_key in check_map:
+                        checked_value = check_map[planned_key]
+                    elif last_checked_at and (not latest_sample_taken or last_checked_at > latest_sample_taken):
+                        checked_value = 1
+                    else:
+                        checked_value = 0
                     schedule.append({
                         "day": i + 1,
                         "date": d,
                         "when": parse_dt_any(d),
                         "ml": per_day_ml,
-                        "checked": check_map.get((tank_id, pname, a["id"], d), 0),
+                        "checked": checked_value,
                         "tank_id": tank_id,
                         "additive_id": a["id"],
                         "parameter": pname,
