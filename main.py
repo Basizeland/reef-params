@@ -30,6 +30,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from integrations.apex import ApexClient, readings_from_payload
 from database import engine, DB_PATH
 import models  # noqa: F401
+from botocore.config import Config
+import boto3
 from html.parser import HTMLParser
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
@@ -40,6 +42,11 @@ from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.environ.get("R2_BUCKET", "")
+R2_REGION = os.environ.get("R2_REGION", "auto")
 
 app = FastAPI(title="Reef Tank Parameters")
 logger = logging.getLogger("reef")
@@ -970,6 +977,36 @@ templates.env.globals["global_dosing_notifications"] = global_dosing_notificatio
 
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
+
+def r2_enabled() -> bool:
+    return all([R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET])
+
+def get_r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        region_name=R2_REGION,
+        config=Config(s3={"addressing_style": "path"}),
+    )
+
+def upload_r2_file(file_path: str, key: str, content_type: str) -> None:
+    client = get_r2_client()
+    client.upload_file(
+        file_path,
+        R2_BUCKET,
+        key,
+        ExtraArgs={"ContentType": content_type},
+    )
+
+def presign_r2_download(key: str, expires_in: int = 900) -> str:
+    client = get_r2_client()
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": R2_BUCKET, "Key": key},
+        ExpiresIn=expires_in,
+    )
 
 def ensure_csrf_token(token: str | None) -> str:
     return token or secrets.token_urlsafe(32)
@@ -8049,6 +8086,8 @@ def render_import_manager(request: Request, **context: Any) -> HTMLResponse:
         {
             "request": request,
             "backup_supported": backup_supported,
+            "r2_enabled": r2_enabled(),
+            "r2_bucket": R2_BUCKET,
             **context,
         },
     )
@@ -8351,6 +8390,18 @@ def backup_download(request: Request):
             request,
             error="SQLite backup downloads are disabled for Postgres deployments. Use Neon backups instead.",
         )
+    if r2_enabled():
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        key = f"backups/reef_backup_{timestamp}.sqlite"
+        try:
+            upload_r2_file(DB_PATH, key, "application/x-sqlite3")
+            url = presign_r2_download(key)
+            return RedirectResponse(url)
+        except Exception as exc:
+            return render_import_manager(
+                request,
+                error=f"R2 backup upload failed: {exc}",
+            )
     return FileResponse(DB_PATH, filename="reef_backup.sqlite")
 
 @app.post("/admin/backup-restore")
