@@ -30,8 +30,13 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
 elif SQLALCHEMY_DATABASE_URL.startswith("postgresql+psycopg"):
     connect_args = {"sslmode": "require"}
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args=connect_args, future=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args=connect_args,
+    future=True,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 
 Base = declarative_base()
 
