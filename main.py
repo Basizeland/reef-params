@@ -53,7 +53,11 @@ if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
     sentry_sdk.init(
         dsn=sentry_dsn,
         integrations=[FastApiIntegration()],
+        send_default_pii=os.environ.get("SENTRY_SEND_DEFAULT_PII", "false").lower() in {"1", "true", "yes", "on"},
+        enable_logs=os.environ.get("SENTRY_ENABLE_LOGS", "true").lower() in {"1", "true", "yes", "on"},
         traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        profile_session_sample_rate=float(os.environ.get("SENTRY_PROFILE_SESSION_SAMPLE_RATE", "0.0")),
+        profile_lifecycle=os.environ.get("SENTRY_PROFILE_LIFECYCLE"),
     )
 
 def get_pandas():
@@ -7936,7 +7940,28 @@ async def dose_plan_check(request: Request):
     if not tank_id or not additive_id or not parameter or not planned_date: raise HTTPException(status_code=400, detail="Missing fields")
     db = get_db()
     now_iso = datetime.utcnow().isoformat()
-    db.execute("INSERT INTO dose_plan_checks (tank_id, parameter, additive_id, planned_date, checked, checked_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tank_id, parameter, additive_id, planned_date) DO UPDATE SET checked=excluded.checked, checked_at=excluded.checked_at", (tank_id, parameter, additive_id, planned_date, checked, now_iso))
+    existing_check = one(
+        db,
+        "SELECT id FROM dose_plan_checks WHERE tank_id=? AND parameter=? AND additive_id=? AND planned_date=? LIMIT 1",
+        (tank_id, parameter, additive_id, planned_date),
+    )
+    if existing_check:
+        db.execute(
+            "UPDATE dose_plan_checks SET checked=?, checked_at=? WHERE id=?",
+            (checked, now_iso, existing_check["id"]),
+        )
+    else:
+        try:
+            db.execute(
+                "INSERT INTO dose_plan_checks (tank_id, parameter, additive_id, planned_date, checked, checked_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (tank_id, parameter, additive_id, planned_date, checked, now_iso),
+            )
+        except IntegrityError:
+            next_id = one(db, "SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM dose_plan_checks")["next_id"]
+            db.execute(
+                "INSERT INTO dose_plan_checks (id, tank_id, parameter, additive_id, planned_date, checked, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (next_id, tank_id, parameter, additive_id, planned_date, checked, now_iso),
+            )
     try:
         planned_dt = parse_dt_any(planned_date)
         if planned_dt:
