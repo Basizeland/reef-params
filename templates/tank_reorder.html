@@ -40,8 +40,11 @@
   let touchDragging = false;
   let activePointerId = null;
 
-  const moveDraggedItem = (clientY) => {
-    const target = document.elementFromPoint(window.innerWidth / 2, clientY)?.closest("[data-tank-id]");
+  const moveDraggedItem = (clientY, clientX = window.innerWidth / 2) => {
+    const candidates = document.elementsFromPoint(clientX, clientY);
+    const target = candidates
+      .map((candidate) => candidate.closest?.("[data-tank-id]"))
+      .find((item) => item && item !== dragging);
     if (!target || target === dragging) return;
     const rect = target.getBoundingClientRect();
     const next = (clientY - rect.top) / rect.height > 0.5;
@@ -64,7 +67,7 @@
 
   list.addEventListener("dragover", (event) => {
     event.preventDefault();
-    moveDraggedItem(event.clientY);
+    moveDraggedItem(event.clientY, event.clientX);
   });
 
   list.addEventListener("pointerdown", (event) => {
@@ -81,7 +84,7 @@
   list.addEventListener("pointermove", (event) => {
     if (!touchDragging || event.pointerId !== activePointerId) return;
     event.preventDefault();
-    moveDraggedItem(event.clientY);
+    moveDraggedItem(event.clientY, event.clientX);
   });
 
   const endTouchDrag = (event) => {
