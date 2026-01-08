@@ -3548,7 +3548,7 @@ async def login_submit(request: Request):
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
     return response
 
 @app.get("/auth/register", response_class=HTMLResponse)
@@ -3591,7 +3591,7 @@ async def register_submit(request: Request):
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
     return response
 
 @app.get("/auth/logout")
@@ -3824,7 +3824,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
     cookie_settings = oauth_cookie_settings(request)
     response.delete_cookie("oauth_state", domain=cookie_settings["domain"], path="/")
     return response
