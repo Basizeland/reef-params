@@ -45,6 +45,7 @@ R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.environ.get("R2_BUCKET", "")
 R2_REGION = os.environ.get("R2_REGION", "auto")
+R2_BACKUP_RETENTION_DAYS = os.environ.get("R2_BACKUP_RETENTION_DAYS", "")
 
 app = FastAPI(title="Reef Tank Parameters")
 logger = logging.getLogger("reef")
@@ -65,15 +66,16 @@ if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
         profile_lifecycle=os.environ.get("SENTRY_PROFILE_LIFECYCLE"),
     )
 
-def get_pandas():
-    if importlib.util.find_spec("pandas") is None:
+def optional_module(module_name: str):
+    if importlib.util.find_spec(module_name) is None:
         return None
-    return importlib.import_module("pandas")
+    return importlib.import_module(module_name)
+
+def get_pandas():
+    return optional_module("pandas")
 
 def get_webpush():
-    if importlib.util.find_spec("pywebpush") is None:
-        return None
-    return importlib.import_module("pywebpush")
+    return optional_module("pywebpush")
 
 def require_pandas():
     pandas = get_pandas()
@@ -1020,6 +1022,24 @@ def presign_r2_download(key: str, expires_in: int = 900) -> str:
         ExpiresIn=expires_in,
     )
 
+def cleanup_r2_backups() -> None:
+    if not R2_BACKUP_RETENTION_DAYS:
+        return
+    try:
+        retention_days = int(R2_BACKUP_RETENTION_DAYS)
+    except ValueError:
+        return
+    if retention_days <= 0:
+        return
+    client = get_r2_client()
+    cutoff = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=retention_days)
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=R2_BUCKET, Prefix="backups/"):
+        for item in page.get("Contents", []):
+            last_modified = item.get("LastModified")
+            if last_modified and last_modified < cutoff:
+                client.delete_object(Bucket=R2_BUCKET, Key=item["Key"])
+
 def ensure_csrf_token(token: str | None) -> str:
     return token or secrets.token_urlsafe(32)
 
@@ -1037,6 +1057,19 @@ async def extract_csrf_token(request: Request) -> str | None:
         except json.JSONDecodeError:
             return None
         return payload.get("csrf_token")
+    if "multipart/form-data" in content_type:
+        match = re.search(r"boundary=([^;]+)", content_type)
+        if not match:
+            return None
+        boundary = match.group(1).strip().strip('"')
+        boundary_bytes = f"--{boundary}".encode()
+        for part in body.split(boundary_bytes):
+            if b'name="csrf_token"' not in part:
+                continue
+            _, _, value = part.partition(b"\r\n\r\n")
+            if not value:
+                return None
+            return value.strip().decode("utf-8", errors="ignore")
     if "application/x-www-form-urlencoded" in content_type:
         payload = urllib.parse.parse_qs(body.decode("utf-8"), keep_blank_values=True)
         token_values = payload.get("csrf_token", [])
@@ -3052,6 +3085,21 @@ def init_db() -> None:
         from database import Base
 
         Base.metadata.create_all(engine)
+        if not table_exists(db, "icp_uploads"):
+            execute_with_retry(
+                db,
+                """
+                CREATE TABLE IF NOT EXISTS icp_uploads (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER,
+                    tank_id INTEGER,
+                    filename TEXT,
+                    content_type TEXT,
+                    r2_key TEXT,
+                    created_at TEXT
+                )
+                """,
+            )
         if engine.dialect.name == "postgresql":
             if table_exists(db, "additives"):
                 reset_additives_sequence(db)
@@ -7817,7 +7865,7 @@ def icp_import(request: Request):
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
-    pdf_available = importlib.util.find_spec("PyPDF2") is not None
+    pdf_available = optional_module("PyPDF2") is not None
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
@@ -7846,9 +7894,10 @@ async def icp_preview(request: Request):
     upload = form.get("icp_file")
     selected_tank = (form.get("tank_id") or "").strip()
     db = get_db()
+    current_user = get_current_user(db, request)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
-    pdf_available = importlib.util.find_spec("PyPDF2") is not None
+    pdf_available = optional_module("PyPDF2") is not None
     icp_upload_note = None
     try:
         if url:
@@ -7874,6 +7923,23 @@ async def icp_preview(request: Request):
                 key = f"icp-uploads/{timestamp}_{safe_name or 'icp_upload'}"
                 content_type = upload.content_type or ("application/pdf" if filename.endswith(".pdf") else "text/csv")
                 upload_r2_bytes(data, key, content_type)
+                tank_id_value = int(selected_tank) if str(selected_tank).isdigit() else None
+                user_id_value = current_user["id"] if current_user else None
+                execute_with_retry(
+                    db,
+                    """
+                    INSERT INTO icp_uploads (user_id, tank_id, filename, content_type, r2_key, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id_value,
+                        tank_id_value,
+                        upload.filename,
+                        content_type,
+                        key,
+                        datetime.utcnow().isoformat(),
+                    ),
+                )
                 icp_upload_note = f"ICP file uploaded to Cloudflare R2 ({key})."
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
@@ -8154,6 +8220,44 @@ def admin_users(request: Request):
         },
     )
 
+@app.get("/admin/icp-uploads", response_class=HTMLResponse)
+def admin_icp_uploads(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    rows = q(
+        db,
+        """
+        SELECT iu.*, u.email AS user_email, t.name AS tank_name
+        FROM icp_uploads iu
+        LEFT JOIN users u ON u.id = iu.user_id
+        LEFT JOIN tanks t ON t.id = iu.tank_id
+        ORDER BY iu.created_at DESC
+        LIMIT 200
+        """,
+    )
+    uploads = []
+    for row in rows:
+        entry = dict(row)
+        r2_key = row_get(row, "r2_key")
+        if r2_key and r2_enabled():
+            try:
+                entry["download_url"] = presign_r2_download(r2_key)
+            except Exception:
+                entry["download_url"] = None
+        else:
+            entry["download_url"] = None
+        uploads.append(entry)
+    db.close()
+    return templates.TemplateResponse(
+        "admin_icp_uploads.html",
+        {
+            "request": request,
+            "uploads": uploads,
+            "r2_enabled": r2_enabled(),
+        },
+    )
+
 @app.post("/admin/users/{user_id}/role")
 async def admin_user_role(request: Request, user_id: int):
     form = await request.form()
@@ -8415,6 +8519,7 @@ def backup_download(request: Request):
         key = f"backups/reef_backup_{timestamp}.sqlite"
         try:
             upload_r2_file(DB_PATH, key, "application/x-sqlite3")
+            cleanup_r2_backups()
             url = presign_r2_download(key)
             return RedirectResponse(url)
         except Exception as exc:

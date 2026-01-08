@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Admin: ICP Uploads</h1>
+    <div class="text-muted small">Recent ICP CSV/PDF uploads stored in Cloudflare R2.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="/admin/users">
+    <i class="bi bi-arrow-left"></i> Back to Admin
+  </a>
+</div>
+
+{% if not r2_enabled %}
+  <div class="alert alert-warning">R2 is not configured. ICP uploads will not be stored.</div>
+{% endif %}
+
+<div class="card shadow-sm border-0">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Uploaded At</th>
+            <th>Tank</th>
+            <th>User</th>
+            <th>Filename</th>
+            <th>R2 Key</th>
+            <th>Download</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for upload in uploads %}
+            <tr>
+              <td class="text-muted small">{{ upload.created_at|dtfmt }}</td>
+              <td>{{ upload.tank_name or "—" }}</td>
+              <td>{{ upload.user_email or "—" }}</td>
+              <td>{{ upload.filename or "—" }}</td>
+              <td class="text-muted small">{{ upload.r2_key or "—" }}</td>
+              <td>
+                {% if upload.download_url %}
+                  <a class="btn btn-sm btn-outline-primary" href="{{ upload.download_url }}">Download</a>
+                {% else %}
+                  <span class="text-muted small">Unavailable</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          {% if uploads|length == 0 %}
+            <tr>
+              <td colspan="6" class="text-center text-muted small">No ICP uploads yet.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
