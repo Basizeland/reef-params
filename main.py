@@ -8137,17 +8137,22 @@ async def admin_user_delete(request: Request, user_id: int):
 async def admin_user_tanks(request: Request, user_id: int):
     form = await request.form()
     tank_ids = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
+    clear_tanks = str(form.get("clear_tanks") or "").lower() in {"1", "true", "on", "yes"}
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
+    if not tank_ids and not clear_tanks:
+        db.close()
+        return redirect("/admin/users?error=Select+at+least+one+tank+or+use+Remove+all+tank+access")
     try:
         db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
-        for tank_id in tank_ids:
-            execute_with_retry(
-                db,
-                "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
-                (user_id, tank_id),
-            )
+        if not clear_tanks:
+            for tank_id in tank_ids:
+                execute_with_retry(
+                    db,
+                    "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
+                    (user_id, tank_id),
+                )
         assigned_rows = q(db, "SELECT tank_id FROM user_tanks WHERE user_id=?", (user_id,))
         assigned_ids = {int(row_get(row, "tank_id")) for row in assigned_rows if row_get(row, "tank_id") is not None}
         requested_ids = set(tank_ids)
