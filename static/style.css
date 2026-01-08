@@ -354,7 +354,7 @@ h1, h2, h3, h4, h5 {
     }
 
     .mobile-content-pad {
-        padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
+        padding-bottom: calc(9rem + env(safe-area-inset-bottom));
     }
 
     .bottom-nav {
