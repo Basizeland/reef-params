@@ -1000,6 +1000,15 @@ def upload_r2_file(file_path: str, key: str, content_type: str) -> None:
         ExtraArgs={"ContentType": content_type},
     )
 
+def upload_r2_bytes(payload: bytes, key: str, content_type: str) -> None:
+    client = get_r2_client()
+    client.put_object(
+        Bucket=R2_BUCKET,
+        Key=key,
+        Body=payload,
+        ContentType=content_type,
+    )
+
 def presign_r2_download(key: str, expires_in: int = 900) -> str:
     client = get_r2_client()
     return client.generate_presigned_url(
@@ -7837,6 +7846,7 @@ async def icp_preview(request: Request):
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
     pdf_available = importlib.util.find_spec("PyPDF2") is not None
+    icp_upload_note = None
     try:
         if url:
             content, meta = fetch_triton_html(url)
@@ -7855,6 +7865,13 @@ async def icp_preview(request: Request):
                 recommendations = {"help": [], "dose": []}
             else:
                 raise ValueError("Unsupported file type. Upload CSV or PDF.")
+            if r2_enabled():
+                safe_name = re.sub(r"[^a-z0-9_.-]+", "_", os.path.basename(upload.filename).lower())
+                timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+                key = f"icp-uploads/{timestamp}_{safe_name or 'icp_upload'}"
+                content_type = upload.content_type or ("application/pdf" if filename.endswith(".pdf") else "text/csv")
+                upload_r2_bytes(data, key, content_type)
+                icp_upload_note = f"ICP file uploaded to Cloudflare R2 ({key})."
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
         if not results:
@@ -7914,7 +7931,7 @@ async def icp_preview(request: Request):
             "recommendations": recommendations,
             "recommendations_payload": recommendations_payload,
             "error": None,
-            "success": None,
+            "success": icp_upload_note,
             "selected_tank": selected_tank,
             "pdf_available": pdf_available,
         },
