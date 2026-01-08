@@ -30,8 +30,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from integrations.apex import ApexClient, readings_from_payload
 from database import engine, DB_PATH
 import models  # noqa: F401
-from botocore.config import Config
-import boto3
 from html.parser import HTMLParser
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
@@ -982,6 +980,11 @@ def r2_enabled() -> bool:
     return all([R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET])
 
 def get_r2_client():
+    if importlib.util.find_spec("boto3") is None or importlib.util.find_spec("botocore") is None:
+        raise RuntimeError("Cloudflare R2 requires boto3 and botocore to be installed.")
+    boto3 = importlib.import_module("boto3")
+    botocore_config = importlib.import_module("botocore.config")
+    Config = botocore_config.Config
     return boto3.client(
         "s3",
         endpoint_url=R2_ENDPOINT,
