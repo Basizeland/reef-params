@@ -455,7 +455,10 @@ function updateDoseCheckStyles() {
     try{
       const res = await fetch("/tools/dose-plan/check", {
         method: "POST",
-        headers: {"Content-Type":"application/x-www-form-urlencoded"},
+        headers: {
+          "Content-Type":"application/x-www-form-urlencoded",
+          "X-CSRF-Token": window.csrfToken || "",
+        },
         body: new URLSearchParams({
           tank_id: tankId,
           additive_id: additiveId,

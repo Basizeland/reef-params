@@ -971,6 +971,28 @@ templates.env.globals["global_dosing_notifications"] = global_dosing_notificatio
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
+def ensure_csrf_token(token: str | None) -> str:
+    return token or secrets.token_urlsafe(32)
+
+async def extract_csrf_token(request: Request) -> str | None:
+    header_token = request.headers.get("X-CSRF-Token") or request.headers.get("x-csrf-token")
+    if header_token:
+        return header_token
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.body()
+        if not body:
+            return None
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        return payload.get("csrf_token")
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        return form.get("csrf_token")
+    return None
+
 def hash_password(password: str, salt: str | None = None) -> Tuple[str, str]:
     if not salt:
         salt = secrets.token_hex(16)
@@ -3057,6 +3079,17 @@ async def auth_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     request.state.request_id = request_id
     path = request.url.path
+    csrf_token = ensure_csrf_token(request.cookies.get("csrf_token"))
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not path.startswith("/static"):
+        if request.headers.get("Authorization", "").startswith("Bearer "):
+            pass
+        else:
+            request_token = await extract_csrf_token(request)
+            if not request_token or request_token != csrf_token:
+                response = JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
+                response.headers["X-Request-Id"] = request_id
+                response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
+                return response
     if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
         start_time = time_module.time()
         response = await call_next(request)
@@ -3072,6 +3105,7 @@ async def auth_middleware(request: Request, call_next):
         }
         logger.info(json.dumps(log_payload))
         response.headers["X-Request-Id"] = request_id
+        response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
         return response
     db = get_db()
     user = None
@@ -3115,6 +3149,7 @@ async def auth_middleware(request: Request, call_next):
         }
         logger.info(json.dumps(log_payload))
         response.headers["X-Request-Id"] = request_id
+        response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
         return response
     finally:
         db.close()

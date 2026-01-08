@@ -4,6 +4,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 import os
 from database import get_db
+import main as app_main
 from models import Tank, Sample, SampleValue, ParameterDef, TankProfile
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -12,6 +13,7 @@ router = APIRouter()
 
 @router.get("/admin/import-excel", response_class=HTMLResponse)
 def import_excel_page(request: Request):
+    app_main.require_admin(request.state.user if hasattr(request, "state") else None)
     return templates.TemplateResponse("simple_message.html", {
         "request": request, "title": "Import Excel",
         "message": "Import from Tank Parameters Sheet.xlsx (root folder).",
@@ -20,6 +22,7 @@ def import_excel_page(request: Request):
 
 @router.post("/admin/import-excel")
 def import_excel_run(request: Request, db: Session = Depends(get_db)):
+    app_main.require_admin(request.state.user if hasattr(request, "state") else None)
     try:
         import openpyxl
         # Logic simplified for brevity; assumes file exists at root
@@ -54,4 +57,5 @@ def import_excel_run(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/admin/merge-parameters", response_class=HTMLResponse)
 def merge_page(request: Request):
+    app_main.require_admin(request.state.user if hasattr(request, "state") else None)
     return templates.TemplateResponse("merge_parameters.html", {"request": request, "dups": []}) # Placeholder

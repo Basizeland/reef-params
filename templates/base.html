@@ -337,6 +337,25 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
     <script>
+        const getCookie = (name) => {
+            const match = document.cookie.match(new RegExp(`(^|; )${name}=([^;]*)`));
+            return match ? decodeURIComponent(match[2]) : "";
+        };
+        window.csrfToken = getCookie("csrf_token");
+
+        document.addEventListener("DOMContentLoaded", () => {
+            if (!window.csrfToken) return;
+            document.querySelectorAll("form").forEach((form) => {
+                const method = (form.getAttribute("method") || "get").toLowerCase();
+                if (method !== "post") return;
+                if (form.querySelector("input[name='csrf_token']")) return;
+                const input = document.createElement("input");
+                input.type = "hidden";
+                input.name = "csrf_token";
+                input.value = window.csrfToken;
+                form.appendChild(input);
+            });
+        });
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", () => {
                 navigator.serviceWorker.register("/static/service-worker.js").catch(() => {});
@@ -499,7 +518,10 @@
                 await fetch("/api/push/subscribe", {
                     method: "POST",
                     credentials: "same-origin",
-                    headers: { "Content-Type": "application/json" },
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRF-Token": window.csrfToken || "",
+                    },
                     body: JSON.stringify(subscription),
                 });
                 return subscription;
@@ -512,7 +534,10 @@
                     await fetch("/api/push/unsubscribe", {
                         method: "POST",
                         credentials: "same-origin",
-                        headers: { "Content-Type": "application/json" },
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRF-Token": window.csrfToken || "",
+                        },
                         body: JSON.stringify({ endpoint: subscription.endpoint }),
                     });
                     await subscription.unsubscribe();
