@@ -7950,6 +7950,7 @@ async def icp_preview(request: Request):
                         datetime.utcnow().isoformat(),
                     ),
                 )
+                db.commit()
                 icp_upload_note = f"ICP file uploaded to Cloudflare R2 ({key})."
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
