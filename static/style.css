@@ -336,6 +336,10 @@ h1, h2, h3, h4, h5 {
 }
 
 @media (max-width: 576px) {
+    body {
+        padding-bottom: calc(7.5rem + env(safe-area-inset-bottom));
+    }
+
     .brand-logo-img {
         height: 28px;
         max-width: 120px;
