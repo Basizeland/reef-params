@@ -46,6 +46,7 @@ R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET = os.environ.get("R2_BUCKET", "")
 R2_REGION = os.environ.get("R2_REGION", "auto")
 R2_BACKUP_RETENTION_DAYS = os.environ.get("R2_BACKUP_RETENTION_DAYS", "")
+R2_ICP_RETENTION_DAYS = os.environ.get("R2_ICP_RETENTION_DAYS", "")
 
 app = FastAPI(title="Reef Tank Parameters")
 logger = logging.getLogger("reef")
@@ -1035,6 +1036,24 @@ def cleanup_r2_backups() -> None:
     cutoff = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=retention_days)
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=R2_BUCKET, Prefix="backups/"):
+        for item in page.get("Contents", []):
+            last_modified = item.get("LastModified")
+            if last_modified and last_modified < cutoff:
+                client.delete_object(Bucket=R2_BUCKET, Key=item["Key"])
+
+def cleanup_r2_icp_uploads() -> None:
+    if not R2_ICP_RETENTION_DAYS:
+        return
+    try:
+        retention_days = int(R2_ICP_RETENTION_DAYS)
+    except ValueError:
+        return
+    if retention_days <= 0:
+        return
+    client = get_r2_client()
+    cutoff = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=retention_days)
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=R2_BUCKET, Prefix="icp-uploads/"):
         for item in page.get("Contents", []):
             last_modified = item.get("LastModified")
             if last_modified and last_modified < cutoff:
@@ -3085,21 +3104,6 @@ def init_db() -> None:
         from database import Base
 
         Base.metadata.create_all(engine)
-        if not table_exists(db, "icp_uploads"):
-            execute_with_retry(
-                db,
-                """
-                CREATE TABLE IF NOT EXISTS icp_uploads (
-                    id INTEGER PRIMARY KEY,
-                    user_id INTEGER,
-                    tank_id INTEGER,
-                    filename TEXT,
-                    content_type TEXT,
-                    r2_key TEXT,
-                    created_at TEXT
-                )
-                """,
-            )
         if engine.dialect.name == "postgresql" and table_exists(db, "icp_uploads"):
             execute_with_retry(db, "CREATE SEQUENCE IF NOT EXISTS icp_uploads_id_seq")
             execute_with_retry(
@@ -7932,7 +7936,23 @@ async def icp_preview(request: Request):
                 timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
                 key = f"icp-uploads/{timestamp}_{safe_name or 'icp_upload'}"
                 content_type = upload.content_type or ("application/pdf" if filename.endswith(".pdf") else "text/csv")
-                upload_r2_bytes(data, key, content_type)
+                try:
+                    upload_r2_bytes(data, key, content_type)
+                except Exception as exc:
+                    try:
+                        log_audit(
+                            db,
+                            current_user,
+                            "icp-upload-failed",
+                            {
+                                "tank_id": selected_tank,
+                                "filename": upload.filename,
+                                "error": str(exc),
+                            },
+                        )
+                    except Exception:
+                        pass
+                    raise ValueError(f"R2 upload failed: {exc}") from exc
                 tank_id_value = int(selected_tank) if str(selected_tank).isdigit() else None
                 user_id_value = current_user["id"] if current_user else None
                 execute_insert_returning_id(
@@ -7951,6 +7971,7 @@ async def icp_preview(request: Request):
                     ),
                 )
                 db.commit()
+                cleanup_r2_icp_uploads()
                 icp_upload_note = f"ICP file uploaded to Cloudflare R2 ({key})."
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
@@ -8236,17 +8257,44 @@ def admin_icp_uploads(request: Request):
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
+    tank_id = (request.query_params.get("tank_id") or "").strip()
+    user_id = (request.query_params.get("user_id") or "").strip()
+    date_from = (request.query_params.get("from") or "").strip()
+    date_to = (request.query_params.get("to") or "").strip()
+    search = (request.query_params.get("q") or "").strip()
+    where = []
+    params: List[Any] = []
+    if tank_id:
+        where.append("iu.tank_id=?")
+        params.append(int(tank_id))
+    if user_id:
+        where.append("iu.user_id=?")
+        params.append(int(user_id))
+    if date_from:
+        where.append("iu.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("iu.created_at <= ?")
+        params.append(date_to)
+    if search:
+        where.append("(iu.filename LIKE ? OR iu.r2_key LIKE ?)")
+        params.extend([f"%{search}%", f"%{search}%"])
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     rows = q(
         db,
-        """
+        f"""
         SELECT iu.*, u.email AS user_email, t.name AS tank_name
         FROM icp_uploads iu
         LEFT JOIN users u ON u.id = iu.user_id
         LEFT JOIN tanks t ON t.id = iu.tank_id
+        {where_sql}
         ORDER BY iu.created_at DESC
         LIMIT 200
         """,
+        tuple(params),
     )
+    users = q(db, "SELECT id, email FROM users ORDER BY email")
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     uploads = []
     for row in rows:
         entry = dict(row)
@@ -8266,6 +8314,15 @@ def admin_icp_uploads(request: Request):
             "request": request,
             "uploads": uploads,
             "r2_enabled": r2_enabled(),
+            "users": users,
+            "tanks": tanks,
+            "filters": {
+                "tank_id": tank_id,
+                "user_id": user_id,
+                "from": date_from,
+                "to": date_to,
+                "q": search,
+            },
         },
     )
 

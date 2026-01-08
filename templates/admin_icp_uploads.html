@@ -16,6 +16,42 @@
 
 <div class="card shadow-sm border-0">
   <div class="card-body">
+    <form method="get" class="row g-2 align-items-end mb-3">
+      <div class="col-md-3">
+        <label class="form-label small">Tank</label>
+        <select class="form-select" name="tank_id">
+          <option value="">All tanks</option>
+          {% for tank in tanks %}
+            <option value="{{ tank.id }}" {% if filters.tank_id == tank.id|string %}selected{% endif %}>{{ tank.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">User</label>
+        <select class="form-select" name="user_id">
+          <option value="">All users</option>
+          {% for user in users %}
+            <option value="{{ user.id }}" {% if filters.user_id == user.id|string %}selected{% endif %}>{{ user.email }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">From</label>
+        <input class="form-control" type="date" name="from" value="{{ filters.from }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">To</label>
+        <input class="form-control" type="date" name="to" value="{{ filters.to }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">Search</label>
+        <input class="form-control" type="text" name="q" value="{{ filters.q }}" placeholder="Filename or key">
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-sm btn-primary" type="submit">Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="/admin/icp-uploads">Clear</a>
+      </div>
+    </form>
     <div class="table-responsive">
       <table class="table table-sm align-middle">
         <thead>
