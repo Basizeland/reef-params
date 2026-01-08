@@ -81,6 +81,12 @@
                 <div class="col-12 text-muted small">No tanks found.</div>
               {% endif %}
             </div>
+            <div class="form-check mt-3">
+              <input class="form-check-input" type="checkbox" id="clear-tanks-{{ u.id }}" name="clear_tanks" value="1">
+              <label class="form-check-label" for="clear-tanks-{{ u.id }}">
+                Remove all tank access
+              </label>
+            </div>
             <div class="mt-3">
               <button class="btn btn-sm btn-outline-primary" type="submit">Save Tank Access</button>
             </div>

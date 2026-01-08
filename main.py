@@ -40,6 +40,13 @@ from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
+R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.environ.get("R2_BUCKET", "")
+R2_REGION = os.environ.get("R2_REGION", "auto")
+R2_BACKUP_RETENTION_DAYS = os.environ.get("R2_BACKUP_RETENTION_DAYS", "")
+R2_ICP_RETENTION_DAYS = os.environ.get("R2_ICP_RETENTION_DAYS", "")
 
 app = FastAPI(title="Reef Tank Parameters")
 logger = logging.getLogger("reef")
@@ -60,15 +67,16 @@ if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
         profile_lifecycle=os.environ.get("SENTRY_PROFILE_LIFECYCLE"),
     )
 
-def get_pandas():
-    if importlib.util.find_spec("pandas") is None:
+def optional_module(module_name: str):
+    if importlib.util.find_spec(module_name) is None:
         return None
-    return importlib.import_module("pandas")
+    return importlib.import_module(module_name)
+
+def get_pandas():
+    return optional_module("pandas")
 
 def get_webpush():
-    if importlib.util.find_spec("pywebpush") is None:
-        return None
-    return importlib.import_module("pywebpush")
+    return optional_module("pywebpush")
 
 def require_pandas():
     pandas = get_pandas()
@@ -970,6 +978,122 @@ templates.env.globals["global_dosing_notifications"] = global_dosing_notificatio
 
 def redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
+
+def r2_enabled() -> bool:
+    return all([R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET])
+
+def get_r2_client():
+    if importlib.util.find_spec("boto3") is None or importlib.util.find_spec("botocore") is None:
+        raise RuntimeError("Cloudflare R2 requires boto3 and botocore to be installed.")
+    boto3 = importlib.import_module("boto3")
+    botocore_config = importlib.import_module("botocore.config")
+    Config = botocore_config.Config
+    return boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        region_name=R2_REGION,
+        config=Config(s3={"addressing_style": "path"}),
+    )
+
+def upload_r2_file(file_path: str, key: str, content_type: str) -> None:
+    client = get_r2_client()
+    client.upload_file(
+        file_path,
+        R2_BUCKET,
+        key,
+        ExtraArgs={"ContentType": content_type},
+    )
+
+def upload_r2_bytes(payload: bytes, key: str, content_type: str) -> None:
+    client = get_r2_client()
+    client.put_object(
+        Bucket=R2_BUCKET,
+        Key=key,
+        Body=payload,
+        ContentType=content_type,
+    )
+
+def presign_r2_download(key: str, expires_in: int = 900) -> str:
+    client = get_r2_client()
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": R2_BUCKET, "Key": key},
+        ExpiresIn=expires_in,
+    )
+
+def cleanup_r2_backups() -> None:
+    if not R2_BACKUP_RETENTION_DAYS:
+        return
+    try:
+        retention_days = int(R2_BACKUP_RETENTION_DAYS)
+    except ValueError:
+        return
+    if retention_days <= 0:
+        return
+    client = get_r2_client()
+    cutoff = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=retention_days)
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=R2_BUCKET, Prefix="backups/"):
+        for item in page.get("Contents", []):
+            last_modified = item.get("LastModified")
+            if last_modified and last_modified < cutoff:
+                client.delete_object(Bucket=R2_BUCKET, Key=item["Key"])
+
+def cleanup_r2_icp_uploads() -> None:
+    if not R2_ICP_RETENTION_DAYS:
+        return
+    try:
+        retention_days = int(R2_ICP_RETENTION_DAYS)
+    except ValueError:
+        return
+    if retention_days <= 0:
+        return
+    client = get_r2_client()
+    cutoff = datetime.utcnow().replace(tzinfo=timezone.utc) - timedelta(days=retention_days)
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=R2_BUCKET, Prefix="icp-uploads/"):
+        for item in page.get("Contents", []):
+            last_modified = item.get("LastModified")
+            if last_modified and last_modified < cutoff:
+                client.delete_object(Bucket=R2_BUCKET, Key=item["Key"])
+
+def ensure_csrf_token(token: str | None) -> str:
+    return token or secrets.token_urlsafe(32)
+
+async def extract_csrf_token(request: Request) -> str | None:
+    header_token = request.headers.get("X-CSRF-Token") or request.headers.get("x-csrf-token")
+    if header_token:
+        return header_token
+    content_type = request.headers.get("content-type", "")
+    body = await request.body()
+    if not body:
+        return None
+    if "application/json" in content_type:
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        return payload.get("csrf_token")
+    if "multipart/form-data" in content_type:
+        match = re.search(r"boundary=([^;]+)", content_type)
+        if not match:
+            return None
+        boundary = match.group(1).strip().strip('"')
+        boundary_bytes = f"--{boundary}".encode()
+        for part in body.split(boundary_bytes):
+            if b'name="csrf_token"' not in part:
+                continue
+            _, _, value = part.partition(b"\r\n\r\n")
+            if not value:
+                return None
+            return value.strip().decode("utf-8", errors="ignore")
+    if "application/x-www-form-urlencoded" in content_type:
+        payload = urllib.parse.parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        token_values = payload.get("csrf_token", [])
+        return token_values[0] if token_values else None
+    return None
 
 def hash_password(password: str, salt: str | None = None) -> Tuple[str, str]:
     if not salt:
@@ -2980,6 +3104,16 @@ def init_db() -> None:
         from database import Base
 
         Base.metadata.create_all(engine)
+        if engine.dialect.name == "postgresql" and table_exists(db, "icp_uploads"):
+            execute_with_retry(db, "CREATE SEQUENCE IF NOT EXISTS icp_uploads_id_seq")
+            execute_with_retry(
+                db,
+                "ALTER TABLE icp_uploads ALTER COLUMN id SET DEFAULT nextval('icp_uploads_id_seq')",
+            )
+            execute_with_retry(
+                db,
+                "SELECT setval('icp_uploads_id_seq', COALESCE((SELECT MAX(id) FROM icp_uploads), 0) + 1, false)",
+            )
         if engine.dialect.name == "postgresql":
             if table_exists(db, "additives"):
                 reset_additives_sequence(db)
@@ -3057,6 +3191,17 @@ async def auth_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     request.state.request_id = request_id
     path = request.url.path
+    csrf_token = ensure_csrf_token(request.cookies.get("csrf_token"))
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not path.startswith("/static"):
+        if request.headers.get("Authorization", "").startswith("Bearer "):
+            pass
+        else:
+            request_token = await extract_csrf_token(request)
+            if not request_token or request_token != csrf_token:
+                response = JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
+                response.headers["X-Request-Id"] = request_id
+                response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
+                return response
     if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
         start_time = time_module.time()
         response = await call_next(request)
@@ -3072,6 +3217,7 @@ async def auth_middleware(request: Request, call_next):
         }
         logger.info(json.dumps(log_payload))
         response.headers["X-Request-Id"] = request_id
+        response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
         return response
     db = get_db()
     user = None
@@ -3115,6 +3261,7 @@ async def auth_middleware(request: Request, call_next):
         }
         logger.info(json.dumps(log_payload))
         response.headers["X-Request-Id"] = request_id
+        response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
         return response
     finally:
         db.close()
@@ -3401,7 +3548,7 @@ async def login_submit(request: Request):
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
     return response
 
 @app.get("/auth/register", response_class=HTMLResponse)
@@ -3444,7 +3591,7 @@ async def register_submit(request: Request):
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
     return response
 
 @app.get("/auth/logout")
@@ -3677,7 +3824,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax")
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
     cookie_settings = oauth_cookie_settings(request)
     response.delete_cookie("oauth_state", domain=cookie_settings["domain"], path="/")
     return response
@@ -7382,9 +7529,31 @@ def dose_plan(request: Request):
     db = get_db()
     today = date.today()
     try:
-        chk_rows = q(db, "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?", (today.isoformat(), (today + timedelta(days=60)).isoformat()))
-        check_map = {(r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0) for r in chk_rows}
-    except Exception: check_map = {}
+        chk_rows = q(
+            db,
+            "SELECT tank_id, parameter, additive_id, planned_date, checked FROM dose_plan_checks WHERE planned_date>=? AND planned_date<=?",
+            (today.isoformat(), (today + timedelta(days=60)).isoformat()),
+        )
+        check_map = {
+            (r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0)
+            for r in chk_rows
+        }
+        latest_rows = q(
+            db,
+            "SELECT tank_id, parameter, additive_id, checked_at FROM dose_plan_checks WHERE checked=1",
+        )
+        latest_check_map: Dict[Tuple[int, str, int], datetime] = {}
+        for row in latest_rows:
+            checked_at = parse_dt_any(row_get(row, "checked_at"))
+            if not checked_at:
+                continue
+            key = (int(row["tank_id"]), row["parameter"], int(row["additive_id"]))
+            existing = latest_check_map.get(key)
+            if not existing or checked_at > existing:
+                latest_check_map[key] = checked_at
+    except Exception:
+        check_map = {}
+        latest_check_map = {}
     tanks = get_visible_tanks(db, request)
     pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
@@ -7548,14 +7717,24 @@ def dose_plan(request: Request):
                     except Exception: total_ml = None
                 per_day_ml = None if total_ml is None else (float(total_ml) / float(days))
                 schedule = []
+                latest_sample = latest_map.get(pname)
+                latest_sample_taken = latest_sample.get("taken_at") if latest_sample else None
+                last_checked_at = latest_check_map.get((tank_id, pname, a["id"]))
                 for i in range(int(days)):
                     d = (today + timedelta(days=i)).isoformat()
+                    planned_key = (tank_id, pname, a["id"], d)
+                    if planned_key in check_map:
+                        checked_value = check_map[planned_key]
+                    elif last_checked_at and (not latest_sample_taken or last_checked_at > latest_sample_taken):
+                        checked_value = 1
+                    else:
+                        checked_value = 0
                     schedule.append({
                         "day": i + 1,
                         "date": d,
                         "when": parse_dt_any(d),
                         "ml": per_day_ml,
-                        "checked": check_map.get((tank_id, pname, a["id"], d), 0),
+                        "checked": checked_value,
                         "tank_id": tank_id,
                         "additive_id": a["id"],
                         "parameter": pname,
@@ -7732,7 +7911,7 @@ def icp_import(request: Request):
     db = get_db()
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
-    pdf_available = importlib.util.find_spec("PyPDF2") is not None
+    pdf_available = optional_module("PyPDF2") is not None
     db.close()
     return templates.TemplateResponse(
         "icp_import.html",
@@ -7761,9 +7940,11 @@ async def icp_preview(request: Request):
     upload = form.get("icp_file")
     selected_tank = (form.get("tank_id") or "").strip()
     db = get_db()
+    current_user = get_current_user(db, request)
     tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
     parameters = q(db, "SELECT name FROM parameter_defs WHERE active=1 ORDER BY name")
-    pdf_available = importlib.util.find_spec("PyPDF2") is not None
+    pdf_available = optional_module("PyPDF2") is not None
+    icp_upload_note = None
     try:
         if url:
             content, meta = fetch_triton_html(url)
@@ -7782,6 +7963,48 @@ async def icp_preview(request: Request):
                 recommendations = {"help": [], "dose": []}
             else:
                 raise ValueError("Unsupported file type. Upload CSV or PDF.")
+            if r2_enabled():
+                safe_name = re.sub(r"[^a-z0-9_.-]+", "_", os.path.basename(upload.filename).lower())
+                timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+                key = f"icp-uploads/{timestamp}_{safe_name or 'icp_upload'}"
+                content_type = upload.content_type or ("application/pdf" if filename.endswith(".pdf") else "text/csv")
+                try:
+                    upload_r2_bytes(data, key, content_type)
+                except Exception as exc:
+                    try:
+                        log_audit(
+                            db,
+                            current_user,
+                            "icp-upload-failed",
+                            {
+                                "tank_id": selected_tank,
+                                "filename": upload.filename,
+                                "error": str(exc),
+                            },
+                        )
+                    except Exception:
+                        pass
+                    raise ValueError(f"R2 upload failed: {exc}") from exc
+                tank_id_value = int(selected_tank) if str(selected_tank).isdigit() else None
+                user_id_value = current_user["id"] if current_user else None
+                execute_insert_returning_id(
+                    db,
+                    """
+                    INSERT INTO icp_uploads (user_id, tank_id, filename, content_type, r2_key, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id_value,
+                        tank_id_value,
+                        upload.filename,
+                        content_type,
+                        key,
+                        datetime.utcnow().isoformat(),
+                    ),
+                )
+                db.commit()
+                cleanup_r2_icp_uploads()
+                icp_upload_note = f"ICP file uploaded to Cloudflare R2 ({key})."
         else:
             raise ValueError("Provide a Triton URL or upload a CSV/PDF.")
         if not results:
@@ -7841,7 +8064,7 @@ async def icp_preview(request: Request):
             "recommendations": recommendations,
             "recommendations_payload": recommendations_payload,
             "error": None,
-            "success": None,
+            "success": icp_upload_note,
             "selected_tank": selected_tank,
             "pdf_available": pdf_available,
         },
@@ -8013,6 +8236,8 @@ def render_import_manager(request: Request, **context: Any) -> HTMLResponse:
         {
             "request": request,
             "backup_supported": backup_supported,
+            "r2_enabled": r2_enabled(),
+            "r2_bucket": R2_BUCKET,
             **context,
         },
     )
@@ -8059,6 +8284,80 @@ def admin_users(request: Request):
         },
     )
 
+@app.get("/admin/icp-uploads", response_class=HTMLResponse)
+def admin_icp_uploads(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    tank_id = (request.query_params.get("tank_id") or "").strip()
+    user_id = (request.query_params.get("user_id") or "").strip()
+    date_from = (request.query_params.get("from") or "").strip()
+    date_to = (request.query_params.get("to") or "").strip()
+    search = (request.query_params.get("q") or "").strip()
+    where = []
+    params: List[Any] = []
+    if tank_id:
+        where.append("iu.tank_id=?")
+        params.append(int(tank_id))
+    if user_id:
+        where.append("iu.user_id=?")
+        params.append(int(user_id))
+    if date_from:
+        where.append("iu.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("iu.created_at <= ?")
+        params.append(date_to)
+    if search:
+        where.append("(iu.filename LIKE ? OR iu.r2_key LIKE ?)")
+        params.extend([f"%{search}%", f"%{search}%"])
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    rows = q(
+        db,
+        f"""
+        SELECT iu.*, u.email AS user_email, t.name AS tank_name
+        FROM icp_uploads iu
+        LEFT JOIN users u ON u.id = iu.user_id
+        LEFT JOIN tanks t ON t.id = iu.tank_id
+        {where_sql}
+        ORDER BY iu.created_at DESC
+        LIMIT 200
+        """,
+        tuple(params),
+    )
+    users = q(db, "SELECT id, email FROM users ORDER BY email")
+    tanks = q(db, "SELECT id, name FROM tanks ORDER BY name")
+    uploads = []
+    for row in rows:
+        entry = dict(row)
+        r2_key = row_get(row, "r2_key")
+        if r2_key and r2_enabled():
+            try:
+                entry["download_url"] = presign_r2_download(r2_key)
+            except Exception:
+                entry["download_url"] = None
+        else:
+            entry["download_url"] = None
+        uploads.append(entry)
+    db.close()
+    return templates.TemplateResponse(
+        "admin_icp_uploads.html",
+        {
+            "request": request,
+            "uploads": uploads,
+            "r2_enabled": r2_enabled(),
+            "users": users,
+            "tanks": tanks,
+            "filters": {
+                "tank_id": tank_id,
+                "user_id": user_id,
+                "from": date_from,
+                "to": date_to,
+                "q": search,
+            },
+        },
+    )
+
 @app.post("/admin/users/{user_id}/role")
 async def admin_user_role(request: Request, user_id: int):
     form = await request.form()
@@ -8102,17 +8401,22 @@ async def admin_user_delete(request: Request, user_id: int):
 async def admin_user_tanks(request: Request, user_id: int):
     form = await request.form()
     tank_ids = [int(tid) for tid in form.getlist("tank_ids") if str(tid).isdigit()]
+    clear_tanks = str(form.get("clear_tanks") or "").lower() in {"1", "true", "on", "yes"}
     db = get_db()
     current_user = get_current_user(db, request)
     require_admin(current_user)
+    if not tank_ids and not clear_tanks:
+        db.close()
+        return redirect("/admin/users?error=Select+at+least+one+tank+or+use+Remove+all+tank+access")
     try:
         db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
-        for tank_id in tank_ids:
-            execute_with_retry(
-                db,
-                "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
-                (user_id, tank_id),
-            )
+        if not clear_tanks:
+            for tank_id in tank_ids:
+                execute_with_retry(
+                    db,
+                    "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
+                    (user_id, tank_id),
+                )
         assigned_rows = q(db, "SELECT tank_id FROM user_tanks WHERE user_id=?", (user_id,))
         assigned_ids = {int(row_get(row, "tank_id")) for row in assigned_rows if row_get(row, "tank_id") is not None}
         requested_ids = set(tank_ids)
@@ -8310,6 +8614,19 @@ def backup_download(request: Request):
             request,
             error="SQLite backup downloads are disabled for Postgres deployments. Use Neon backups instead.",
         )
+    if r2_enabled():
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        key = f"backups/reef_backup_{timestamp}.sqlite"
+        try:
+            upload_r2_file(DB_PATH, key, "application/x-sqlite3")
+            cleanup_r2_backups()
+            url = presign_r2_download(key)
+            return RedirectResponse(url)
+        except Exception as exc:
+            return render_import_manager(
+                request,
+                error=f"R2 backup upload failed: {exc}",
+            )
     return FileResponse(DB_PATH, filename="reef_backup.sqlite")
 
 @app.post("/admin/backup-restore")

@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-title" content="Reef Metrics">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="manifest" href="/static/manifest.json">
-    <link rel="apple-touch-icon" href="/static/logo-light.png">
+    <link rel="apple-touch-icon" href="/static/app-icon-192.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <link rel="preload" href="/static/style.css?v=8" as="style">
@@ -57,6 +57,7 @@
                                 <li><a class="dropdown-item" href="/settings/system"><i class="bi bi-gear"></i> System Settings</a></li>
                                 <li><a class="dropdown-item" href="/settings/integrations/apex"><i class="bi bi-plug"></i> Apex Integration</a></li>
                                 <li><a class="dropdown-item" href="/admin/users"><i class="bi bi-people"></i> Users</a></li>
+                                <li><a class="dropdown-item" href="/admin/icp-uploads"><i class="bi bi-cloud-upload"></i> ICP Uploads</a></li>
                                 <li><a class="dropdown-item" href="/admin/audit"><i class="bi bi-journal-text"></i> Audit Log</a></li>
                                 <li><a class="dropdown-item" href="/pwa/checklist"><i class="bi bi-check2-square"></i> PWA Checklist</a></li>
                             {% else %}
@@ -177,17 +178,13 @@
                 <i class="bi bi-house-door"></i>
                 <span>Home</span>
             </a>
-            <a class="nav-link {% if request.url.path.startswith('/tools') %}active{% endif %}" href="/tools/calculators">
+            <a class="nav-link {% if request.url.path == '/tools/calculators' %}active{% endif %}" href="/tools/calculators">
                 <i class="bi bi-calculator"></i>
-                <span>Tools</span>
+                <span>Dosing Calc</span>
             </a>
             <a class="nav-link {% if request.url.path.startswith('/tools/dose-plan') %}active{% endif %}" href="/tools/dose-plan">
                 <i class="bi bi-calendar-check"></i>
                 <span>Dose Plan</span>
-            </a>
-            <a class="nav-link {% if request.url.path == '/tools/calculators' %}active{% endif %}" href="/tools/calculators">
-                <i class="bi bi-calculator"></i>
-                <span>Dosing Calc</span>
             </a>
             {% if request.state.user is defined and request.state.user %}
                 <a class="nav-link {% if request.url.path.startswith('/account') %}active{% endif %}" href="/account">
@@ -341,6 +338,45 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
     <script>
+        const getCookie = (name) => {
+            const match = document.cookie.match(new RegExp(`(^|; )${name}=([^;]*)`));
+            return match ? decodeURIComponent(match[2]) : "";
+        };
+        window.csrfToken = getCookie("csrf_token");
+
+        document.addEventListener("DOMContentLoaded", () => {
+            if (!window.csrfToken) return;
+            document.querySelectorAll("form").forEach((form) => {
+                const method = (form.getAttribute("method") || "get").toLowerCase();
+                if (method !== "post") return;
+                if (form.querySelector("input[name='csrf_token']")) return;
+                const input = document.createElement("input");
+                input.type = "hidden";
+                input.name = "csrf_token";
+                input.value = window.csrfToken;
+                form.appendChild(input);
+            });
+        });
+        document.addEventListener("DOMContentLoaded", () => {
+            if (!window.csrfToken) return;
+            document.querySelectorAll("form[enctype='multipart/form-data']").forEach((form) => {
+                if (form.dataset.csrfFetchBound) return;
+                form.dataset.csrfFetchBound = "true";
+                form.addEventListener("submit", async (event) => {
+                    event.preventDefault();
+                    const formData = new FormData(form);
+                    const response = await fetch(form.action, {
+                        method: (form.method || "post").toUpperCase(),
+                        headers: { "X-CSRF-Token": window.csrfToken },
+                        body: formData,
+                    });
+                    const html = await response.text();
+                    document.open();
+                    document.write(html);
+                    document.close();
+                });
+            });
+        });
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", () => {
                 navigator.serviceWorker.register("/static/service-worker.js").catch(() => {});
@@ -503,7 +539,10 @@
                 await fetch("/api/push/subscribe", {
                     method: "POST",
                     credentials: "same-origin",
-                    headers: { "Content-Type": "application/json" },
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRF-Token": window.csrfToken || "",
+                    },
                     body: JSON.stringify(subscription),
                 });
                 return subscription;
@@ -516,7 +555,10 @@
                     await fetch("/api/push/unsubscribe", {
                         method: "POST",
                         credentials: "same-origin",
-                        headers: { "Content-Type": "application/json" },
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRF-Token": window.csrfToken || "",
+                        },
                         body: JSON.stringify({ endpoint: subscription.endpoint }),
                     });
                     await subscription.unsubscribe();
