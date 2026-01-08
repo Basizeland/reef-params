@@ -354,11 +354,15 @@ h1, h2, h3, h4, h5 {
     }
 
     .mobile-content-pad {
-        padding-bottom: 2rem;
+        padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
     }
 
     .bottom-nav {
-        position: static;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1030;
         background: var(--reef-surface);
         border-top: 1px solid var(--reef-border);
         box-shadow: 0 -6px 18px rgba(15, 45, 69, 0.08);
