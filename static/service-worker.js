@@ -1,8 +1,8 @@
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open("reef-metrics-v6").then((cache) => cache.addAll([
+    caches.open("reef-metrics-v7").then((cache) => cache.addAll([
       "/",
-      "/static/style.css?v=4",
+      "/static/style.css?v=5",
       "/static/logo.png",
       "/static/logo-light.png",
       "/static/manifest.json",
