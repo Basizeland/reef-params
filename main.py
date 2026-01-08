@@ -3100,6 +3100,16 @@ def init_db() -> None:
                 )
                 """,
             )
+        if engine.dialect.name == "postgresql" and table_exists(db, "icp_uploads"):
+            execute_with_retry(db, "CREATE SEQUENCE IF NOT EXISTS icp_uploads_id_seq")
+            execute_with_retry(
+                db,
+                "ALTER TABLE icp_uploads ALTER COLUMN id SET DEFAULT nextval('icp_uploads_id_seq')",
+            )
+            execute_with_retry(
+                db,
+                "SELECT setval('icp_uploads_id_seq', COALESCE((SELECT MAX(id) FROM icp_uploads), 0) + 1, false)",
+            )
         if engine.dialect.name == "postgresql":
             if table_exists(db, "additives"):
                 reset_additives_sequence(db)
@@ -7925,7 +7935,7 @@ async def icp_preview(request: Request):
                 upload_r2_bytes(data, key, content_type)
                 tank_id_value = int(selected_tank) if str(selected_tank).isdigit() else None
                 user_id_value = current_user["id"] if current_user else None
-                execute_with_retry(
+                execute_insert_returning_id(
                     db,
                     """
                     INSERT INTO icp_uploads (user_id, tank_id, filename, content_type, r2_key, created_at)
