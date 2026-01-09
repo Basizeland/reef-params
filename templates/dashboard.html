@@ -189,6 +189,9 @@
                       {% if r.trend_warning %}
                         <span class="badge text-bg-warning">Rapid change</span>
                       {% endif %}
+                      {% if r.trend_risk %}
+                        <span class="badge text-bg-danger">Trending out of range</span>
+                      {% endif %}
                       {% if r.overdue %}
                         <span class="badge text-bg-info">Overdue</span>
                       {% endif %}

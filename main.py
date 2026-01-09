@@ -67,6 +67,20 @@ def db_health():
         "total_ms": round((finished - start) * 1000, 2),
     }
 
+@app.post("/tools/dose-plan/simulate")
+async def simulate_dose_plan(request: Request) -> JSONResponse:
+    payload = await request.json()
+    current = parse_float(payload.get("current"))
+    daily_change = parse_float(payload.get("daily_change"))
+    days = int(parse_float(payload.get("days")) or 0)
+    if current is None or daily_change is None or days <= 0:
+        return JSONResponse({"error": "Invalid input"}, status_code=400)
+    days = min(days, 60)
+    projections = []
+    for day in range(1, days + 1):
+        projections.append({"day": day, "value": current + daily_change * day})
+    return JSONResponse({"ok": True, "projections": projections})
+
 sentry_dsn = os.environ.get("SENTRY_DSN")
 if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
     import sentry_sdk
@@ -129,6 +143,14 @@ def additive_label(additive: Any) -> str:
         return name
     label = f"{brand} {name}".strip()
     return label or name
+
+def parse_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
 
 TRITON_PARAMETER_GROUPS: List[Tuple[str, List[str]]] = [
     (
@@ -3484,6 +3506,18 @@ def dashboard(request: Request):
                         trend_warning = True
                 except Exception:
                     pass
+            trend_risk = False
+            if delta_per_day is not None and target and latest_val is not None:
+                try:
+                    projected = float(latest_val) + float(delta_per_day) * 7.0
+                    alert_low = row_get(target, "alert_low")
+                    alert_high = row_get(target, "alert_high")
+                    if alert_low is not None and projected < float(alert_low):
+                        trend_risk = True
+                    if alert_high is not None and projected > float(alert_high):
+                        trend_risk = True
+                except Exception:
+                    trend_risk = False
             overdue = False
             if latest_taken:
                 interval_days = row_get(p, "test_interval_days")
@@ -3513,6 +3547,7 @@ def dashboard(request: Request):
                 "taken_at": latest_taken,
                 "status": status,
                 "trend_warning": trend_warning,
+                "trend_risk": trend_risk,
                 "delta_per_day": delta_per_day,
                 "overdue": overdue,
                 "sparkline": build_sparkline_points(sparkline_values),
@@ -7868,6 +7903,7 @@ def dose_plan(request: Request):
         except Exception: eff_vol_l = None
         
         latest_map = get_latest_per_parameter(db, tank_id)
+        latest_and_previous_map = get_latest_and_previous_per_parameter(db, tank_id)
         latest = latest_samples.get(tank_id)
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
         targets = targets_by_tank.get(tank_id, [])
@@ -7927,6 +7963,23 @@ def dose_plan(request: Request):
             days = 1
             if max_change_f and max_change_f > 0 and delta > max_change_f: days = int(math.ceil(delta / max_change_f))
             per_day_change = delta / float(days)
+            suggested_days = 7
+            suggested_daily_change = None
+            prev_data = latest_and_previous_map.get(pname, {}).get("previous")
+            latest_data = latest_and_previous_map.get(pname, {}).get("latest")
+            observed_daily_change = 0.0
+            if latest_data and prev_data and latest_data.get("taken_at") and prev_data.get("taken_at"):
+                try:
+                    obs_delta = float(latest_data.get("value")) - float(prev_data.get("value"))
+                    obs_days = max((latest_data["taken_at"] - prev_data["taken_at"]).total_seconds() / 86400.0, 1e-6)
+                    observed_daily_change = obs_delta / obs_days
+                except Exception:
+                    observed_daily_change = 0.0
+            try:
+                required_daily = delta / float(suggested_days)
+                suggested_daily_change = max(required_daily - observed_daily_change, 0.0)
+            except Exception:
+                suggested_daily_change = None
             adds = additives_by_param.get(pname, [])
             if not adds:
                 suggestion = None
@@ -7945,6 +7998,8 @@ def dose_plan(request: Request):
                     "days": days,
                     "per_day_change": per_day_change,
                     "max_daily_change": max_change_f,
+                    "suggested_days": suggested_days,
+                    "suggested_daily_change": suggested_daily_change,
                     "additives": [],
                     "note": "No additive linked.",
                     "suggested_additive": suggestion,
@@ -8013,7 +8068,19 @@ def dose_plan(request: Request):
             if top_deficit is None or (top_deficit and delta > top_deficit["delta"]):
                 top_deficit = {"tank": t["name"], "parameter": pname, "delta": delta, "unit": unit}
                 
-            tank_rows.append({"parameter": pname, "latest": cur_val_f, "target": target_val, "change": delta, "unit": unit, "days": days, "per_day_change": per_day_change, "additives": add_rows, "note": ""})
+            tank_rows.append({
+                "parameter": pname,
+                "latest": cur_val_f,
+                "target": target_val,
+                "change": delta,
+                "unit": unit,
+                "days": days,
+                "per_day_change": per_day_change,
+                "suggested_days": suggested_days,
+                "suggested_daily_change": suggested_daily_change,
+                "additives": add_rows,
+                "note": "",
+            })
             
         plan_total_ml = 0.0
         for _r in tank_rows:
