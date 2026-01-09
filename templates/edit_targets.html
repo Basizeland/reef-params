@@ -23,7 +23,7 @@
           <h2 class="accordion-header" id="{{ collapse_id }}-heading">
             <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}" aria-expanded="{{ 'true' if loop.first else 'false' }}" aria-controls="{{ collapse_id }}">
               <span class="fw-semibold text-navy">{{ group.name }}</span>
-              <span class="badge bg-light text-secondary border ms-2">{{ group.items|length }}</span>
+              <span class="badge bg-light text-secondary border ms-2">{{ group["items"]|length }}</span>
             </button>
           </h2>
           <div id="{{ collapse_id }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" aria-labelledby="{{ collapse_id }}-heading" data-bs-parent="#targetsAccordion">
@@ -39,7 +39,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {% for r in group.items %}
+                    {% for r in group["items"] %}
                     <tr>
                       <td class="ps-3 fw-semibold">
                         {{ r.parameter.name }}
