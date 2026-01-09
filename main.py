@@ -7531,6 +7531,9 @@ def dose_plan(request: Request):
     def normalize_planned_date(value: Any) -> str:
         if value is None:
             return ""
+        parsed = parse_dt_any(value)
+        if parsed:
+            return parsed.date().isoformat()
         if hasattr(value, "isoformat"):
             return value.isoformat()
         return str(value)
