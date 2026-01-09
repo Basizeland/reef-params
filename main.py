@@ -130,6 +130,101 @@ def additive_label(additive: Any) -> str:
     label = f"{brand} {name}".strip()
     return label or name
 
+TRITON_PARAMETER_GROUPS: List[Tuple[str, List[str]]] = [
+    (
+        "Core Elements",
+        [
+            "alkalinity/kh",
+            "alkalinitykh",
+            "alkalinity",
+            "calcium",
+            "magnesium",
+            "ph",
+            "salinity",
+            "temperature",
+        ],
+    ),
+    (
+        "Major Elements",
+        [
+            "sodium",
+            "chloride",
+            "potassium",
+            "sulfur",
+            "bromine",
+            "strontium",
+            "boron",
+            "fluoride",
+            "lithium",
+            "iodine",
+        ],
+    ),
+    (
+        "Nutrients",
+        [
+            "nitrate",
+            "phosphate",
+            "ammonia",
+            "nitrite",
+            "silicate",
+        ],
+    ),
+    (
+        "Trace Elements",
+        [
+            "iron",
+            "manganese",
+            "molybdenum",
+            "zinc",
+            "cobalt",
+            "copper",
+            "nickel",
+            "chromium",
+            "vanadium",
+            "selenium",
+            "tin",
+            "aluminum",
+            "barium",
+            "arsenic",
+        ],
+    ),
+]
+
+def normalize_parameter_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+def triton_group_for_parameter(name: str) -> str:
+    if not name:
+        return "Other"
+    normalized = normalize_parameter_key(name)
+    if "trace" in normalized:
+        return "Trace Elements"
+    for label, names in TRITON_PARAMETER_GROUPS:
+        normalized_names = {normalize_parameter_key(item) for item in names}
+        if normalized in normalized_names:
+            return label
+    return "Other"
+
+def group_parameters_for_ui(items: List[Dict[str, Any]], name_key: str) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for item in items:
+        name_value = ""
+        if "." in name_key:
+            current: Any = item
+            for segment in name_key.split("."):
+                current = row_get(current, segment) if current is not None else None
+            name_value = current or ""
+        else:
+            name_value = row_get(item, name_key) or ""
+        group_name = triton_group_for_parameter(str(name_value))
+        grouped.setdefault(group_name, []).append(item)
+    ordered_groups = [label for label, _ in TRITON_PARAMETER_GROUPS] + ["Other"]
+    output: List[Dict[str, Any]] = []
+    for label in ordered_groups:
+        if label in grouped:
+            output.append({"name": label, "items": grouped[label]})
+    return output
+
 def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     daily_consumption: Dict[str, Dict[str, Any]] = {}
     volume_l = row_get(tank_view, "volume_l")
@@ -6411,7 +6506,17 @@ def edit_targets(request: Request, tank_id: int):
         })
         
     db.close()
-    return templates.TemplateResponse("edit_targets.html", {"request": request, "tank": tank, "tank_id": tank_id, "rows": rows})
+    grouped_rows = group_parameters_for_ui(rows, "parameter.name")
+    return templates.TemplateResponse(
+        "edit_targets.html",
+        {
+            "request": request,
+            "tank": tank,
+            "tank_id": tank_id,
+            "rows": rows,
+            "grouped_rows": grouped_rows,
+        },
+    )
 
 @app.post("/tanks/{tank_id}/targets")
 async def save_targets(request: Request, tank_id: int):
@@ -6464,9 +6569,10 @@ def parameters_settings(request: Request):
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
     error = request.query_params.get("error")
+    grouped_parameters = group_parameters_for_ui(rows, "name")
     return templates.TemplateResponse(
         "parameters.html",
-        {"request": request, "parameters": rows, "error": error},
+        {"request": request, "parameters": rows, "grouped_parameters": grouped_parameters, "error": error},
     )
 
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
