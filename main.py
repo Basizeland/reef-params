@@ -3697,7 +3697,7 @@ def account_settings(request: Request):
         return redirect("/auth/login")
     tokens = list_api_tokens(db, user["id"])
     db.close()
-    return templates.TemplateResponse("account.html", {"request": request, "tokens": tokens})
+    return templates.TemplateResponse("account.html", {"request": request, "tokens": tokens, "user": user})
 
 @app.post("/account/password")
 async def account_change_password(request: Request):
@@ -3714,19 +3714,34 @@ async def account_change_password(request: Request):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current and new password are required.", "tokens": list_api_tokens(db, user["id"])},
+            {
+                "request": request,
+                "error": "Current and new password are required.",
+                "tokens": list_api_tokens(db, user["id"]),
+                "user": user,
+            },
         )
     if new_password != confirm_password:
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "New passwords do not match.", "tokens": list_api_tokens(db, user["id"])},
+            {
+                "request": request,
+                "error": "New passwords do not match.",
+                "tokens": list_api_tokens(db, user["id"]),
+                "user": user,
+            },
         )
     if not verify_password(current_password, user["password_hash"], user["password_salt"]):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current password is incorrect.", "tokens": list_api_tokens(db, user["id"])},
+            {
+                "request": request,
+                "error": "Current password is incorrect.",
+                "tokens": list_api_tokens(db, user["id"]),
+                "user": user,
+            },
         )
     password_hash, password_salt = hash_password(new_password)
     db.execute(
@@ -3739,7 +3754,7 @@ async def account_change_password(request: Request):
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "Password updated successfully.", "tokens": tokens},
+        {"request": request, "success": "Password updated successfully.", "tokens": tokens, "user": user},
     )
 
 @app.post("/account/api-tokens")
@@ -3757,7 +3772,13 @@ async def account_create_api_token(request: Request):
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "API token created. Copy it now; it won’t be shown again.", "api_token": token, "tokens": tokens},
+        {
+            "request": request,
+            "success": "API token created. Copy it now; it won’t be shown again.",
+            "api_token": token,
+            "tokens": tokens,
+            "user": user,
+        },
     )
 
 @app.post("/account/api-tokens/{token_id}/revoke")
@@ -3774,7 +3795,7 @@ async def account_revoke_api_token(request: Request, token_id: int):
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "API token revoked.", "tokens": tokens},
+        {"request": request, "success": "API token revoked.", "tokens": tokens, "user": user},
     )
 
 @app.post("/admin/send-daily-summaries")

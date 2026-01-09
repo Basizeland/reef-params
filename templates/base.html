@@ -73,7 +73,6 @@
             </div>
             <div class="d-flex align-items-center gap-2 ms-auto">
                 <a class="nav-link d-none d-lg-inline" href="/account"><i class="bi bi-person-circle"></i> Account</a>
-                <a class="nav-link d-none d-lg-inline" href="/auth/logout"><i class="bi bi-box-arrow-right"></i> Logout</a>
                 {% set global_notifications = global_dosing_notifications(request) %}
                 <div class="dropdown">
                     <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
@@ -500,6 +499,11 @@
                         btn.disabled = true;
                     });
                     return;
+                }
+                try {
+                    await navigator.serviceWorker.ready;
+                } catch (err) {
+                    // Ignore readiness errors and fall back to manual checks.
                 }
                 const subscription = await getAnySubscription();
                 const permission = Notification?.permission || "default";
