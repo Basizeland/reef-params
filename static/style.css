@@ -344,7 +344,7 @@ h1, h2, h3, h4, h5 {
     box-shadow: 0 18px 32px rgba(12, 40, 64, 0.12);
 }
 
-@media (max-width: 576px) {
+@media (max-width: 991.98px) {
     body {
         padding-bottom: calc(7.5rem + env(safe-area-inset-bottom));
     }
