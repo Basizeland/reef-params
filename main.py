@@ -4781,6 +4781,7 @@ def tank_detail(request: Request, tank_id: int):
 
     recent_samples = samples[:10] if samples else []
     db.close()
+    grouped_icp_params = group_parameters_for_ui(icp_params, "name") if icp_params else []
     return templates.TemplateResponse(
         "tank_detail.html",
         {
@@ -4809,6 +4810,7 @@ def tank_detail(request: Request, tank_id: int):
             "core_params": core_params,
             "trace_params": trace_params,
             "icp_params": icp_params,
+            "grouped_icp_params": grouped_icp_params,
         },
     )
 
