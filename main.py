@@ -7528,6 +7528,12 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
 def dose_plan(request: Request):
     db = get_db()
     today = date.today()
+    def normalize_planned_date(value: Any) -> str:
+        if value is None:
+            return ""
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
     try:
         chk_rows = q(
             db,
@@ -7535,7 +7541,12 @@ def dose_plan(request: Request):
             (today.isoformat(), (today + timedelta(days=60)).isoformat()),
         )
         check_map = {
-            (r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0)
+            (
+                r["tank_id"],
+                r["parameter"],
+                r["additive_id"],
+                normalize_planned_date(r["planned_date"]),
+            ): int(r["checked"] or 0)
             for r in chk_rows
         }
         latest_rows = q(
