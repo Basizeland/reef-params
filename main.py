@@ -2184,6 +2184,29 @@ class DBConnection:
         orig = getattr(exc, "orig", None)
         return isinstance(orig, psycopg.errors.InFailedSqlTransaction)
 
+    def _is_disconnect_error(self, exc: SQLAlchemyError) -> bool:
+        orig = getattr(exc, "orig", None)
+        try:
+            return engine.dialect.is_disconnect(orig, self._conn, None)
+        except Exception:
+            message = str(exc).lower()
+            return "connection has been closed unexpectedly" in message or "ssl connection has been closed" in message
+
+    def _connect(self) -> Connection:
+        conn = engine.connect()
+        if engine.dialect.name == "sqlite":
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA busy_timeout=30000"))
+        return conn
+
+    def _reconnect(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        self._conn = self._connect()
+        self._needs_rollback = False
+
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
         if self._needs_rollback:
             self._conn.rollback()
@@ -2194,6 +2217,12 @@ class DBConnection:
             prepared_sql, bound = _prepare_sql(sql, params)
             return self._conn.execute(text(prepared_sql), bound)
         except SQLAlchemyError as exc:
+            if self._is_disconnect_error(exc):
+                self._reconnect()
+                if isinstance(sql, TextClause):
+                    return self._conn.execute(sql, params or {})
+                prepared_sql, bound = _prepare_sql(sql, params)
+                return self._conn.execute(text(prepared_sql), bound)
             self._needs_rollback = True
             self._conn.rollback()
             if self._is_failed_transaction(exc):
