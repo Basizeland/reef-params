@@ -34,6 +34,55 @@
   </div>
 </div>
 
+{% if tank_summaries %}
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h2 class="h6 text-uppercase text-muted mb-1">Tank Focus</h2>
+      <div class="small text-muted">
+        {% if tank_summaries|length == 1 %}
+          Everything happening in your reef.
+        {% else %}
+          Quick status across your tanks.
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="row g-3 mb-4">
+    {% for summary in tank_summaries %}
+      <div class="col-md-6 col-xl-4">
+        <a class="card h-100 shadow-sm border-0 text-decoration-none text-reset" href="/tanks/{{ summary.tank_id }}">
+          <div class="card-body">
+            <div class="d-flex align-items-start justify-content-between gap-2">
+              <div>
+                <h3 class="h5 mb-1">{{ summary.tank_name }}</h3>
+                <div class="small text-muted">
+                  {% if summary.last_sample %}
+                    Last sample {{ summary.last_sample|time_ago }}
+                  {% else %}
+                    No samples yet
+                  {% endif %}
+                </div>
+              </div>
+              <i class="bi bi-chevron-right text-muted"></i>
+            </div>
+            <div class="mt-3 d-flex flex-wrap gap-2">
+              <span class="badge bg-light text-secondary border">
+                {{ summary.samples_week }} samples (7d)
+              </span>
+              <span class="badge {% if summary.overdue_count %}text-bg-info{% else %}bg-light text-secondary border{% endif %}">
+                {{ summary.overdue_count }} overdue
+              </span>
+              <span class="badge bg-light text-secondary border">
+                {{ summary.volatility_count }} volatile
+              </span>
+            </div>
+          </div>
+        </a>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
 <div class="row g-3">
   <div class="col-lg-6">
     <div class="card shadow-sm border-0 h-100">

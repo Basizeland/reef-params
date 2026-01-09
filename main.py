@@ -3445,6 +3445,10 @@ def insights(request: Request):
     total_samples_week = 0
     overdue_items: List[Dict[str, Any]] = []
     volatility: List[Dict[str, Any]] = []
+    tank_summaries: List[Dict[str, Any]] = []
+    samples_week_map: Dict[int, int] = {}
+    last_sample_map: Dict[int, Optional[str]] = {}
+    volatility_count_map: Dict[int, int] = {}
     if tank_ids:
         placeholders = ",".join("?" for _ in tank_ids)
         week_start = (datetime.utcnow() - timedelta(days=7)).isoformat()
@@ -3453,7 +3457,34 @@ def insights(request: Request):
             f"SELECT COUNT(*) AS count FROM samples WHERE tank_id IN ({placeholders}) AND taken_at>=?",
             (*tank_ids, week_start),
         )["count"]
+        sample_rows = q(
+            db,
+            f"""SELECT tank_id, COUNT(*) AS count
+                FROM samples
+                WHERE tank_id IN ({placeholders}) AND taken_at>=?
+                GROUP BY tank_id""",
+            (*tank_ids, week_start),
+        )
+        for row in sample_rows:
+            tank_id_value = row_get(row, "tank_id")
+            if tank_id_value is None:
+                continue
+            samples_week_map[int(tank_id_value)] = int(row_get(row, "count") or 0)
+        last_sample_rows = q(
+            db,
+            f"""SELECT tank_id, MAX(taken_at) AS last_taken
+                FROM samples
+                WHERE tank_id IN ({placeholders})
+                GROUP BY tank_id""",
+            tuple(tank_ids),
+        )
+        for row in last_sample_rows:
+            tank_id_value = row_get(row, "tank_id")
+            if tank_id_value is None:
+                continue
+            last_sample_map[int(tank_id_value)] = row_get(row, "last_taken")
         for tank in tanks:
+            overdue_list = get_overdue_tests(db, tank["id"], user_id=user["id"] if user else None)
             overdue_items.extend(
                 [
                     {
@@ -3461,9 +3492,10 @@ def insights(request: Request):
                         "tank_name": tank["name"],
                         **item,
                     }
-                    for item in get_overdue_tests(db, tank["id"], user_id=user["id"] if user else None)
+                    for item in overdue_list
                 ]
             )
+            volatility_count_map[int(tank["id"])] = 0
             latest_map = get_latest_and_previous_per_parameter(db, tank["id"])
             for param_name, data in latest_map.items():
                 latest = data.get("latest")
@@ -3485,8 +3517,20 @@ def insights(request: Request):
                             "delta_per_day": delta / days,
                         }
                     )
+                    volatility_count_map[int(tank["id"])] += 1
                 except Exception:
                     continue
+            tank_id_value = int(tank["id"])
+            tank_summaries.append(
+                {
+                    "tank_id": tank_id_value,
+                    "tank_name": tank["name"],
+                    "last_sample": last_sample_map.get(tank_id_value),
+                    "samples_week": samples_week_map.get(tank_id_value, 0),
+                    "overdue_count": len(overdue_list),
+                    "volatility_count": volatility_count_map.get(tank_id_value, 0),
+                }
+            )
     volatility_sorted = sorted(volatility, key=lambda v: abs(v["delta_per_day"]), reverse=True)[:5]
     db.close()
     return templates.TemplateResponse(
@@ -3497,6 +3541,7 @@ def insights(request: Request):
             "total_samples_week": total_samples_week,
             "overdue_items": overdue_items,
             "volatility": volatility_sorted,
+            "tank_summaries": tank_summaries,
         },
     )
 
