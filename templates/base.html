@@ -60,12 +60,6 @@
                                 <li><a class="dropdown-item" href="/admin/icp-uploads"><i class="bi bi-cloud-upload"></i> ICP Uploads</a></li>
                                 <li><a class="dropdown-item" href="/admin/audit"><i class="bi bi-journal-text"></i> Audit Log</a></li>
                                 <li><a class="dropdown-item" href="/pwa/checklist"><i class="bi bi-check2-square"></i> PWA Checklist</a></li>
-                            {% else %}
-                                <li>
-                                    <span class="dropdown-item text-muted">
-                                        <i class="bi bi-database"></i> Data Center (admin only)
-                                    </span>
-                                </li>
                             {% endif %}
                         </ul>
                     </li>
@@ -462,6 +456,19 @@
                     state.seen = true;
                     saveState(state);
                     updateUI();
+                });
+            }
+
+            const showButtons = Array.from(document.querySelectorAll("[data-show-onboarding]"));
+            if (showButtons.length) {
+                showButtons.forEach((button) => {
+                    button.addEventListener("click", () => {
+                        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+                        modal.show();
+                        state.seen = true;
+                        saveState(state);
+                        updateUI();
+                    });
                 });
             }
 
