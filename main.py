@@ -3299,6 +3299,21 @@ async def auth_middleware(request: Request, call_next):
 def dashboard(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
+    tank_ids = [int(t["id"]) for t in tanks]
+    targets_by_tank: Dict[int, Dict[str, Any]] = {}
+    if tank_ids:
+        placeholders = ",".join("?" for _ in tank_ids)
+        target_rows = q(
+            db,
+            f"SELECT * FROM targets WHERE tank_id IN ({placeholders}) AND enabled=1",
+            tuple(tank_ids),
+        )
+        for row in target_rows:
+            tank_id = row_get(row, "tank_id")
+            pname = row_get(row, "parameter")
+            if tank_id is None or not pname:
+                continue
+            targets_by_tank.setdefault(int(tank_id), {})[pname] = row
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
     pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -3312,8 +3327,9 @@ def dashboard(request: Request):
     ]
     available_params.sort(key=lambda item: item["name"].lower())
     for t in tanks:
-        latest_map = get_latest_and_previous_per_parameter(db, t["id"])
-        targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
+        tank_id = int(t["id"])
+        latest_map = get_latest_and_previous_per_parameter(db, tank_id)
+        targets = targets_by_tank.get(tank_id, {})
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         history_map = get_recent_param_values(db, t["id"], list(pdefs.keys()))
         
@@ -7584,9 +7600,16 @@ def dose_plan(request: Request):
         check_map = {}
         latest_check_map = {}
     tanks = get_visible_tanks(db, request)
+    tank_ids = [int(t["id"]) for t in tanks]
     pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
     all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
+    additives_by_param: Dict[str, List[Dict[str, Any]]] = {}
+    for additive in all_additives:
+        pname = row_get(additive, "parameter")
+        if not pname:
+            continue
+        additives_by_param.setdefault(str(pname), []).append(additive)
     additives_by_group: Dict[str, List[Dict[str, Any]]] = {}
     def group_key(value: str) -> str:
         cleaned = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
@@ -7605,16 +7628,107 @@ def dose_plan(request: Request):
         return cleaned
     for additive in all_additives:
         additives_by_group.setdefault(group_key(row_get(additive, "parameter")), []).append(additive)
+    tank_profiles: Dict[int, Dict[str, Any]] = {}
+    targets_by_tank: Dict[int, List[Dict[str, Any]]] = {}
+    latest_samples: Dict[int, Dict[str, Any]] = {}
+    latest_icp_by_tank: Dict[int, Dict[str, Any]] = {}
+    icp_sample_ids: List[int] = []
+    if tank_ids:
+        placeholders = ",".join("?" for _ in tank_ids)
+        profiles = q(
+            db,
+            f"SELECT * FROM tank_profiles WHERE tank_id IN ({placeholders})",
+            tuple(tank_ids),
+        )
+        tank_profiles = {int(p["tank_id"]): p for p in profiles if row_get(p, "tank_id") is not None}
+        target_rows = q(
+            db,
+            f"SELECT * FROM targets WHERE tank_id IN ({placeholders}) AND enabled=1 ORDER BY parameter",
+            tuple(tank_ids),
+        )
+        for row in target_rows:
+            tank_id = row_get(row, "tank_id")
+            if tank_id is None:
+                continue
+            targets_by_tank.setdefault(int(tank_id), []).append(row)
+        sample_rows = q(
+            db,
+            f"""
+            SELECT *
+            FROM samples
+            WHERE tank_id IN ({placeholders})
+            ORDER BY tank_id, taken_at DESC, id DESC
+            """,
+            tuple(tank_ids),
+        )
+        for row in sample_rows:
+            tank_id = row_get(row, "tank_id")
+            if tank_id is None:
+                continue
+            tank_id_int = int(tank_id)
+            if tank_id_int not in latest_samples:
+                latest_samples[tank_id_int] = row
+        icp_rows = q(
+            db,
+            f"""
+            SELECT id, tank_id, taken_at
+            FROM samples
+            WHERE tank_id IN ({placeholders}) AND lower(notes) LIKE ?
+            ORDER BY tank_id, taken_at DESC, id DESC
+            """,
+            (*tank_ids, "%imported from icp%"),
+        )
+        for row in icp_rows:
+            tank_id = row_get(row, "tank_id")
+            if tank_id is None:
+                continue
+            tank_id_int = int(tank_id)
+            if tank_id_int not in latest_icp_by_tank:
+                sample_id = row_get(row, "id")
+                latest_icp_by_tank[tank_id_int] = {
+                    "id": sample_id,
+                    "taken_at": parse_dt_any(row_get(row, "taken_at")),
+                }
+                if sample_id is not None:
+                    icp_sample_ids.append(sample_id)
+    last_used_by_tank_param: Dict[Tuple[int, str], int] = {}
+    if tank_ids:
+        placeholders = ",".join("?" for _ in tank_ids)
+        last_used_rows = q(
+            db,
+            f"""
+            SELECT tank_id, parameter, additive_id
+            FROM (
+                SELECT dl.tank_id AS tank_id,
+                       a.parameter AS parameter,
+                       dl.additive_id AS additive_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY dl.tank_id, a.parameter
+                           ORDER BY dl.logged_at DESC
+                       ) AS rn
+                FROM dose_logs dl
+                JOIN additives a ON a.id = dl.additive_id
+                WHERE dl.tank_id IN ({placeholders})
+            ) ranked
+            WHERE rn = 1
+            """,
+            tuple(tank_ids),
+        )
+        for row in last_used_rows:
+            tank_id = row_get(row, "tank_id")
+            pname = row_get(row, "parameter")
+            additive_id = row_get(row, "additive_id")
+            if tank_id is None or pname is None or additive_id is None:
+                continue
+            last_used_by_tank_param[(int(tank_id), str(pname))] = int(additive_id)
     available_parameters = set()
     total_needed = 0
     top_deficit = None
     plans = []
     grand_total_ml = 0.0
-    latest_icp_by_tank: Dict[int, Dict[str, Any]] = {}
-    icp_sample_ids: List[int] = []
     for t in tanks:
         tank_id = int(t["id"])
-        prof = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+        prof = tank_profiles.get(tank_id)
         vol_l = None
         net_pct = 100.0
         if prof:
@@ -7628,21 +7742,9 @@ def dose_plan(request: Request):
         except Exception: eff_vol_l = None
         
         latest_map = get_latest_per_parameter(db, tank_id)
-        latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
+        latest = latest_samples.get(tank_id)
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
-        icp_sample = one(
-            db,
-            "SELECT id, taken_at FROM samples WHERE tank_id=? AND lower(notes) LIKE ? ORDER BY taken_at DESC LIMIT 1",
-            (tank_id, "%imported from icp%"),
-        )
-        if icp_sample:
-            latest_icp_by_tank[tank_id] = {
-                "id": icp_sample["id"],
-                "taken_at": parse_dt_any(icp_sample["taken_at"]),
-            }
-            icp_sample_ids.append(icp_sample["id"])
-
-        targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
+        targets = targets_by_tank.get(tank_id, [])
         targets_by_param = {row_get(t, "parameter"): t for t in targets if row_get(t, "parameter")}
         for pname, pdef in pdef_map.items():
             if pname in targets_by_param:
@@ -7699,7 +7801,7 @@ def dose_plan(request: Request):
             days = 1
             if max_change_f and max_change_f > 0 and delta > max_change_f: days = int(math.ceil(delta / max_change_f))
             per_day_change = delta / float(days)
-            adds = q(db, "SELECT * FROM additives WHERE active=1 AND parameter=? ORDER BY name", (pname,))
+            adds = additives_by_param.get(pname, [])
             if not adds:
                 suggestion = None
                 for candidate in additives_by_group.get(group_key(pname), []):
@@ -7725,15 +7827,7 @@ def dose_plan(request: Request):
             
             # --- NEW LOGIC: Determine Preferred Additive ---
             # 1. Try to find the last additive used for this parameter in this tank
-            last_used = one(db, """
-                SELECT dl.additive_id 
-                FROM dose_logs dl 
-                JOIN additives a ON a.id = dl.additive_id 
-                WHERE dl.tank_id=? AND a.parameter=? 
-                ORDER BY dl.logged_at DESC LIMIT 1
-            """, (tank_id, pname))
-            
-            preferred_id = last_used["additive_id"] if last_used else None
+            preferred_id = last_used_by_tank_param.get((tank_id, pname))
             
             add_rows = []
             has_selected = False
