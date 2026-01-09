@@ -57,12 +57,12 @@
       <div class="row g-3">
         {% for item in reminders[:6] %}
           <div class="col-md-4">
-            <div class="border rounded-3 p-3 h-100 bg-light">
+            <a class="border rounded-3 p-3 h-100 bg-light text-decoration-none text-reset d-block" href="/tanks/{{ item.tank_id }}">
               <div class="fw-semibold">{{ item.parameter }}</div>
               <div class="small text-muted">
                 {{ item.tank_name }} · Last test {{ item.last_tested|time_ago }}
               </div>
-            </div>
+            </a>
           </div>
         {% endfor %}
       </div>
