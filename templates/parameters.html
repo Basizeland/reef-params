@@ -35,44 +35,27 @@
             <input class="form-control" type="text" placeholder="Search parameters" data-parameter-search>
           </div>
         </div>
-        <div class="accordion" id="parameterAccordion">
-          {% for group in grouped_parameters %}
-            {% set collapse_id = "parameter-group-" ~ loop.index %}
-            <div class="accordion-item" data-parameter-group>
-              <h2 class="accordion-header" id="{{ collapse_id }}-heading">
-                <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}" aria-expanded="{{ 'true' if loop.first else 'false' }}" aria-controls="{{ collapse_id }}">
-                  <span class="fw-semibold text-navy">{{ group.name }}</span>
-                  <span class="badge bg-light text-secondary border ms-2">{{ group["items"]|length }}</span>
-                </button>
-              </h2>
-              <div id="{{ collapse_id }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" aria-labelledby="{{ collapse_id }}-heading" data-bs-parent="#parameterAccordion">
-                <div class="accordion-body">
-                  <div class="row g-2">
-                    {% for p in group["items"] %}
-                      <div class="col-md-6">
-                        <div class="parameter-card border rounded-3 p-3 h-100" data-parameter-card>
-                          <div class="d-flex justify-content-between align-items-start gap-2">
-                            <div>
-                              <div class="fw-semibold">{{ p.name }}</div>
-                              <div class="text-muted small">
-                                {{ p.unit or "Unit not set" }}
-                                {% if p.chemical_symbol %}
-                                  <span class="ms-2 text-uppercase">({{ p.chemical_symbol }})</span>
-                                {% endif %}
-                              </div>
-                            </div>
-                            <a href="/settings/parameters/{{ p.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
-                          </div>
-                          {% if p.test_interval_days %}
-                            <div class="mt-2">
-                              <span class="badge bg-light text-secondary border">{{ p.test_interval_days }} day interval</span>
-                            </div>
-                          {% endif %}
-                        </div>
-                      </div>
-                    {% endfor %}
+        <div class="row g-2">
+          {% for p in parameters %}
+            <div class="col-md-6">
+              <div class="parameter-card border rounded-3 p-3 h-100">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                  <div>
+                    <div class="fw-semibold">{{ p.name }}</div>
+                    <div class="text-muted small">
+                      {{ p.unit or "Unit not set" }}
+                      {% if p.chemical_symbol %}
+                        <span class="ms-2 text-uppercase">({{ p.chemical_symbol }})</span>
+                      {% endif %}
+                    </div>
                   </div>
+                  <a href="/settings/parameters/{{ p.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
                 </div>
+                {% if p.test_interval_days %}
+                  <div class="mt-2">
+                    <span class="badge bg-light text-secondary border">{{ p.test_interval_days }} day interval</span>
+                  </div>
+                {% endif %}
               </div>
             </div>
           {% endfor %}
@@ -110,18 +93,13 @@
 <script>
   document.addEventListener("DOMContentLoaded", () => {
     const searchInput = document.querySelector("[data-parameter-search]");
-    const cards = Array.from(document.querySelectorAll("[data-parameter-card]"));
-    const groups = Array.from(document.querySelectorAll("[data-parameter-group]"));
+    const cards = Array.from(document.querySelectorAll(".parameter-card"));
     if (searchInput) {
       searchInput.addEventListener("input", (event) => {
         const value = event.target.value.toLowerCase();
         cards.forEach((card) => {
           const text = card.textContent.toLowerCase();
           card.parentElement.classList.toggle("d-none", !text.includes(value));
-        });
-        groups.forEach((group) => {
-          const visibleCards = group.querySelectorAll(".col-md-6:not(.d-none)");
-          group.classList.toggle("d-none", visibleCards.length === 0);
         });
       });
     }

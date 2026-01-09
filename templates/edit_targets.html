@@ -16,61 +16,44 @@
       <h5 class="card-title mb-0 fw-bold">Target Ranges</h5>
       <span class="text-muted small">Adjust alert and target thresholds</span>
     </div>
-    <div class="accordion" id="targetsAccordion">
-      {% for group in grouped_rows %}
-        {% set collapse_id = "targets-group-" ~ loop.index %}
-        <div class="accordion-item">
-          <h2 class="accordion-header" id="{{ collapse_id }}-heading">
-            <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#{{ collapse_id }}" aria-expanded="{{ 'true' if loop.first else 'false' }}" aria-controls="{{ collapse_id }}">
-              <span class="fw-semibold text-navy">{{ group.name }}</span>
-              <span class="badge bg-light text-secondary border ms-2">{{ group["items"]|length }}</span>
-            </button>
-          </h2>
-          <div id="{{ collapse_id }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" aria-labelledby="{{ collapse_id }}-heading" data-bs-parent="#targetsAccordion">
-            <div class="accordion-body p-0">
-              <div class="table-responsive">
-                <table class="table align-middle mb-0">
-                  <thead class="table-light">
-                    <tr>
-                      <th class="ps-3">Parameter</th>
-                      <th>Target Range</th>
-                      <th>Alert Range</th>
-                      <th class="text-center">Enabled</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {% for r in group["items"] %}
-                    <tr>
-                      <td class="ps-3 fw-semibold">
-                        {{ r.parameter.name }}
-                        <small class="text-muted">{{ r.parameter.unit }}</small>
-                      </td>
-                      <td>
-                         <div class="input-group input-group-sm">
-                           <input type="number" step="any" class="form-control" name="target_low_{{ r.key }}" value="{{ r.target_low }}" placeholder="Low">
-                           <span class="input-group-text">-</span>
-                           <input type="number" step="any" class="form-control" name="target_high_{{ r.key }}" value="{{ r.target_high }}" placeholder="High">
-                         </div>
-                      </td>
-                      <td>
-                         <div class="input-group input-group-sm">
-                           <input type="number" step="any" class="form-control" name="alert_low_{{ r.key }}" value="{{ r.alert_low }}" placeholder="Min">
-                           <span class="input-group-text">-</span>
-                           <input type="number" step="any" class="form-control" name="alert_high_{{ r.key }}" value="{{ r.alert_high }}" placeholder="Max">
-                         </div>
-                      </td>
-                      <td class="text-center">
-                         <input type="checkbox" class="form-check-input" name="enabled_{{ r.key }}" {% if r.enabled %}checked{% endif %}>
-                      </td>
-                    </tr>
-                    {% endfor %}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      {% endfor %}
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Parameter</th>
+            <th>Target Range</th>
+            <th>Alert Range</th>
+            <th class="text-center">Enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="ps-3 fw-semibold">
+              {{ r.parameter.name }}
+              <small class="text-muted">{{ r.parameter.unit }}</small>
+            </td>
+            <td>
+               <div class="input-group input-group-sm">
+                 <input type="number" step="any" class="form-control" name="target_low_{{ r.key }}" value="{{ r.target_low }}" placeholder="Low">
+                 <span class="input-group-text">-</span>
+                 <input type="number" step="any" class="form-control" name="target_high_{{ r.key }}" value="{{ r.target_high }}" placeholder="High">
+               </div>
+            </td>
+            <td>
+               <div class="input-group input-group-sm">
+                 <input type="number" step="any" class="form-control" name="alert_low_{{ r.key }}" value="{{ r.alert_low }}" placeholder="Min">
+                 <span class="input-group-text">-</span>
+                 <input type="number" step="any" class="form-control" name="alert_high_{{ r.key }}" value="{{ r.alert_high }}" placeholder="Max">
+               </div>
+            </td>
+            <td class="text-center">
+               <input type="checkbox" class="form-check-input" name="enabled_{{ r.key }}" {% if r.enabled %}checked{% endif %}>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
     <div class="card-footer bg-white d-flex justify-content-end">
       <button type="submit" class="btn btn-primary">Save Targets</button>

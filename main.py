@@ -52,35 +52,6 @@ app = FastAPI(title="Reef Tank Parameters")
 logger = logging.getLogger("reef")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
-@app.get("/health/db")
-def db_health():
-    start = time_module.time()
-    with engine.connect() as conn:
-        acquired = time_module.time()
-        result = conn.execute(text("SELECT 1")).scalar()
-        finished = time_module.time()
-    return {
-        "ok": True,
-        "select1": result,
-        "acquire_ms": round((acquired - start) * 1000, 2),
-        "query_ms": round((finished - acquired) * 1000, 2),
-        "total_ms": round((finished - start) * 1000, 2),
-    }
-
-@app.post("/tools/dose-plan/simulate")
-async def simulate_dose_plan(request: Request) -> JSONResponse:
-    payload = await request.json()
-    current = parse_float(payload.get("current"))
-    daily_change = parse_float(payload.get("daily_change"))
-    days = int(parse_float(payload.get("days")) or 0)
-    if current is None or daily_change is None or days <= 0:
-        return JSONResponse({"error": "Invalid input"}, status_code=400)
-    days = min(days, 60)
-    projections = []
-    for day in range(1, days + 1):
-        projections.append({"day": day, "value": current + daily_change * day})
-    return JSONResponse({"ok": True, "projections": projections})
-
 sentry_dsn = os.environ.get("SENTRY_DSN")
 if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
     import sentry_sdk
@@ -143,109 +114,6 @@ def additive_label(additive: Any) -> str:
         return name
     label = f"{brand} {name}".strip()
     return label or name
-
-def parse_float(value: Any) -> Optional[float]:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
-
-TRITON_PARAMETER_GROUPS: List[Tuple[str, List[str]]] = [
-    (
-        "Core Elements",
-        [
-            "alkalinity/kh",
-            "alkalinitykh",
-            "alkalinity",
-            "calcium",
-            "magnesium",
-            "ph",
-            "salinity",
-            "temperature",
-        ],
-    ),
-    (
-        "Major Elements",
-        [
-            "sodium",
-            "chloride",
-            "potassium",
-            "sulfur",
-            "bromine",
-            "strontium",
-            "boron",
-            "fluoride",
-            "lithium",
-            "iodine",
-        ],
-    ),
-    (
-        "Nutrients",
-        [
-            "nitrate",
-            "phosphate",
-            "ammonia",
-            "nitrite",
-            "silicate",
-        ],
-    ),
-    (
-        "Trace Elements",
-        [
-            "iron",
-            "manganese",
-            "molybdenum",
-            "zinc",
-            "cobalt",
-            "copper",
-            "nickel",
-            "chromium",
-            "vanadium",
-            "selenium",
-            "tin",
-            "aluminum",
-            "barium",
-            "arsenic",
-        ],
-    ),
-]
-
-def normalize_parameter_key(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", name.lower())
-
-def triton_group_for_parameter(name: str) -> str:
-    if not name:
-        return "Other"
-    normalized = normalize_parameter_key(name)
-    if "trace" in normalized:
-        return "Trace Elements"
-    for label, names in TRITON_PARAMETER_GROUPS:
-        normalized_names = {normalize_parameter_key(item) for item in names}
-        if normalized in normalized_names:
-            return label
-    return "Other"
-
-def group_parameters_for_ui(items: List[Dict[str, Any]], name_key: str) -> List[Dict[str, Any]]:
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
-    for item in items:
-        name_value = ""
-        if "." in name_key:
-            current: Any = item
-            for segment in name_key.split("."):
-                current = row_get(current, segment) if current is not None else None
-            name_value = current or ""
-        else:
-            name_value = row_get(item, name_key) or ""
-        group_name = triton_group_for_parameter(str(name_value))
-        grouped.setdefault(group_name, []).append(item)
-    ordered_groups = [label for label, _ in TRITON_PARAMETER_GROUPS] + ["Other"]
-    output: List[Dict[str, Any]] = []
-    for label in ordered_groups:
-        if label in grouped:
-            output.append({"name": label, "items": grouped[label]})
-    return output
 
 def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     daily_consumption: Dict[str, Dict[str, Any]] = {}
@@ -2316,29 +2184,6 @@ class DBConnection:
         orig = getattr(exc, "orig", None)
         return isinstance(orig, psycopg.errors.InFailedSqlTransaction)
 
-    def _is_disconnect_error(self, exc: SQLAlchemyError) -> bool:
-        orig = getattr(exc, "orig", None)
-        try:
-            return engine.dialect.is_disconnect(orig, self._conn, None)
-        except Exception:
-            message = str(exc).lower()
-            return "connection has been closed unexpectedly" in message or "ssl connection has been closed" in message
-
-    def _connect(self) -> Connection:
-        conn = engine.connect()
-        if engine.dialect.name == "sqlite":
-            conn.execute(text("PRAGMA journal_mode=WAL"))
-            conn.execute(text("PRAGMA busy_timeout=30000"))
-        return conn
-
-    def _reconnect(self) -> None:
-        try:
-            self._conn.close()
-        except Exception:
-            pass
-        self._conn = self._connect()
-        self._needs_rollback = False
-
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
         if self._needs_rollback:
             self._conn.rollback()
@@ -2349,12 +2194,6 @@ class DBConnection:
             prepared_sql, bound = _prepare_sql(sql, params)
             return self._conn.execute(text(prepared_sql), bound)
         except SQLAlchemyError as exc:
-            if self._is_disconnect_error(exc):
-                self._reconnect()
-                if isinstance(sql, TextClause):
-                    return self._conn.execute(sql, params or {})
-                prepared_sql, bound = _prepare_sql(sql, params)
-                return self._conn.execute(text(prepared_sql), bound)
             self._needs_rollback = True
             self._conn.rollback()
             if self._is_failed_transaction(exc):
@@ -3431,21 +3270,6 @@ async def auth_middleware(request: Request, call_next):
 def dashboard(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
-    tank_ids = [int(t["id"]) for t in tanks]
-    targets_by_tank: Dict[int, Dict[str, Any]] = {}
-    if tank_ids:
-        placeholders = ",".join("?" for _ in tank_ids)
-        target_rows = q(
-            db,
-            f"SELECT * FROM targets WHERE tank_id IN ({placeholders}) AND enabled=1",
-            tuple(tank_ids),
-        )
-        for row in target_rows:
-            tank_id = row_get(row, "tank_id")
-            pname = row_get(row, "parameter")
-            if tank_id is None or not pname:
-                continue
-            targets_by_tank.setdefault(int(tank_id), {})[pname] = row
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
     pdefs = {p["name"]: p for p in get_active_param_defs(db)}
@@ -3459,9 +3283,8 @@ def dashboard(request: Request):
     ]
     available_params.sort(key=lambda item: item["name"].lower())
     for t in tanks:
-        tank_id = int(t["id"])
-        latest_map = get_latest_and_previous_per_parameter(db, tank_id)
-        targets = targets_by_tank.get(tank_id, {})
+        latest_map = get_latest_and_previous_per_parameter(db, t["id"])
+        targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         history_map = get_recent_param_values(db, t["id"], list(pdefs.keys()))
         
@@ -3506,18 +3329,6 @@ def dashboard(request: Request):
                         trend_warning = True
                 except Exception:
                     pass
-            trend_risk = False
-            if delta_per_day is not None and target and latest_val is not None:
-                try:
-                    projected = float(latest_val) + float(delta_per_day) * 7.0
-                    alert_low = row_get(target, "alert_low")
-                    alert_high = row_get(target, "alert_high")
-                    if alert_low is not None and projected < float(alert_low):
-                        trend_risk = True
-                    if alert_high is not None and projected > float(alert_high):
-                        trend_risk = True
-                except Exception:
-                    trend_risk = False
             overdue = False
             if latest_taken:
                 interval_days = row_get(p, "test_interval_days")
@@ -3547,7 +3358,6 @@ def dashboard(request: Request):
                 "taken_at": latest_taken,
                 "status": status,
                 "trend_warning": trend_warning,
-                "trend_risk": trend_risk,
                 "delta_per_day": delta_per_day,
                 "overdue": overdue,
                 "sparkline": build_sparkline_points(sparkline_values),
@@ -4816,7 +4626,6 @@ def tank_detail(request: Request, tank_id: int):
 
     recent_samples = samples[:10] if samples else []
     db.close()
-    grouped_icp_params = group_parameters_for_ui(icp_params, "name") if icp_params else []
     return templates.TemplateResponse(
         "tank_detail.html",
         {
@@ -4845,7 +4654,6 @@ def tank_detail(request: Request, tank_id: int):
             "core_params": core_params,
             "trace_params": trace_params,
             "icp_params": icp_params,
-            "grouped_icp_params": grouped_icp_params,
         },
     )
 
@@ -6543,17 +6351,7 @@ def edit_targets(request: Request, tank_id: int):
         })
         
     db.close()
-    grouped_rows = group_parameters_for_ui(rows, "parameter.name")
-    return templates.TemplateResponse(
-        "edit_targets.html",
-        {
-            "request": request,
-            "tank": tank,
-            "tank_id": tank_id,
-            "rows": rows,
-            "grouped_rows": grouped_rows,
-        },
-    )
+    return templates.TemplateResponse("edit_targets.html", {"request": request, "tank": tank, "tank_id": tank_id, "rows": rows})
 
 @app.post("/tanks/{tank_id}/targets")
 async def save_targets(request: Request, tank_id: int):
@@ -6606,10 +6404,9 @@ def parameters_settings(request: Request):
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
     db.close()
     error = request.query_params.get("error")
-    grouped_parameters = group_parameters_for_ui(rows, "name")
     return templates.TemplateResponse(
         "parameters.html",
-        {"request": request, "parameters": rows, "grouped_parameters": grouped_parameters, "error": error},
+        {"request": request, "parameters": rows, "error": error},
     )
 
 @app.get("/settings/parameters/new", response_class=HTMLResponse)
@@ -7758,19 +7555,9 @@ def dose_plan(request: Request):
         check_map = {}
         latest_check_map = {}
     tanks = get_visible_tanks(db, request)
-    tank_ids = [int(t["id"]) for t in tanks]
     pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
-    all_additives = q(
-        db,
-        "SELECT id, name, parameter, strength, unit FROM additives WHERE active=1 ORDER BY name",
-    )
-    additives_by_param: Dict[str, List[Dict[str, Any]]] = {}
-    for additive in all_additives:
-        pname = row_get(additive, "parameter")
-        if not pname:
-            continue
-        additives_by_param.setdefault(str(pname), []).append(additive)
+    all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
     additives_by_group: Dict[str, List[Dict[str, Any]]] = {}
     def group_key(value: str) -> str:
         cleaned = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
@@ -7789,107 +7576,16 @@ def dose_plan(request: Request):
         return cleaned
     for additive in all_additives:
         additives_by_group.setdefault(group_key(row_get(additive, "parameter")), []).append(additive)
-    tank_profiles: Dict[int, Dict[str, Any]] = {}
-    targets_by_tank: Dict[int, List[Dict[str, Any]]] = {}
-    latest_samples: Dict[int, Dict[str, Any]] = {}
-    latest_icp_by_tank: Dict[int, Dict[str, Any]] = {}
-    icp_sample_ids: List[int] = []
-    if tank_ids:
-        placeholders = ",".join("?" for _ in tank_ids)
-        profiles = q(
-            db,
-            f"SELECT * FROM tank_profiles WHERE tank_id IN ({placeholders})",
-            tuple(tank_ids),
-        )
-        tank_profiles = {int(p["tank_id"]): p for p in profiles if row_get(p, "tank_id") is not None}
-        target_rows = q(
-            db,
-            f"SELECT * FROM targets WHERE tank_id IN ({placeholders}) AND enabled=1 ORDER BY parameter",
-            tuple(tank_ids),
-        )
-        for row in target_rows:
-            tank_id = row_get(row, "tank_id")
-            if tank_id is None:
-                continue
-            targets_by_tank.setdefault(int(tank_id), []).append(row)
-        sample_rows = q(
-            db,
-            f"""
-            SELECT *
-            FROM samples
-            WHERE tank_id IN ({placeholders})
-            ORDER BY tank_id, taken_at DESC, id DESC
-            """,
-            tuple(tank_ids),
-        )
-        for row in sample_rows:
-            tank_id = row_get(row, "tank_id")
-            if tank_id is None:
-                continue
-            tank_id_int = int(tank_id)
-            if tank_id_int not in latest_samples:
-                latest_samples[tank_id_int] = row
-        icp_rows = q(
-            db,
-            f"""
-            SELECT id, tank_id, taken_at
-            FROM samples
-            WHERE tank_id IN ({placeholders}) AND lower(notes) LIKE ?
-            ORDER BY tank_id, taken_at DESC, id DESC
-            """,
-            (*tank_ids, "%imported from icp%"),
-        )
-        for row in icp_rows:
-            tank_id = row_get(row, "tank_id")
-            if tank_id is None:
-                continue
-            tank_id_int = int(tank_id)
-            if tank_id_int not in latest_icp_by_tank:
-                sample_id = row_get(row, "id")
-                latest_icp_by_tank[tank_id_int] = {
-                    "id": sample_id,
-                    "taken_at": parse_dt_any(row_get(row, "taken_at")),
-                }
-                if sample_id is not None:
-                    icp_sample_ids.append(sample_id)
-    last_used_by_tank_param: Dict[Tuple[int, str], int] = {}
-    if tank_ids:
-        placeholders = ",".join("?" for _ in tank_ids)
-        last_used_rows = q(
-            db,
-            f"""
-            SELECT tank_id, parameter, additive_id
-            FROM (
-                SELECT dl.tank_id AS tank_id,
-                       a.parameter AS parameter,
-                       dl.additive_id AS additive_id,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY dl.tank_id, a.parameter
-                           ORDER BY dl.logged_at DESC
-                       ) AS rn
-                FROM dose_logs dl
-                JOIN additives a ON a.id = dl.additive_id
-                WHERE dl.tank_id IN ({placeholders})
-            ) ranked
-            WHERE rn = 1
-            """,
-            tuple(tank_ids),
-        )
-        for row in last_used_rows:
-            tank_id = row_get(row, "tank_id")
-            pname = row_get(row, "parameter")
-            additive_id = row_get(row, "additive_id")
-            if tank_id is None or pname is None or additive_id is None:
-                continue
-            last_used_by_tank_param[(int(tank_id), str(pname))] = int(additive_id)
     available_parameters = set()
     total_needed = 0
     top_deficit = None
     plans = []
     grand_total_ml = 0.0
+    latest_icp_by_tank: Dict[int, Dict[str, Any]] = {}
+    icp_sample_ids: List[int] = []
     for t in tanks:
         tank_id = int(t["id"])
-        prof = tank_profiles.get(tank_id)
+        prof = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
         vol_l = None
         net_pct = 100.0
         if prof:
@@ -7903,10 +7599,21 @@ def dose_plan(request: Request):
         except Exception: eff_vol_l = None
         
         latest_map = get_latest_per_parameter(db, tank_id)
-        latest_and_previous_map = get_latest_and_previous_per_parameter(db, tank_id)
-        latest = latest_samples.get(tank_id)
+        latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (tank_id,))
         latest_taken = parse_dt_any(latest["taken_at"]) if latest else None
-        targets = targets_by_tank.get(tank_id, [])
+        icp_sample = one(
+            db,
+            "SELECT id, taken_at FROM samples WHERE tank_id=? AND lower(notes) LIKE ? ORDER BY taken_at DESC LIMIT 1",
+            (tank_id, "%imported from icp%"),
+        )
+        if icp_sample:
+            latest_icp_by_tank[tank_id] = {
+                "id": icp_sample["id"],
+                "taken_at": parse_dt_any(icp_sample["taken_at"]),
+            }
+            icp_sample_ids.append(icp_sample["id"])
+
+        targets = q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1 ORDER BY parameter", (tank_id,))
         targets_by_param = {row_get(t, "parameter"): t for t in targets if row_get(t, "parameter")}
         for pname, pdef in pdef_map.items():
             if pname in targets_by_param:
@@ -7963,24 +7670,7 @@ def dose_plan(request: Request):
             days = 1
             if max_change_f and max_change_f > 0 and delta > max_change_f: days = int(math.ceil(delta / max_change_f))
             per_day_change = delta / float(days)
-            suggested_days = 7
-            suggested_daily_change = None
-            prev_data = latest_and_previous_map.get(pname, {}).get("previous")
-            latest_data = latest_and_previous_map.get(pname, {}).get("latest")
-            observed_daily_change = 0.0
-            if latest_data and prev_data and latest_data.get("taken_at") and prev_data.get("taken_at"):
-                try:
-                    obs_delta = float(latest_data.get("value")) - float(prev_data.get("value"))
-                    obs_days = max((latest_data["taken_at"] - prev_data["taken_at"]).total_seconds() / 86400.0, 1e-6)
-                    observed_daily_change = obs_delta / obs_days
-                except Exception:
-                    observed_daily_change = 0.0
-            try:
-                required_daily = delta / float(suggested_days)
-                suggested_daily_change = max(required_daily - observed_daily_change, 0.0)
-            except Exception:
-                suggested_daily_change = None
-            adds = additives_by_param.get(pname, [])
+            adds = q(db, "SELECT * FROM additives WHERE active=1 AND parameter=? ORDER BY name", (pname,))
             if not adds:
                 suggestion = None
                 for candidate in additives_by_group.get(group_key(pname), []):
@@ -7998,8 +7688,6 @@ def dose_plan(request: Request):
                     "days": days,
                     "per_day_change": per_day_change,
                     "max_daily_change": max_change_f,
-                    "suggested_days": suggested_days,
-                    "suggested_daily_change": suggested_daily_change,
                     "additives": [],
                     "note": "No additive linked.",
                     "suggested_additive": suggestion,
@@ -8008,7 +7696,15 @@ def dose_plan(request: Request):
             
             # --- NEW LOGIC: Determine Preferred Additive ---
             # 1. Try to find the last additive used for this parameter in this tank
-            preferred_id = last_used_by_tank_param.get((tank_id, pname))
+            last_used = one(db, """
+                SELECT dl.additive_id 
+                FROM dose_logs dl 
+                JOIN additives a ON a.id = dl.additive_id 
+                WHERE dl.tank_id=? AND a.parameter=? 
+                ORDER BY dl.logged_at DESC LIMIT 1
+            """, (tank_id, pname))
+            
+            preferred_id = last_used["additive_id"] if last_used else None
             
             add_rows = []
             has_selected = False
@@ -8068,19 +7764,7 @@ def dose_plan(request: Request):
             if top_deficit is None or (top_deficit and delta > top_deficit["delta"]):
                 top_deficit = {"tank": t["name"], "parameter": pname, "delta": delta, "unit": unit}
                 
-            tank_rows.append({
-                "parameter": pname,
-                "latest": cur_val_f,
-                "target": target_val,
-                "change": delta,
-                "unit": unit,
-                "days": days,
-                "per_day_change": per_day_change,
-                "suggested_days": suggested_days,
-                "suggested_daily_change": suggested_daily_change,
-                "additives": add_rows,
-                "note": "",
-            })
+            tank_rows.append({"parameter": pname, "latest": cur_val_f, "target": target_val, "change": delta, "unit": unit, "days": days, "per_day_change": per_day_change, "additives": add_rows, "note": ""})
             
         plan_total_ml = 0.0
         for _r in tank_rows:

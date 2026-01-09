@@ -7,65 +7,144 @@
     <input type="datetime-local" name="taken_at" class="form-control datetime-default">
     <div class="form-text">Defaults to now if left blank.</div>
   </div>
+  {% set core_params = ["Alkalinity", "Calcium", "Magnesium", "Nitrate", "Phosphate", "Salinity", "Temperature", "Potassium"] %}
   <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 g-3">
     {% for p in parameters %}
-    <div class="col">
-      <div class="card p-3">
-        <label class="form-label fw-bold">{{ p.name }} <span class="text-muted fw-normal">({{ p.unit }})</span></label>
-        <input type="number" step="any" name="value_{{ p.id }}" class="form-control reading-input" data-param-id="{{ p.id }}">
-        {% set kits = kits_by_param.get(p.name, []) %}
-        {% if kits and kits|length > 0 %}
-          <label class="form-label small mt-2">Test Kit</label>
-          <select class="form-select form-select-sm kit-select" name="kit_{{ p.id }}" data-param-id="{{ p.id }}">
-            <option value="">Select kit (optional)</option>
-            {% for kit in kits %}
-              <option value="{{ kit.id }}" data-conversion="{{ '1' if kit.conversion_type == 'syringe_remaining_ml' else '' }}">{{ kit.name }}</option>
-            {% endfor %}
-          </select>
-          <div class="mt-2 kit-conversion d-none" data-param-id="{{ p.id }}">
-            <label class="form-label small">Syringe remaining (ml)</label>
-            <input class="form-control form-control-sm remaining-input" name="remaining_{{ p.id }}" inputmode="decimal" placeholder="e.g. 0.35" data-param-id="{{ p.id }}">
-            <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
-          </div>
-          <div class="mt-2 kit-workflow d-none" data-param-id="{{ p.id }}">
-            <div class="d-flex flex-wrap gap-2">
-              <button class="btn btn-outline-secondary btn-sm workflow-open" type="button" data-bs-toggle="modal" data-bs-target="#workflowModal-{{ p.id }}">Open test kit guide</button>
-            </div>
-            <div class="modal fade" id="workflowModal-{{ p.id }}" tabindex="-1" aria-hidden="true">
-              <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                  <div class="modal-header">
-                    <h5 class="modal-title">Test kit guide</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                  </div>
-                  <div class="modal-body">
-                    <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
-                    <div class="workflow-steps"></div>
-                    <div class="d-flex flex-wrap gap-2 mt-2 align-items-center">
-                      <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start timer</button>
-                      <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
-                      <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
-                      <span class="small text-muted align-self-center workflow-timer"></span>
-                    </div>
-                    <div class="workflow-timer-display mt-3 text-center">
-                      <div class="workflow-timer-circle mx-auto">
-                        <svg viewBox="0 0 120 120" class="workflow-timer-svg" aria-hidden="true">
-                          <circle class="workflow-timer-track" cx="60" cy="60" r="54" fill="none" stroke-width="8"></circle>
-                          <circle class="workflow-timer-progress" cx="60" cy="60" r="54" fill="none" stroke-width="8"></circle>
-                        </svg>
-                        <div class="workflow-timer-value">—</div>
+      {% if p.name in core_params %}
+        <div class="col">
+          <div class="card p-3">
+            <label class="form-label fw-bold">{{ p.name }} <span class="text-muted fw-normal">({{ p.unit }})</span></label>
+            <input type="number" step="any" name="value_{{ p.id }}" class="form-control reading-input" data-param-id="{{ p.id }}">
+            {% set kits = kits_by_param.get(p.name, []) %}
+            {% if kits and kits|length > 0 %}
+              <label class="form-label small mt-2">Test Kit</label>
+              <select class="form-select form-select-sm kit-select" name="kit_{{ p.id }}" data-param-id="{{ p.id }}">
+                <option value="">Select kit (optional)</option>
+                {% for kit in kits %}
+                  <option value="{{ kit.id }}" data-conversion="{{ '1' if kit.conversion_type == 'syringe_remaining_ml' else '' }}">{{ kit.name }}</option>
+                {% endfor %}
+              </select>
+              <div class="mt-2 kit-conversion d-none" data-param-id="{{ p.id }}">
+                <label class="form-label small">Syringe remaining (ml)</label>
+                <input class="form-control form-control-sm remaining-input" name="remaining_{{ p.id }}" inputmode="decimal" placeholder="e.g. 0.35" data-param-id="{{ p.id }}">
+                <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
+              </div>
+              <div class="mt-2 kit-workflow d-none" data-param-id="{{ p.id }}">
+                <div class="d-flex flex-wrap gap-2">
+                  <button class="btn btn-outline-secondary btn-sm workflow-open" type="button" data-bs-toggle="modal" data-bs-target="#workflowModal-{{ p.id }}">Open test kit guide</button>
+                </div>
+                <div class="modal fade" id="workflowModal-{{ p.id }}" tabindex="-1" aria-hidden="true">
+                  <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                      <div class="modal-header">
+                        <h5 class="modal-title">Test kit guide</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                       </div>
-                      <div class="text-center text-muted mt-2 workflow-step-label">Start a step to begin the countdown.</div>
+                      <div class="modal-body">
+                        <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
+                        <div class="workflow-steps"></div>
+                        <div class="d-flex flex-wrap gap-2 mt-2 align-items-center">
+                          <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start timer</button>
+                          <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
+                          <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
+                          <span class="small text-muted align-self-center workflow-timer"></span>
+                        </div>
+                        <div class="workflow-timer-display mt-3 text-center">
+                          <div class="workflow-timer-circle mx-auto">
+                            <svg viewBox="0 0 120 120" class="workflow-timer-svg" aria-hidden="true">
+                              <circle class="workflow-timer-track" cx="60" cy="60" r="54" fill="none" stroke-width="8"></circle>
+                              <circle class="workflow-timer-progress" cx="60" cy="60" r="54" fill="none" stroke-width="8"></circle>
+                            </svg>
+                            <div class="workflow-timer-value">—</div>
+                          </div>
+                          <div class="text-center text-muted mt-2 workflow-step-label">Start a step to begin the countdown.</div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
+            {% endif %}
           </div>
-        {% endif %}
+        </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <div class="accordion mt-4" id="additionalParamsAccordion">
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="additionalParamsHeading">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#additionalParamsCollapse" aria-expanded="false" aria-controls="additionalParamsCollapse">
+          Additional parameters
+        </button>
+      </h2>
+      <div id="additionalParamsCollapse" class="accordion-collapse collapse" aria-labelledby="additionalParamsHeading" data-bs-parent="#additionalParamsAccordion">
+        <div class="accordion-body">
+          <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 g-3">
+            {% for p in parameters %}
+              {% if p.name not in core_params %}
+                <div class="col">
+                  <div class="card p-3">
+                    <label class="form-label fw-bold">{{ p.name }} <span class="text-muted fw-normal">({{ p.unit }})</span></label>
+                    <input type="number" step="any" name="value_{{ p.id }}" class="form-control reading-input" data-param-id="{{ p.id }}">
+                    {% set kits = kits_by_param.get(p.name, []) %}
+                    {% if kits and kits|length > 0 %}
+                      <label class="form-label small mt-2">Test Kit</label>
+                      <select class="form-select form-select-sm kit-select" name="kit_{{ p.id }}" data-param-id="{{ p.id }}">
+                        <option value="">Select kit (optional)</option>
+                        {% for kit in kits %}
+                          <option value="{{ kit.id }}" data-conversion="{{ '1' if kit.conversion_type == 'syringe_remaining_ml' else '' }}">{{ kit.name }}</option>
+                        {% endfor %}
+                      </select>
+                      <div class="mt-2 kit-conversion d-none" data-param-id="{{ p.id }}">
+                        <label class="form-label small">Syringe remaining (ml)</label>
+                        <input class="form-control form-control-sm remaining-input" name="remaining_{{ p.id }}" inputmode="decimal" placeholder="e.g. 0.35" data-param-id="{{ p.id }}">
+                        <div class="form-text">Uses the kit conversion chart to compute the final reading.</div>
+                      </div>
+                      <div class="mt-2 kit-workflow d-none" data-param-id="{{ p.id }}">
+                        <div class="d-flex flex-wrap gap-2">
+                          <button class="btn btn-outline-secondary btn-sm workflow-open" type="button" data-bs-toggle="modal" data-bs-target="#workflowModal-{{ p.id }}">Open test kit guide</button>
+                        </div>
+                        <div class="modal fade" id="workflowModal-{{ p.id }}" tabindex="-1" aria-hidden="true">
+                          <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content">
+                              <div class="modal-header">
+                                <h5 class="modal-title">Test kit guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                              </div>
+                              <div class="modal-body">
+                                <div class="small text-muted mb-2">Follow the steps below and use the timers if provided.</div>
+                                <div class="workflow-steps"></div>
+                                <div class="d-flex flex-wrap gap-2 mt-2 align-items-center">
+                                  <button class="btn btn-outline-secondary btn-sm workflow-start" type="button">Start timer</button>
+                                  <button class="btn btn-outline-secondary btn-sm workflow-next" type="button">Next step</button>
+                                  <button class="btn btn-outline-secondary btn-sm workflow-reset" type="button">Reset</button>
+                                  <span class="small text-muted align-self-center workflow-timer"></span>
+                                </div>
+                                <div class="workflow-timer-display mt-3 text-center">
+                                  <div class="workflow-timer-circle mx-auto">
+                                    <svg viewBox="0 0 120 120" class="workflow-timer-svg" aria-hidden="true">
+                                      <circle class="workflow-timer-track" cx="60" cy="60" r="54" fill="none" stroke-width="8"></circle>
+                                      <circle class="workflow-timer-progress" cx="60" cy="60" r="54" fill="none" stroke-width="8"></circle>
+                                    </svg>
+                                    <div class="workflow-timer-value">—</div>
+                                  </div>
+                                  <div class="text-center text-muted mt-2 workflow-step-label">Start a step to begin the countdown.</div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
       </div>
     </div>
-    {% endfor %}
   </div>
   <div class="mt-3 mb-3">
     <label class="form-label">Notes</label>
