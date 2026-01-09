@@ -7603,7 +7603,10 @@ def dose_plan(request: Request):
     tank_ids = [int(t["id"]) for t in tanks]
     pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
-    all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
+    all_additives = q(
+        db,
+        "SELECT id, name, parameter, strength, unit FROM additives WHERE active=1 ORDER BY name",
+    )
     additives_by_param: Dict[str, List[Dict[str, Any]]] = {}
     for additive in all_additives:
         pname = row_get(additive, "parameter")
