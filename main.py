@@ -283,18 +283,7 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
 """
     return send_email(recipient, subject, text_body, html_body)
 
-# --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
-RECOMMENDED_DEFAULTS = {
-    "Alkalinity/KH": {"target_low": 8.0, "target_high": 9.5, "alert_low": 7.0, "alert_high": 11.0},
-    "Calcium": {"target_low": 400, "target_high": 450, "alert_low": 350, "alert_high": 500},
-    "Magnesium": {"target_low": 1300, "target_high": 1400, "alert_low": 1200, "alert_high": 1500},
-    "Phosphate": {"target_low": 0.03, "target_high": 0.1, "alert_low": 0.0, "alert_high": 0.25},
-    "Nitrate": {"target_low": 2, "target_high": 10, "alert_low": 0, "alert_high": 25},
-    "Salinity": {"target_low": 34, "target_high": 35.5, "alert_low": 32, "alert_high": 37},
-    "Temperature": {"target_low": 25, "target_high": 26.5, "alert_low": 23, "alert_high": 29},
-}
-
-# --- 2. INITIAL SEED DEFAULTS (Used for DB Migration only) ---
+# --- 1. INITIAL SEED DEFAULTS (Used for DB Migration only) ---
 # Maps parameter names to the new DB columns we added
 INITIAL_DEFAULTS = {
     "Alkalinity/KH": {"default_target_low": 8.0, "default_target_high": 9.5, "default_alert_low": 7.0, "default_alert_high": 11.0},
@@ -703,7 +692,7 @@ def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
     maintenance_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
-        pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+        pdefs = {p["name"]: p for p in get_active_param_defs(db, user_id=user["id"])}
         overdue = []
         for pname, pdef in pdefs.items():
             latest = latest_map.get(pname, {}).get("latest")
@@ -2126,10 +2115,10 @@ def get_recent_param_values(
             series[name] = series_values
     return series
 
-def get_overdue_tests(db: Connection, tank_id: int) -> List[Dict[str, Any]]:
+def get_overdue_tests(db: Connection, tank_id: int, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     now = datetime.now()
     overdue: List[Dict[str, Any]] = []
-    pdefs = get_active_param_defs(db)
+    pdefs = get_active_param_defs(db, user_id=user_id)
     latest_map = get_latest_and_previous_per_parameter(db, tank_id)
     for p in pdefs:
         name = row_get(p, "name")
@@ -2527,16 +2516,53 @@ def compute_target(tlow: Any, thigh: Any) -> Any:
         return (fl + fh) / 2.0
     except Exception: return thigh if thigh is not None else tlow
 
-def list_parameters(db: Connection) -> List[Dict[str, Any]]:
+USER_PARAMETER_FIELDS = (
+    "max_daily_change",
+    "test_interval_days",
+    "default_target_low",
+    "default_target_high",
+    "default_alert_low",
+    "default_alert_high",
+)
+
+def get_user_parameter_settings(db: Connection, user_id: Optional[int]) -> Dict[int, Dict[str, Any]]:
+    if not user_id or not table_exists(db, "user_parameter_settings"):
+        return {}
+    rows = q(db, "SELECT * FROM user_parameter_settings WHERE user_id=?", (user_id,))
+    return {int(row["parameter_id"]): row for row in rows if row_get(row, "parameter_id") is not None}
+
+def apply_user_parameter_overrides(
+    rows: List[Dict[str, Any]],
+    overrides: Dict[int, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not overrides:
+        return rows
+    merged_rows = []
+    for row in rows:
+        merged = dict(row)
+        override = overrides.get(row_get(row, "id"))
+        if override:
+            for field in USER_PARAMETER_FIELDS:
+                value = row_get(override, field)
+                if value is not None:
+                    merged[field] = value
+        merged_rows.append(merged)
+    return merged_rows
+
+def list_parameters(db: Connection, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     if table_exists(db, "parameter_defs"):
-        return q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
+        rows = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
+        if user_id:
+            overrides = get_user_parameter_settings(db, user_id)
+            rows = apply_user_parameter_overrides(rows, overrides)
+        return rows
     if table_exists(db, "parameters"):
         rows = q(db, "SELECT DISTINCT name, COALESCE(unit,'') AS unit FROM parameters ORDER BY name")
         return [{"id": slug_key(r["name"]), "name": r["name"], "unit": r["unit"]} for r in rows]
     return []
 
-def get_active_param_defs(db: Connection) -> List[Dict[str, Any]]:
-    return list_parameters(db)
+def get_active_param_defs(db: Connection, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    return list_parameters(db, user_id=user_id)
 
 def parse_dt_any(v):
     if v is None: return None
@@ -3269,10 +3295,11 @@ async def auth_middleware(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
-    pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+    pdefs = {p["name"]: p for p in get_active_param_defs(db, user_id=user["id"] if user else None)}
     available_params = [
         {
             "name": name,
@@ -3433,7 +3460,7 @@ def insights(request: Request):
                         "tank_name": tank["name"],
                         **item,
                     }
-                    for item in get_overdue_tests(db, tank["id"])
+                    for item in get_overdue_tests(db, tank["id"], user_id=user["id"])
                 ]
             )
             latest_map = get_latest_and_previous_per_parameter(db, tank["id"])
@@ -3866,8 +3893,9 @@ def add_reading_selector(request: Request):
 @app.get("/tanks/multi-add", response_class=HTMLResponse)
 def multi_add_form(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
-    params_rows = get_active_param_defs(db)
+    params_rows = get_active_param_defs(db, user_id=user["id"] if user else None)
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
     for k in kits:
@@ -3949,7 +3977,17 @@ async def multi_add_save(request: Request):
 @app.get("/tanks/new", response_class=HTMLResponse)
 def tank_new_form(request: Request):
     db = get_db()
-    params = list_parameters(db)
+    user = get_current_user(db, request)
+    params = list_parameters(db, user_id=user["id"] if user else None)
+    recommended_targets = {
+        row_get(p, "name"): {
+            "target_low": row_get(p, "default_target_low"),
+            "target_high": row_get(p, "default_target_high"),
+            "alert_low": row_get(p, "default_alert_low"),
+            "alert_high": row_get(p, "default_alert_high"),
+        }
+        for p in params
+    }
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
@@ -3976,7 +4014,7 @@ def tank_new_form(request: Request):
         {
             "request": request,
             "params": params,
-            "recommended_targets": RECOMMENDED_DEFAULTS,
+            "recommended_targets": recommended_targets,
             "additives": additives_rows,
             "grouped_additives": grouped_additives,
         },
@@ -4084,7 +4122,7 @@ async def tank_new(request: Request):
         inspector = inspect(db._conn)
         cols = {column["name"] for column in inspector.get_columns("targets")}
         has_target_cols = "target_low" in cols
-        params = list_parameters(db)
+        params = list_parameters(db, user_id=user["id"] if user else None)
         for p in params:
             pname = p["name"]
             pid = p["id"]
@@ -4539,7 +4577,7 @@ def tank_detail(request: Request, tank_id: int):
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
-    pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
+    pdef_map = {p["name"]: p for p in get_active_param_defs(db, user_id=user["id"] if user else None)}
 
     latest_sample_ids = {data.get("sample_id") for data in latest_by_param_id.values() if data.get("sample_id")}
     icp_sample_ids: set[int] = set()
@@ -5127,7 +5165,9 @@ def tank_dosing_settings(request: Request, tank_id: int):
         except Exception: pass
     param_limits = {}
     try:
-        pdefs = q(db, "SELECT name, max_daily_change, unit FROM parameter_defs WHERE active=1")
+        pdefs = q(db, "SELECT id, name, max_daily_change, unit FROM parameter_defs WHERE active=1")
+        if user:
+            pdefs = apply_user_parameter_overrides(pdefs, get_user_parameter_settings(db, user["id"]))
         for row in pdefs:
             name = row_get(row, "name")
             if not name:
@@ -5865,7 +5905,7 @@ def tank_summary(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     latest_map = get_latest_per_parameter(db, tank_id)
-    unit_by_name = {p["name"]: row_get(p, "unit") or "" for p in get_active_param_defs(db)}
+    unit_by_name = {p["name"]: row_get(p, "unit") or "" for p in get_active_param_defs(db, user_id=user["id"] if user else None)}
     latest_values = []
     for name, data in latest_map.items():
         taken_at = data.get("taken_at")
@@ -5980,7 +6020,7 @@ def add_sample_form(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    params_rows = filter_trace_parameters(get_active_param_defs(db))
+    params_rows = filter_trace_parameters(get_active_param_defs(db, user_id=user["id"] if user else None))
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
     for k in kits:
@@ -6013,7 +6053,7 @@ async def add_sample(request: Request, tank_id: int):
     if sample_id is None:
         db.close()
         raise HTTPException(status_code=500, detail="Failed to save sample")
-    pdefs = filter_trace_parameters(get_active_param_defs(db))
+    pdefs = filter_trace_parameters(get_active_param_defs(db, user_id=user["id"] if user else None))
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
@@ -6078,7 +6118,7 @@ def sample_edit(request: Request, tank_id: int, sample_id: int):
     if not tank or not sample:
         db.close()
         raise HTTPException(status_code=404, detail="Sample not found")
-    pdefs = get_active_param_defs(db)
+    pdefs = get_active_param_defs(db, user_id=user["id"] if user else None)
     readings = {r["name"]: r["value"] for r in get_sample_readings(db, sample_id)}
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
@@ -6119,7 +6159,7 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     else:
         if table_exists(db, "parameters"):
             execute_with_retry(db, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
-    pdefs = get_active_param_defs(db)
+    pdefs = get_active_param_defs(db, user_id=user["id"] if user else None)
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
@@ -6300,7 +6340,7 @@ def edit_targets(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
         
-    params = list_parameters(db)
+    params = list_parameters(db, user_id=user["id"] if user else None)
     existing = {}
     
     if table_exists(db, "targets"):
@@ -6357,7 +6397,8 @@ def edit_targets(request: Request, tank_id: int):
 async def save_targets(request: Request, tank_id: int):
     db = get_db()
     form = await request.form()
-    params = list_parameters(db)
+    user = get_current_user(db, request)
+    params = list_parameters(db, user_id=user["id"] if user else None)
     for p in params:
         name = p["name"]
         key = slug_key(name)
@@ -6401,7 +6442,10 @@ async def save_targets_alias(request: Request, tank_id: int): return await save_
 @app.get("/settings/parameters/", response_class=HTMLResponse, include_in_schema=False)
 def parameters_settings(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
+    if user:
+        rows = apply_user_parameter_overrides(rows, get_user_parameter_settings(db, user["id"]))
     db.close()
     error = request.query_params.get("error")
     return templates.TemplateResponse(
@@ -6418,6 +6462,18 @@ def parameter_new(request: Request):
 def parameter_edit(request: Request, param_id: int):
     db = get_db()
     row = one(db, "SELECT * FROM parameter_defs WHERE id=?", (param_id,))
+    user = get_current_user(db, request)
+    if row and user and table_exists(db, "user_parameter_settings"):
+        override = one(
+            db,
+            "SELECT * FROM user_parameter_settings WHERE user_id=? AND parameter_id=?",
+            (user["id"], param_id),
+        )
+        if override:
+            for field in USER_PARAMETER_FIELDS:
+                value = row_get(override, field)
+                if value is not None:
+                    row[field] = value
     db.close()
     return templates.TemplateResponse("parameter_edit.html", {"request": request, "param": row})
 
@@ -6439,6 +6495,10 @@ def parameter_save(
 ):
     db = get_db()
     cur = cursor(db)
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     # 1. Prepare Data
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -6456,74 +6516,38 @@ def parameter_save(
         db.close()
         return redirect("/settings/parameters")
 
-    data = (
-        clean_name,
-        (chemical_symbol or "").strip() or None,
-        (unit or "").strip() or None,
-        mdc,
-        interval,
-        order,
-        is_active,
-        dt_low,
-        dt_high,
-        da_low,
-        da_high,
-    )
+    existing_row = None
+    if param_id and str(param_id).strip().isdigit():
+        existing_row = one(db, "SELECT * FROM parameter_defs WHERE id=?", (int(param_id),))
+        if not existing_row:
+            db.close()
+            return redirect("/settings/parameters")
+        clean_name = (row_get(existing_row, "name") or clean_name).strip()
+        chemical_symbol = row_get(existing_row, "chemical_symbol")
+        unit = row_get(existing_row, "unit")
 
     try:
-        # 2. Logic for Update/Merge
-        if param_id and str(param_id).strip().isdigit():
+        # 2. Update existing definition (name/unit locked)
+        if existing_row:
             pid = int(param_id)
-            old = one(db, "SELECT * FROM parameter_defs WHERE id=?", (pid,))
-            old_name = (old["name"] if old else "").strip()
-            
-            # Check if we are renaming
-            if old_name and clean_name and old_name != clean_name:
-                # Does the target name already exist?
-                existing = one(
-                    db,
-                    "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
-                    (clean_name,),
-                )
-                
-                if existing and int(existing["id"]) != pid:
-                    # MERGE SCENARIO: 
-                    existing_id = int(existing["id"])
-                    
-                    if table_exists(db, "sample_values"):
-                        cur.execute("UPDATE sample_values SET parameter_id=? WHERE parameter_id=?", (existing_id, pid))
-                    
-                    for tbl, col in (("parameters", "name"), ("targets", "parameter"), ("additives", "parameter"), ("test_kits", "parameter")):
-                        if table_exists(db, tbl): 
-                            cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
+            cur.execute(
+                """
+                UPDATE parameter_defs
+                SET name=?, chemical_symbol=?, unit=?, sort_order=?, active=?
+                WHERE id=?
+                """,
+                (
+                    clean_name,
+                    (chemical_symbol or "").strip() or None,
+                    (unit or "").strip() or None,
+                    order,
+                    is_active,
+                    pid,
+                ),
+            )
+            param_id_value = pid
 
-                    cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
-                    cur.execute("""
-                        UPDATE parameter_defs 
-                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                            default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                        WHERE id=?""", (*data, existing_id))
-                    
-                else:
-                    # RENAME SCENARIO (No conflict):
-                    for tbl, col in (("parameters", "name"), ("targets", "parameter"), ("additives", "parameter"), ("test_kits", "parameter")):
-                        if table_exists(db, tbl): 
-                            cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
-                            
-                    cur.execute("""
-                        UPDATE parameter_defs 
-                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                            default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                        WHERE id=?""", (*data, pid))
-            else:
-                # SIMPLE UPDATE
-                cur.execute("""
-                    UPDATE parameter_defs 
-                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                        default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (*data, pid))
-        
-        # 3. Logic for Insert
+        # 3. Insert new definition
         else:
             existing = one(
                 db,
@@ -6531,18 +6555,45 @@ def parameter_save(
                 (clean_name,),
             )
             if existing:
-                cur.execute("""
-                    UPDATE parameter_defs 
-                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                        default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
+                message = "Parameter name already exists."
+                param_payload = {
+                    "id": None,
+                    "name": clean_name,
+                    "chemical_symbol": (chemical_symbol or "").strip() or None,
+                    "unit": (unit or "").strip() or None,
+                    "sort_order": order,
+                    "max_daily_change": mdc,
+                    "test_interval_days": interval,
+                    "active": is_active,
+                    "default_target_low": dt_low,
+                    "default_target_high": dt_high,
+                    "default_alert_low": da_low,
+                    "default_alert_high": da_high,
+                }
+                return templates.TemplateResponse(
+                    "parameter_edit.html",
+                    {"request": request, "param": param_payload, "error": message},
+                    status_code=400,
+                )
             else:
                 try:
                     cur.execute("""
                         INSERT INTO parameter_defs 
                         (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        data,
+                        (
+                            clean_name,
+                            (chemical_symbol or "").strip() or None,
+                            (unit or "").strip() or None,
+                            mdc,
+                            interval,
+                            order,
+                            is_active,
+                            dt_low,
+                            dt_high,
+                            da_low,
+                            da_high,
+                        ),
                     )
                 except IntegrityError as exc:
                     orig = getattr(exc, "orig", None)
@@ -6553,10 +6604,67 @@ def parameter_save(
                             INSERT INTO parameter_defs 
                             (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            data,
+                            (
+                                clean_name,
+                                (chemical_symbol or "").strip() or None,
+                                (unit or "").strip() or None,
+                                mdc,
+                                interval,
+                                order,
+                                is_active,
+                                dt_low,
+                                dt_high,
+                                da_low,
+                                da_high,
+                            ),
                         )
                     else:
                         raise
+                param_id_value = cur.lastrowid
+                if not param_id_value:
+                    inserted = one(
+                        db,
+                        "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+                        (clean_name,),
+                    )
+                    if inserted:
+                        param_id_value = int(inserted["id"])
+
+        if table_exists(db, "user_parameter_settings") and param_id_value:
+            if all(
+                value is None
+                for value in (mdc, interval, dt_low, dt_high, da_low, da_high)
+            ):
+                db.execute(
+                    "DELETE FROM user_parameter_settings WHERE user_id=? AND parameter_id=?",
+                    (user["id"], param_id_value),
+                )
+            else:
+                execute_with_retry(
+                    db,
+                    """
+                    INSERT INTO user_parameter_settings
+                    (user_id, parameter_id, max_daily_change, test_interval_days, default_target_low, default_target_high, default_alert_low, default_alert_high)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (user_id, parameter_id) DO UPDATE
+                    SET max_daily_change=excluded.max_daily_change,
+                        test_interval_days=excluded.test_interval_days,
+                        default_target_low=excluded.default_target_low,
+                        default_target_high=excluded.default_target_high,
+                        default_alert_low=excluded.default_alert_low,
+                        default_alert_high=excluded.default_alert_high
+                    """,
+                    (
+                        user["id"],
+                        param_id_value,
+                        mdc,
+                        interval,
+                        dt_low,
+                        dt_high,
+                        da_low,
+                        da_high,
+                    ),
+                )
 
         db.commit()
         
@@ -6614,28 +6722,8 @@ def parameter_save(
 @app.post("/settings/parameters/{param_id}/delete")
 def parameter_delete(request: Request, param_id: int):
     db = get_db()
-    param = one(db, "SELECT id, name FROM parameter_defs WHERE id=?", (param_id,))
-    if not param:
-        db.close()
-        return redirect("/settings/parameters")
-    param_name = row_get(param, "name")
-    try:
-        if table_exists(db, "sample_value_kits"):
-            db.execute("DELETE FROM sample_value_kits WHERE parameter_id=?", (param_id,))
-        if table_exists(db, "sample_values"):
-            db.execute("DELETE FROM sample_values WHERE parameter_id=?", (param_id,))
-        if param_name:
-            for tbl, col in (("parameters", "name"), ("targets", "parameter")):
-                if table_exists(db, tbl):
-                    db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (param_name,))
-        db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
-        db.commit()
-        return redirect("/settings/parameters")
-    except IntegrityError:
-        db.rollback()
-        return redirect("/settings/parameters?error=Unable+to+delete+parameter+with+existing+references.")
-    finally:
-        db.close()
+    db.close()
+    return redirect("/settings/parameters?error=Parameter+deletion+is+disabled.")
 
 @app.post("/settings/parameters/bulk-add")
 async def parameter_bulk_add(request: Request):
@@ -7497,6 +7585,17 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
         dose_ml = (float(desired_change) * volume * 1000.0) / float(strength)
         pname = (additive['parameter'] or '').strip()
         pdef = one(db, "SELECT * FROM parameter_defs WHERE name=?", (pname,))
+        if pdef and user and table_exists(db, "user_parameter_settings"):
+            override = one(
+                db,
+                "SELECT * FROM user_parameter_settings WHERE user_id=? AND parameter_id=?",
+                (user["id"], pdef["id"]),
+            )
+            if override:
+                for field in USER_PARAMETER_FIELDS:
+                    value = row_get(override, field)
+                    if value is not None:
+                        pdef[field] = value
         if not pdef and pname:
             defs = q(db, "SELECT * FROM parameter_defs WHERE active=1")
             lname = pname.lower()
@@ -7527,6 +7626,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
 @app.get("/tools/dose-plan/", response_class=HTMLResponse, include_in_schema=False)
 def dose_plan(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     today = date.today()
     try:
         chk_rows = q(
@@ -7555,7 +7655,9 @@ def dose_plan(request: Request):
         check_map = {}
         latest_check_map = {}
     tanks = get_visible_tanks(db, request)
-    pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
+    pdefs = q(db, "SELECT id, name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
+    if user:
+        pdefs = apply_user_parameter_overrides(pdefs, get_user_parameter_settings(db, user["id"]))
     pdef_map = {r["name"]: r for r in pdefs}
     all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
     additives_by_group: Dict[str, List[Dict[str, Any]]] = {}
