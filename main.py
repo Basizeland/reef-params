@@ -3438,6 +3438,7 @@ def sentry_test() -> JSONResponse:
 @app.get("/insights", response_class=HTMLResponse)
 def insights(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
     tank_ids = [t["id"] for t in tanks]
     total_tanks = len(tanks)
@@ -3460,7 +3461,7 @@ def insights(request: Request):
                         "tank_name": tank["name"],
                         **item,
                     }
-                    for item in get_overdue_tests(db, tank["id"], user_id=user["id"])
+                    for item in get_overdue_tests(db, tank["id"], user_id=user["id"] if user else None)
                 ]
             )
             latest_map = get_latest_and_previous_per_parameter(db, tank["id"])
