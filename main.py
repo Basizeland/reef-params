@@ -52,6 +52,14 @@ app = FastAPI(title="Reef Tank Parameters")
 logger = logging.getLogger("reef")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 
+@app.get("/health/db")
+def db_health():
+    start = time_module.time()
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT 1")).scalar()
+    duration_ms = round((time_module.time() - start) * 1000, 2)
+    return {"ok": True, "select1": result, "ms": duration_ms}
+
 sentry_dsn = os.environ.get("SENTRY_DSN")
 if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
     import sentry_sdk
