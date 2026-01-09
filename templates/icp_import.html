@@ -34,6 +34,7 @@
         <div class="col-lg-4">
           <label class="form-label">CSV/PDF upload</label>
           <input class="form-control" type="file" name="icp_file" accept="{% if pdf_available %}.csv,.pdf{% else %}.csv{% endif %}">
+          <div class="form-text">Best on mobile: keep files under 10MB and use CSV when possible.</div>
           {% if pdf_available %}
             <div class="form-text">PDF parsing requires PyPDF2 installed in the backend image.</div>
           {% else %}

@@ -344,6 +344,15 @@ def oauth_cookie_settings(request: Request) -> Dict[str, Any]:
     secure = parsed.scheme == "https"
     return {"domain": domain, "secure": secure}
 
+def get_google_redirect_uri(request: Request) -> str:
+    mobile_redirect = os.environ.get("GOOGLE_REDIRECT_URI_MOBILE")
+    base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+    default_redirect = os.environ.get("GOOGLE_REDIRECT_URI") or f"{base.rstrip('/')}/auth/google/callback"
+    platform = (request.query_params.get("platform") or "").strip().lower()
+    if platform == "mobile" and mobile_redirect:
+        return mobile_redirect
+    return default_redirect
+
 def get_vapid_settings() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     public_key = os.environ.get("VAPID_PUBLIC_KEY")
     private_key = os.environ.get("VAPID_PRIVATE_KEY")
@@ -3797,10 +3806,7 @@ def google_start(request: Request):
     if not client_id:
         return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})
     state = secrets.token_urlsafe(16)
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
-    if not redirect_uri:
-        base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
-        redirect_uri = f"{base.rstrip('/')}/auth/google/callback"
+    redirect_uri = get_google_redirect_uri(request)
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -3828,10 +3834,7 @@ def google_start(request: Request):
 def google_callback(request: Request, code: str | None = None, state: str | None = None):
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
-    if not redirect_uri:
-        base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
-        redirect_uri = f"{base.rstrip('/')}/auth/google/callback"
+    redirect_uri = get_google_redirect_uri(request)
     expected_state = request.cookies.get("oauth_state")
     if not client_id or not client_secret:
         return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})

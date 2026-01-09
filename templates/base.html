@@ -166,6 +166,15 @@
                 <button class="btn btn-outline-secondary btn-sm" type="button" id="pwa-ios-dismiss">Got it</button>
             </div>
         </div>
+        <div class="alert alert-warning d-none offline-banner" role="alert" id="offline-banner">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <strong>You're offline</strong>
+                    <div class="small text-muted">Check your connection and try again.</div>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" type="button" id="offline-retry">Retry</button>
+            </div>
+        </div>
     </div>
 
     <div class="container pb-5 mobile-content-pad">
@@ -667,6 +676,28 @@
                     }
                 });
             });
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const offlineBanner = document.getElementById("offline-banner");
+            const retryButton = document.getElementById("offline-retry");
+            const updateBanner = () => {
+                if (!offlineBanner) return;
+                if (navigator.onLine) {
+                    offlineBanner.classList.add("d-none");
+                } else {
+                    offlineBanner.classList.remove("d-none");
+                }
+            };
+            window.addEventListener("online", updateBanner);
+            window.addEventListener("offline", updateBanner);
+            retryButton?.addEventListener("click", () => {
+                updateBanner();
+                if (navigator.onLine) {
+                    window.location.reload();
+                }
+            });
+            updateBanner();
         });
     </script>
 </body>
