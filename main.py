@@ -7528,6 +7528,15 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
 def dose_plan(request: Request):
     db = get_db()
     today = date.today()
+    def normalize_planned_date(value: Any) -> str:
+        if value is None:
+            return ""
+        parsed = parse_dt_any(value)
+        if parsed:
+            return parsed.date().isoformat()
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
     try:
         chk_rows = q(
             db,
@@ -7535,7 +7544,12 @@ def dose_plan(request: Request):
             (today.isoformat(), (today + timedelta(days=60)).isoformat()),
         )
         check_map = {
-            (r["tank_id"], r["parameter"], r["additive_id"], r["planned_date"]): int(r["checked"] or 0)
+            (
+                int(r["tank_id"]),
+                str(r["parameter"]).strip(),
+                int(r["additive_id"]),
+                normalize_planned_date(r["planned_date"]),
+            ): int(r["checked"] or 0)
             for r in chk_rows
         }
         latest_rows = q(
@@ -8158,11 +8172,25 @@ async def dose_plan_check(request: Request):
     parameter = (form.get("parameter") or "").strip()
     planned_date = (form.get("planned_date") or "").strip()
     checked = 1 if str(form.get("checked") or "").lower() in ("1", "true", "on", "yes") else 0
-    try: amount_ml = float(form.get("amount_ml") or 0)
-    except Exception: amount_ml = 0.0
-    if not tank_id or not additive_id or not parameter or not planned_date: raise HTTPException(status_code=400, detail="Missing fields")
+    try:
+        amount_ml = float(form.get("amount_ml") or 0)
+    except Exception:
+        amount_ml = 0.0
+    if not tank_id or not additive_id or not parameter or not planned_date:
+        raise HTTPException(status_code=400, detail="Missing fields")
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     now_iso = datetime.utcnow().isoformat()
+    planned_dt = parse_dt_any(planned_date)
+    if planned_dt:
+        planned_date = planned_dt.date().isoformat()
     existing_check = one(
         db,
         "SELECT id FROM dose_plan_checks WHERE tank_id=? AND parameter=? AND additive_id=? AND planned_date=? LIMIT 1",
@@ -8186,7 +8214,6 @@ async def dose_plan_check(request: Request):
                 (next_id, tank_id, parameter, additive_id, planned_date, checked, now_iso),
             )
     try:
-        planned_dt = parse_dt_any(planned_date)
         if planned_dt:
             now_time = datetime.now().time()
             logged_at = datetime.combine(planned_dt.date(), now_time).isoformat()
