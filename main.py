@@ -8176,8 +8176,17 @@ async def dose_plan_check(request: Request):
         amount_ml = float(form.get("amount_ml") or 0)
     except Exception:
         amount_ml = 0.0
-    if not tank_id or not additive_id or not parameter or not planned_date: raise HTTPException(status_code=400, detail="Missing fields")
+    if not tank_id or not additive_id or not parameter or not planned_date:
+        raise HTTPException(status_code=400, detail="Missing fields")
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    tank = get_tank_for_user(db, user, tank_id)
+    if not tank:
+        db.close()
+        raise HTTPException(status_code=404, detail="Tank not found")
     now_iso = datetime.utcnow().isoformat()
     planned_dt = parse_dt_any(planned_date)
     if planned_dt:
