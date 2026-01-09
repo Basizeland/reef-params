@@ -7542,9 +7542,9 @@ def dose_plan(request: Request):
         )
         check_map = {
             (
-                r["tank_id"],
-                r["parameter"],
-                r["additive_id"],
+                int(r["tank_id"]),
+                str(r["parameter"]).strip(),
+                int(r["additive_id"]),
                 normalize_planned_date(r["planned_date"]),
             ): int(r["checked"] or 0)
             for r in chk_rows
