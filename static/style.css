@@ -389,6 +389,12 @@ h1, h2, h3, h4, h5 {
     .btn,
     .btn-sm {
         min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1.1;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
     }
 
     .brand-logo-img {
