@@ -8169,11 +8169,16 @@ async def dose_plan_check(request: Request):
     parameter = (form.get("parameter") or "").strip()
     planned_date = (form.get("planned_date") or "").strip()
     checked = 1 if str(form.get("checked") or "").lower() in ("1", "true", "on", "yes") else 0
-    try: amount_ml = float(form.get("amount_ml") or 0)
-    except Exception: amount_ml = 0.0
+    try:
+        amount_ml = float(form.get("amount_ml") or 0)
+    except Exception:
+        amount_ml = 0.0
     if not tank_id or not additive_id or not parameter or not planned_date: raise HTTPException(status_code=400, detail="Missing fields")
     db = get_db()
     now_iso = datetime.utcnow().isoformat()
+    planned_dt = parse_dt_any(planned_date)
+    if planned_dt:
+        planned_date = planned_dt.date().isoformat()
     existing_check = one(
         db,
         "SELECT id FROM dose_plan_checks WHERE tank_id=? AND parameter=? AND additive_id=? AND planned_date=? LIMIT 1",
@@ -8197,7 +8202,6 @@ async def dose_plan_check(request: Request):
                 (next_id, tank_id, parameter, additive_id, planned_date, checked, now_iso),
             )
     try:
-        planned_dt = parse_dt_any(planned_date)
         if planned_dt:
             now_time = datetime.now().time()
             logged_at = datetime.combine(planned_dt.date(), now_time).isoformat()
