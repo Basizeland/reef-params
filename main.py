@@ -11,6 +11,7 @@ import time as time_module
 import shutil
 import secrets
 import hashlib
+import base64
 import urllib.parse
 import urllib.request
 import csv
@@ -218,10 +219,46 @@ def get_email_sender(kind: str | None = None) -> str:
     return transactional
 
 def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None, sender: str | None = None, sender_kind: str | None = None) -> Tuple[bool, str]:
-    host = os.environ.get("SMTP_HOST")
     sender = sender or get_email_sender(sender_kind)
-    if not host or not recipient:
-        msg = "missing SMTP_HOST or recipient"
+    if not recipient:
+        msg = "missing recipient"
+        print(f"Email skipped: {msg}")
+        return False, msg
+    mailjet_key = os.environ.get("MAILJET_API_KEY") or ""
+    mailjet_secret = os.environ.get("MAILJET_API_SECRET") or ""
+    if mailjet_key and mailjet_secret:
+        payload = {
+            "Messages": [
+                {
+                    "From": {"Email": sender},
+                    "To": [{"Email": recipient}],
+                    "Subject": subject,
+                    "TextPart": text_body,
+                    "HTMLPart": html_body or text_body,
+                }
+            ]
+        }
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.mailjet.com/v3.1/send",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        auth = base64.b64encode(f"{mailjet_key}:{mailjet_secret}".encode("utf-8")).decode("utf-8")
+        request.add_header("Authorization", f"Basic {auth}")
+        timeout = float(os.environ.get("SMTP_TIMEOUT", "10"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                if response.status >= 400:
+                    return False, f"Mailjet HTTP {response.status}"
+            return True, ""
+        except Exception as exc:
+            msg = str(exc)
+            print(f"Email failed: {msg}")
+            return False, msg
+    host = os.environ.get("SMTP_HOST")
+    if not host:
+        msg = "missing SMTP_HOST"
         print(f"Email skipped: {msg}")
         return False, msg
     port = int(os.environ.get("SMTP_PORT", "587"))
