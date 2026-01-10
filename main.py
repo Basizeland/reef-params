@@ -199,11 +199,24 @@ def build_daily_consumption(db: Connection, tank_view: Dict[str, Any], user: Opt
 
     return daily_consumption
 
+def get_email_sender() -> str:
+    sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME") or ""
+    if "@" in sender:
+        return sender
+    base = PUBLIC_BASE_URL or ""
+    parsed = urllib.parse.urlparse(base)
+    hostname = parsed.hostname or ""
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    if hostname and "." in hostname:
+        return f"noreply@{hostname}"
+    return "noreply@reefmetrics.app"
+
 def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None) -> Tuple[bool, str]:
     host = os.environ.get("SMTP_HOST")
-    sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME")
-    if not host or not sender or not recipient:
-        msg = "missing SMTP_HOST/SMTP_FROM or recipient"
+    sender = get_email_sender()
+    if not host or not recipient:
+        msg = "missing SMTP_HOST or recipient"
         print(f"Email skipped: {msg}")
         return False, msg
     port = int(os.environ.get("SMTP_PORT", "587"))
