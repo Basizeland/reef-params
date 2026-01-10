@@ -1,4 +1,5 @@
 import os
+import fcntl
 import psycopg
 from sqlalchemy import text, inspect
 from sqlalchemy.engine import Connection
@@ -44,7 +45,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
 PASSWORD_HASH_ITERATIONS = int(os.environ.get("PASSWORD_HASH_ITERATIONS", "200000"))
 RUN_BACKGROUND_JOBS = os.environ.get("RUN_BACKGROUND_JOBS", "true").lower() in {"1", "true", "yes", "on"}
+BACKGROUND_JOB_LOCK_PATH = os.environ.get("BACKGROUND_JOB_LOCK_PATH", "").strip() or None
 SESSION_ROTATE_ON_LOGIN = os.environ.get("SESSION_ROTATE_ON_LOGIN", "true").lower() in {"1", "true", "yes", "on"}
+ALLOW_RUNTIME_SCHEMA_CHANGES = os.environ.get("ALLOW_RUNTIME_SCHEMA_CHANGES", "true").lower() in {"1", "true", "yes", "on"}
 CSRF_EXEMPT_PATHS = tuple(
     path.strip() for path in os.environ.get("CSRF_EXEMPT_PATHS", "").split(",") if path.strip()
 )
@@ -86,6 +89,17 @@ def get_pandas():
 
 def get_webpush():
     return optional_module("pywebpush")
+
+def is_csrf_exempt(path: str) -> bool:
+    if not CSRF_EXEMPT_PATHS:
+        return False
+    for entry in CSRF_EXEMPT_PATHS:
+        if entry.endswith("*"):
+            if path.startswith(entry[:-1]):
+                return True
+        elif path == entry:
+            return True
+    return False
 
 def require_pandas():
     pandas = get_pandas()
@@ -1350,10 +1364,11 @@ def require_admin(user: Optional[Dict[str, Any]]) -> None:
     if not user or (row_get(user, "admin") not in (1, True) and row_get(user, "role") != "admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-def create_session(db: Connection, user_id: int) -> str:
+def create_session(db: Connection, user_id: int, rotate_existing: Optional[bool] = None) -> str:
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.utcnow() + timedelta(days=30)).isoformat()
-    if SESSION_ROTATE_ON_LOGIN:
+    rotate = SESSION_ROTATE_ON_LOGIN if rotate_existing is None else rotate_existing
+    if rotate:
         db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     db.execute(
         "INSERT INTO sessions (user_id, session_token, created_at, expires_at) VALUES (?, ?, ?, ?)",
@@ -2693,9 +2708,14 @@ def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, detai
         insert_audit_log(db, user["id"], action, str(details), datetime.utcnow().isoformat())
         db.commit()
     except Exception as exc:
-        logger.warning("Audit log write failed: %s", exc)
+        logger.warning(
+            "Audit log write failed",
+            extra={"audit_action": action, "audit_user_id": user.get("id") if user else None, "error": str(exc)},
+        )
 
 def ensure_column(db: DBConnection, table: str, col: str, ddl: str) -> None:
+    if not ALLOW_RUNTIME_SCHEMA_CHANGES:
+        raise RuntimeError(f"Runtime schema changes are disabled; missing {table}.{col}")
     inspector = inspect(db._conn)
     cols = {column["name"] for column in inspector.get_columns(table)}
     if col not in cols:
@@ -3422,9 +3442,23 @@ init_db()
 
 @app.on_event("startup")
 def start_background_jobs() -> None:
+    logger.info(
+        "Security settings: PASSWORD_HASH_ITERATIONS=%s SESSION_ROTATE_ON_LOGIN=%s",
+        PASSWORD_HASH_ITERATIONS,
+        SESSION_ROTATE_ON_LOGIN,
+    )
     if not RUN_BACKGROUND_JOBS:
         logger.info("Background jobs disabled by RUN_BACKGROUND_JOBS setting.")
         return
+    if BACKGROUND_JOB_LOCK_PATH:
+        lock_handle = open(BACKGROUND_JOB_LOCK_PATH, "a+")
+        try:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            logger.info("Background job lock is held; skipping scheduler startup.")
+            lock_handle.close()
+            return
+        app.state.background_job_lock = lock_handle
     start_daily_summary_scheduler()
     start_push_notification_scheduler()
     start_apex_polling()
@@ -3436,7 +3470,7 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     csrf_token = ensure_csrf_token(request.cookies.get("csrf_token"))
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not path.startswith("/static"):
-        csrf_exempt = CSRF_EXEMPT_PATHS and any(path.startswith(prefix) for prefix in CSRF_EXEMPT_PATHS)
+        csrf_exempt = is_csrf_exempt(path)
         if not csrf_exempt:
             if request.headers.get("Authorization", "").startswith("Bearer "):
                 pass
@@ -3829,6 +3863,8 @@ async def login_submit(request: Request):
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
     password = form.get("password") or ""
+    rotate_requested = "rotate_sessions" in form
+    rotate_sessions = (form.get("rotate_sessions") or "").lower() in {"1", "true", "on", "yes"}
     db = get_db()
     user = one(db, "SELECT * FROM users WHERE email=?", (email,))
     if not user or not user["password_hash"]:
@@ -3837,7 +3873,8 @@ async def login_submit(request: Request):
     if not verify_password(password, user["password_hash"], user["password_salt"]):
         db.close()
         return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid email or password."})
-    token = create_session(db, user["id"])
+    rotate_existing = rotate_sessions if rotate_requested else None
+    token = create_session(db, user["id"], rotate_existing=rotate_existing)
     db.close()
     response = redirect("/")
     response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
