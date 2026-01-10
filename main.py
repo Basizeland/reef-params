@@ -5453,6 +5453,7 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         "nopox": ("NoPox", None, "nopox_daily_ml", "nopox_container_ml", "nopox_remaining_ml", "use_nopox"),
     }
     db = get_db()
+    user = get_current_user(db, request)
     additives_visible = get_visible_additives(db, user, active_only=True)
     additives_by_name = {
         row_get(row, "name"): row for row in additives_visible
