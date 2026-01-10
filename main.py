@@ -2271,6 +2271,9 @@ def execute_insert_returning_id(db: DBConnection, sql: str, params: Tuple[Any, .
                 elif "INSERT INTO tanks" in sql and (constraint in (None, "tanks_pkey")):
                     reset_tanks_sequence(db)
                     result = db.execute(f"{sql} RETURNING id", params)
+                elif "INSERT INTO users" in sql and (constraint in (None, "users_pkey")):
+                    reset_users_sequence(db)
+                    result = db.execute(f"{sql} RETURNING id", params)
                 else:
                     raise
             else:
@@ -2419,6 +2422,23 @@ def reset_audit_logs_sequence(db: DBConnection) -> None:
         )
         SELECT setval(
             pg_get_serial_sequence('audit_logs', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
+def reset_users_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM users
+        )
+        SELECT setval(
+            pg_get_serial_sequence('users', 'id'),
             COALESCE(max_id, 1),
             max_id IS NOT NULL
         )
@@ -3658,11 +3678,13 @@ async def register_submit(request: Request):
         return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered."})
     password_hash, password_salt = hash_password(password)
     role = "admin" if first_user else "user"
-    db.execute(
+    user_id = execute_insert_returning_id(
         "INSERT INTO users (email, username, role, password_hash, password_salt, created_at, admin) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (email, username, role, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
     )
-    user = one(db, "SELECT id FROM users WHERE email=?", (email,))
+    user = one(db, "SELECT id FROM users WHERE id=?", (user_id,)) if user_id else None
+    if not user:
+        user = one(db, "SELECT id FROM users WHERE email=?", (email,))
     sent, reason = send_welcome_email(email, username)
     log_audit(
         db,
@@ -3896,7 +3918,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         first_user = not users_exist(db)
         role = "admin" if first_user else "user"
         oauth_password_hash, oauth_password_salt = hash_password(secrets.token_urlsafe(24))
-        db.execute(
+        user_id = execute_insert_returning_id(
             "INSERT INTO users (email, username, role, password_hash, password_salt, google_sub, created_at, admin) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -3910,7 +3932,9 @@ def google_callback(request: Request, code: str | None = None, state: str | None
                 1 if first_user else 0,
             ),
         )
-        user = one(db, "SELECT * FROM users WHERE email=?", (email,))
+        user = one(db, "SELECT * FROM users WHERE id=?", (user_id,)) if user_id else None
+        if not user:
+            user = one(db, "SELECT * FROM users WHERE email=?", (email,))
         sent, reason = send_welcome_email(email, username)
         log_audit(
             db,
