@@ -115,7 +115,7 @@ def additive_label(additive: Any) -> str:
     label = f"{brand} {name}".strip()
     return label or name
 
-def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def build_daily_consumption(db: Connection, tank_view: Dict[str, Any], user: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
     daily_consumption: Dict[str, Dict[str, Any]] = {}
     volume_l = row_get(tank_view, "volume_l")
     if not volume_l:
@@ -137,7 +137,8 @@ def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[s
             return has_data
         return bool(flag)
 
-    additives = q(db, "SELECT name, parameter, strength, unit FROM additives WHERE active=1")
+    where_sql, params = build_additives_where(db, user, active_only=True)
+    additives = q(db, f"SELECT name, parameter, strength, unit FROM additives{where_sql}", params)
     additive_by_name = {str(a["name"]).strip().lower(): a for a in additives}
     dosing_entries = [
         ("all_in_one", tank_view.get("all_in_one_solution"), tank_view.get("all_in_one_daily_ml"), tank_view.get("use_all_in_one")),
@@ -1130,6 +1131,48 @@ def get_visible_tanks(db: Connection, request: Request) -> List[Dict[str, Any]]:
             (user["id"], user["id"]),
         )
     return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+
+def ensure_additives_owner_column(db: DBConnection) -> None:
+    ensure_column(db, "additives", "owner_user_id", "ALTER TABLE additives ADD COLUMN owner_user_id INTEGER")
+
+def build_additives_where(db: DBConnection, user: Optional[Dict[str, Any]], active_only: bool = True, extra_clause: Optional[str] = None, extra_params: Tuple[Any, ...] = ()) -> Tuple[str, Tuple[Any, ...]]:
+    ensure_additives_owner_column(db)
+    clauses = []
+    params: List[Any] = []
+    if active_only:
+        clauses.append("active=1")
+    if user:
+        clauses.append("(owner_user_id IS NULL OR owner_user_id=?)")
+        params.append(user["id"])
+    else:
+        clauses.append("owner_user_id IS NULL")
+    if extra_clause:
+        clauses.append(extra_clause)
+        params.extend(extra_params)
+    where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where_sql, tuple(params)
+
+def get_visible_additives(db: DBConnection, user: Optional[Dict[str, Any]], active_only: bool = True) -> List[Dict[str, Any]]:
+    where_sql, params = build_additives_where(db, user, active_only=active_only)
+    return q(db, f"SELECT * FROM additives{where_sql} ORDER BY parameter, name", params)
+
+def get_visible_additive_by_id(db: DBConnection, user: Optional[Dict[str, Any]], additive_id: int, active_only: bool = False) -> Optional[Dict[str, Any]]:
+    where_sql, params = build_additives_where(db, user, active_only=active_only, extra_clause="id=?", extra_params=(additive_id,))
+    return one(db, f"SELECT * FROM additives{where_sql}", params)
+
+def group_additives_by_parameter(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped = []
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        group_name = (r["group_name"] or "").strip()
+        if group_name:
+            key = group_name
+        else:
+            key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        groups.setdefault(key, []).append(r)
+    for key in sorted(groups.keys(), key=lambda s: s.lower()):
+        grouped.append({"parameter": key, "items": groups[key]})
+    return grouped
 
 def get_visible_tank_ids(db: Connection, user: Optional[Dict[str, Any]]) -> List[int]:
     if user and row_get(user, "admin"):
@@ -4084,7 +4127,7 @@ def tank_new_form(request: Request):
         }
         for p in params
     }
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         parameter = (a["parameter"] or "other").strip().lower()
@@ -4527,10 +4570,10 @@ def tank_detail(request: Request, tank_id: int):
             "dosing_low_days": dosing_low_days,
         })
 
-    daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
+    daily_consumption = build_daily_consumption(db, tank_view, user) if profile else {}
     if profile:
         try:
-            additive_rows = q(db, "SELECT name, brand FROM additives")
+            additive_rows = get_visible_additives(db, user, active_only=False)
             additive_map = {str(a["name"]).strip(): additive_label(a) for a in additive_rows}
             for key in (
                 "all_in_one_solution",
@@ -5169,7 +5212,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         parameter = (a["parameter"] or "other").strip().lower()
@@ -5274,7 +5317,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
             }
     except Exception:
         param_limits = {}
-    daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
+    daily_consumption = build_daily_consumption(db, tank_view, user) if profile else {}
     suggested_dosing: Dict[str, float] = {}
     volume_l = row_get(tank_view, "volume_l")
     if volume_l and daily_consumption:
@@ -5364,8 +5407,9 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         "nopox": ("NoPox", None, "nopox_daily_ml", "nopox_container_ml", "nopox_remaining_ml", "use_nopox"),
     }
     db = get_db()
+    additives_visible = get_visible_additives(db, user, active_only=True)
     additives_by_name = {
-        row_get(row, "name"): row for row in q(db, "SELECT name, parameter, group_name FROM additives")
+        row_get(row, "name"): row for row in additives_visible
     }
 
     def type_key_for_additive(solution_name: str) -> str | None:
@@ -7307,20 +7351,24 @@ def test_kit_delete(request: Request, kit_id: int):
 @app.get("/additives/", response_class=HTMLResponse, include_in_schema=False)
 def additives(request: Request):
     db = get_db()
-    rows = q(db, "SELECT * FROM additives ORDER BY parameter, name")
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    rows = get_visible_additives(db, user, active_only=False)
+    standard_rows = [row for row in rows if row_get(row, "owner_user_id") is None]
+    personal_rows = [row for row in rows if row_get(row, "owner_user_id") == user["id"]]
     db.close()
-    grouped = []
-    groups: Dict[str, List[Dict[str, Any]]] = {}
-    for r in rows:
-        group_name = (r["group_name"] or "").strip()
-        if group_name:
-            key = group_name
-        else:
-            key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
-        groups.setdefault(key, []).append(r)
-    for key in sorted(groups.keys(), key=lambda s: s.lower()):
-        grouped.append({"parameter": key, "items": groups[key]})
-    return templates.TemplateResponse("additives.html", {"request": request, "additives": rows, "rows": rows, "grouped_additives": grouped})
+    return templates.TemplateResponse(
+        "additives.html",
+        {
+            "request": request,
+            "standard_groups": group_additives_by_parameter(standard_rows),
+            "personal_groups": group_additives_by_parameter(personal_rows),
+            "is_admin": row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin",
+            "error": request.query_params.get("error"),
+        },
+    )
 
 @app.get("/settings/additives", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/settings/additives/", response_class=HTMLResponse, include_in_schema=False)
@@ -7330,27 +7378,69 @@ def additives_settings_redirect(): return redirect("/additives")
 @app.get("/additives/new/", response_class=HTMLResponse, include_in_schema=False)
 def additive_new(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
     selected_parameter = (request.query_params.get("parameter") or "").strip()
     return templates.TemplateResponse(
         "additive_edit.html",
-        {"request": request, "additive": None, "parameters": parameters, "selected_parameter": selected_parameter},
+        {
+            "request": request,
+            "additive": None,
+            "parameters": parameters,
+            "selected_parameter": selected_parameter,
+            "is_admin": row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin",
+        },
     )
 
 @app.get("/additives/{additive_id}/edit", response_class=HTMLResponse)
 def additive_edit(request: Request, additive_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
     additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
+    if not additive:
+        db.close()
+        return redirect("/additives")
+    is_admin = row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin"
+    owner_id = row_get(additive, "owner_user_id")
+    if owner_id is None and not is_admin:
+        db.close()
+        return redirect("/additives?error=Only%20admins%20can%20edit%20standard%20additives")
+    if owner_id is not None and not is_admin and owner_id != user["id"]:
+        db.close()
+        return redirect("/additives?error=You%20can%20only%20edit%20your%20own%20additives")
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": additive, "parameters": parameters})
+    return templates.TemplateResponse(
+        "additive_edit.html",
+        {
+            "request": request,
+            "additive": additive,
+            "parameters": parameters,
+            "is_admin": is_admin,
+        },
+    )
 
 @app.post("/additives/save")
-def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), brand: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), brand: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None), is_global: Optional[str] = Form(None)):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
     cur = cursor(db)
+    is_admin = row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin"
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
+    owner_user_id = None if (is_admin and is_global in ("1", "on", "true", "True")) else user["id"]
     data = (
         name.strip(),
         (brand or "").strip() or None,
@@ -7360,16 +7450,28 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
         to_float(max_daily),
         (notes or "").strip() or None,
         is_active,
+        owner_user_id,
     )
     if additive_id and str(additive_id).strip().isdigit():
+        existing = one(db, "SELECT * FROM additives WHERE id=?", (int(additive_id),))
+        if not existing:
+            db.close()
+            return redirect("/additives")
+        existing_owner = row_get(existing, "owner_user_id")
+        if existing_owner is None and not is_admin:
+            db.close()
+            return redirect("/additives?error=Only%20admins%20can%20edit%20standard%20additives")
+        if existing_owner is not None and not is_admin and existing_owner != user["id"]:
+            db.close()
+            return redirect("/additives?error=You%20can%20only%20edit%20your%20own%20additives")
         cur.execute(
-            "UPDATE additives SET name=?, brand=?, parameter=?, strength=?, unit=?, max_daily=?, notes=?, active=? WHERE id=?",
+            "UPDATE additives SET name=?, brand=?, parameter=?, strength=?, unit=?, max_daily=?, notes=?, active=?, owner_user_id=? WHERE id=?",
             (*data, int(additive_id)),
         )
     else:
         try:
             cur.execute(
-                "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 data,
             )
         except IntegrityError as exc:
@@ -7377,7 +7479,7 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
             if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation):
                 reset_additives_sequence(db)
                 cur.execute(
-                    "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     data,
                 )
             else:
@@ -7389,6 +7491,23 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
 @app.post("/additives/{additive_id}/delete")
 def additive_delete(request: Request, additive_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
+    additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
+    if not additive:
+        db.close()
+        return redirect("/additives")
+    is_admin = row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin"
+    owner_id = row_get(additive, "owner_user_id")
+    if owner_id is None and not is_admin:
+        db.close()
+        return redirect("/additives?error=Only%20admins%20can%20delete%20standard%20additives")
+    if owner_id is not None and not is_admin and owner_id != user["id"]:
+        db.close()
+        return redirect("/additives?error=You%20can%20only%20delete%20your%20own%20additives")
     db.execute("DELETE FROM additives WHERE id=?", (additive_id,))
     db.commit()
     db.close()
@@ -7403,7 +7522,7 @@ def dosing_log(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    additives_rows = get_visible_additives(db, user, active_only=True)
     logs = q(
         db,
         "SELECT dl.*, COALESCE(NULLIF(TRIM(a.brand), '') || ' ' || a.name, a.name) AS additive_name FROM dose_logs dl LEFT JOIN additives a ON a.id = dl.additive_id WHERE dl.tank_id=? ORDER BY dl.logged_at DESC, dl.id DESC",
@@ -7444,7 +7563,7 @@ async def dosing_log_add(request: Request, tank_id: int):
     cur.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, aid, float(amount_ml), reason, when_iso))
     if aid is not None:
         profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-        additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
+        additive = get_visible_additive_by_id(db, user, aid, active_only=False)
         if profile and additive:
             additive_name = (row_get(additive, "name") or "").strip().lower()
             additive_label_name = additive_label(additive).strip().lower()
@@ -7528,7 +7647,7 @@ async def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(.
         amount_ml = row_get(log_row, "amount_ml")
         if aid is not None and amount_ml is not None:
             profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-            additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
+            additive = get_visible_additive_by_id(db, user, aid, active_only=False)
             if profile and additive:
                 additive_name = (row_get(additive, "name") or "").strip().lower()
                 additive_label_name = additive_label(additive).strip().lower()
@@ -7651,7 +7770,8 @@ def merge_parameters_run(request: Request):
 def calculators(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    user = get_current_user(db, request)
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
@@ -7667,7 +7787,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
     user = get_current_user(db, request)
     tank = get_tank_for_user(db, user, tank_id)
     tank_profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-    additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
+    additive = get_visible_additive_by_id(db, user, additive_id, active_only=True)
     if not tank or not additive:
         db.close()
         return redirect("/tools/calculators")
@@ -7708,7 +7828,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
                 daily_ml = (daily_change * volume * 1000.0) / float(strength)
         except Exception: pass
     tanks = get_visible_tanks(db, request)
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
@@ -7755,7 +7875,10 @@ def dose_plan(request: Request):
     if user:
         pdefs = apply_user_parameter_overrides(pdefs, get_user_parameter_settings(db, user["id"]))
     pdef_map = {r["name"]: r for r in pdefs}
-    all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
+    all_additives = [
+        {"id": row_get(row, "id"), "name": row_get(row, "name"), "parameter": row_get(row, "parameter")}
+        for row in get_visible_additives(db, user, active_only=True)
+    ]
     additives_by_group: Dict[str, List[Dict[str, Any]]] = {}
     def group_key(value: str) -> str:
         cleaned = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
@@ -7868,7 +7991,8 @@ def dose_plan(request: Request):
             days = 1
             if max_change_f and max_change_f > 0 and delta > max_change_f: days = int(math.ceil(delta / max_change_f))
             per_day_change = delta / float(days)
-            adds = q(db, "SELECT * FROM additives WHERE active=1 AND parameter=? ORDER BY name", (pname,))
+            where_sql, params = build_additives_where(db, user, active_only=True, extra_clause="parameter=?", extra_params=(pname,))
+            adds = q(db, f"SELECT * FROM additives{where_sql} ORDER BY name", params)
             if not adds:
                 suggestion = None
                 for candidate in additives_by_group.get(group_key(pname), []):

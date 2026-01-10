@@ -223,6 +223,7 @@ class Additive(Base, DictMixin):
     max_daily = Column(Float)
     notes = Column(String)
     active = Column(Integer, default=1)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 class Preset(Base, DictMixin):
     __tablename__ = "presets"

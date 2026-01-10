@@ -64,6 +64,16 @@
           </div>
         </div>
 
+        {% if is_admin %}
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="is_global" id="is_global" {% if additive and additive.owner_user_id is none %}checked{% endif %}>
+              <label class="form-check-label" for="is_global">Make available to all users</label>
+              <div class="form-text">Standard additives are shared across all accounts.</div>
+            </div>
+          </div>
+        {% endif %}
+
         <div class="col-12 d-flex gap-2">
           <button class="btn btn-primary" type="submit">Save</button>
           <a class="btn btn-outline-secondary" href="/additives">Cancel</a>
@@ -72,9 +82,13 @@
     </form>
 
     {% if additive %}
-    <form class="mt-3" method="post" action="/additives/{{ additive.id }}/delete" onsubmit="return confirm('Delete this additive?')">
-      <button class="btn btn-outline-danger" type="submit">Delete additive</button>
-    </form>
+      {% if is_admin or additive.owner_user_id %}
+        <form class="mt-3" method="post" action="/additives/{{ additive.id }}/delete" onsubmit="return confirm('Delete this additive?')">
+          <button class="btn btn-outline-danger" type="submit">Delete additive</button>
+        </form>
+      {% else %}
+        <div class="alert alert-info mt-3">Standard additives can only be removed by an admin.</div>
+      {% endif %}
     {% endif %}
   </div>
 </div>
