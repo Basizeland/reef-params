@@ -698,11 +698,11 @@ def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
     today = date.today().isoformat()
     tanks = q(
         db,
-        """SELECT DISTINCT t.*
+        """SELECT DISTINCT ON (t.id) t.*
            FROM tanks t
            LEFT JOIN user_tanks ut ON ut.tank_id = t.id
            WHERE t.owner_user_id=? OR ut.user_id=?
-           ORDER BY COALESCE(t.sort_order, 0), t.name""",
+           ORDER BY t.id, COALESCE(t.sort_order, 0), t.name""",
         (user["id"], user["id"]),
     )
     dosing_alerts = collect_dosing_notifications(db, owner_user_id=user["id"], actor_user=user)
