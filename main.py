@@ -961,6 +961,33 @@ def start_daily_summary_scheduler() -> None:
     thread = threading.Thread(target=_loop, daemon=True)
     thread.start()
 
+def send_push_notifications_if_due() -> None:
+    auto_send = os.environ.get("AUTO_SEND_PUSH_NOTIFICATIONS", "true").lower() in {"1", "true", "yes"}
+    if not auto_send:
+        return
+    db = get_db()
+    try:
+        collect_dosing_notifications(db)
+    finally:
+        db.close()
+
+def start_push_notification_scheduler() -> None:
+    try:
+        interval_minutes = int(os.environ.get("PUSH_NOTIFICATION_INTERVAL_MINUTES", "15"))
+    except ValueError:
+        interval_minutes = 15
+    interval_seconds = max(interval_minutes, 1) * 60
+
+    def _loop() -> None:
+        while True:
+            try:
+                send_push_notifications_if_due()
+            except Exception:
+                pass
+            time_module.sleep(interval_seconds)
+    thread = threading.Thread(target=_loop, daemon=True)
+    thread.start()
+
 def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     db = get_db()
     try:
@@ -3282,6 +3309,7 @@ init_db()
 @app.on_event("startup")
 def start_background_jobs() -> None:
     start_daily_summary_scheduler()
+    start_push_notification_scheduler()
     start_apex_polling()
 
 @app.middleware("http")
