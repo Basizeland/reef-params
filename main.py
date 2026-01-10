@@ -8754,6 +8754,16 @@ async def admin_user_delete(request: Request, user_id: int):
         if admin_count <= 1:
             db.close()
             return redirect("/admin/users?error=Cannot delete the last admin")
+    ensure_additives_owner_column(db)
+    db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM api_tokens WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM push_subscriptions WHERE user_id=?", (user_id,))
+    if table_exists(db, "user_parameter_settings"):
+        db.execute("DELETE FROM user_parameter_settings WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
+    db.execute("UPDATE tanks SET owner_user_id=NULL WHERE owner_user_id=?", (user_id,))
+    db.execute("UPDATE additives SET owner_user_id=NULL WHERE owner_user_id=?", (user_id,))
+    db.execute("DELETE FROM audit_logs WHERE actor_user_id=?", (user_id,))
     db.execute("DELETE FROM users WHERE id=?", (user_id,))
     log_audit(db, current_user, "user-delete", {"user_id": user_id})
     db.commit()
