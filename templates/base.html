@@ -410,7 +410,7 @@
             const saveState = (state) => {
                 localStorage.setItem(storageKey, JSON.stringify(state));
             };
-            const state = loadState();
+            let state = loadState();
             if (!state.seen) {
                 const modal = new bootstrap.Modal(modalEl);
                 modal.show();
@@ -472,6 +472,11 @@
                     updateUI();
                 });
             }
+
+            modalEl.addEventListener("show.bs.modal", () => {
+                state = loadState();
+                updateUI();
+            });
 
             updateUI();
         });
