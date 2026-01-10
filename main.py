@@ -1,5 +1,8 @@
 import os
-import sqlite3
+from sqlalchemy import text, inspect
+from sqlalchemy.engine import Connection
+from sqlalchemy.sql.elements import TextClause
+from sqlalchemy.exc import OperationalError, IntegrityError
 import re
 import math
 import json
@@ -22,6 +25,8 @@ from datetime import datetime, date, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from integrations.apex import ApexClient, readings_from_payload
+from database import engine, DB_PATH
+import models  # noqa: F401
 from html.parser import HTMLParser
 
 from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
@@ -31,8 +36,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "my_reef.db"))
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reef.bsizeland.com")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
 
 app = FastAPI(title="Reef Tank Parameters")
 
@@ -83,7 +87,7 @@ def additive_label(additive: Any) -> str:
     label = f"{brand} {name}".strip()
     return label or name
 
-def build_daily_consumption(db: sqlite3.Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     daily_consumption: Dict[str, Dict[str, Any]] = {}
     volume_l = row_get(tank_view, "volume_l")
     if not volume_l:
@@ -205,7 +209,7 @@ def send_email(recipient: str, subject: str, text_body: str, html_body: str | No
 
 def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
     app_name = os.environ.get("APP_NAME", "Reef Metrics")
-    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
+    base_url = PUBLIC_BASE_URL or "https://reefmetrics.app"
     subject = f"Welcome to {app_name}"
     text_body = (
         f"Hi {username or recipient},\n\n"
@@ -331,7 +335,7 @@ def get_vapid_settings() -> Tuple[Optional[str], Optional[str], Optional[str]]:
         return None, None, None
     return public_key, private_key, subject
 
-def send_web_push(db: sqlite3.Connection, user_ids: List[int], payload: Dict[str, Any]) -> None:
+def send_web_push(db: Connection, user_ids: List[int], payload: Dict[str, Any]) -> None:
     webpush_module = get_webpush()
     if webpush_module is None:
         return
@@ -369,7 +373,7 @@ def send_web_push(db: sqlite3.Connection, user_ids: List[int], payload: Dict[str
             db.execute("DELETE FROM push_subscriptions WHERE id=?", (row["id"],))
     db.commit()
 
-def get_tank_recipient_ids(db: sqlite3.Connection, tank_id: int) -> List[int]:
+def get_tank_recipient_ids(db: Connection, tank_id: int) -> List[int]:
     rows = q(
         db,
         """SELECT DISTINCT u.id
@@ -475,10 +479,10 @@ def _finalize(v: Any) -> Any:
 templates.env.finalize = _finalize
 
 def collect_dosing_notifications(
-    db: sqlite3.Connection,
+    db: Connection,
     tank_id: int | None = None,
     owner_user_id: int | None = None,
-    actor_user: Optional[sqlite3.Row] = None,
+    actor_user: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     today = date.today().isoformat()
     params: List[Any] = []
@@ -503,7 +507,7 @@ def collect_dosing_notifications(
         db,
         "SELECT id, tank_id, solution, daily_ml, container_ml, remaining_ml FROM dosing_entries WHERE active=1",
     )
-    extra_by_tank: Dict[int, List[sqlite3.Row]] = {}
+    extra_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     for entry in extra_entries:
         extra_by_tank.setdefault(int(row_get(entry, "tank_id")), []).append(entry)
     dismissed_rows = q(
@@ -651,7 +655,7 @@ def collect_dosing_notifications(
                     )
     return notifications
 
-def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, Any]:
+def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
     today = date.today().isoformat()
     tanks = q(
         db,
@@ -789,9 +793,9 @@ def build_daily_summary(db: sqlite3.Connection, user: sqlite3.Row) -> Dict[str, 
         "maintenance_by_tank": maintenance_by_tank,
     }
 
-def send_daily_summary_email(db: sqlite3.Connection, user: sqlite3.Row) -> Tuple[bool, str]:
+def send_daily_summary_email(db: Connection, user: Dict[str, Any]) -> Tuple[bool, str]:
     app_name = os.environ.get("APP_NAME", "Reef Metrics")
-    base_url = PUBLIC_BASE_URL or "https://reef.bsizeland.com"
+    base_url = PUBLIC_BASE_URL or "https://reefmetrics.app"
     summary = build_daily_summary(db, user)
     subject = f"{app_name} Daily Summary"
     lines = [f"Daily summary for {summary['date']}:"]
@@ -958,7 +962,7 @@ def verify_password(password: str, password_hash: str, salt: str) -> bool:
     digest, _ = hash_password(password, salt)
     return secrets.compare_digest(digest, password_hash)
 
-def get_current_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+def get_current_user(db: Connection, request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get("session_token")
     if not token:
         return None
@@ -970,7 +974,7 @@ def get_current_user(db: sqlite3.Connection, request: Request) -> Optional[sqlit
     """, (token, datetime.utcnow().isoformat()))
     return row
 
-def get_visible_tanks(db: sqlite3.Connection, request: Request) -> List[sqlite3.Row]:
+def get_visible_tanks(db: Connection, request: Request) -> List[Dict[str, Any]]:
     user = get_current_user(db, request)
     if user and row_get(user, "admin"):
         return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
@@ -986,7 +990,7 @@ def get_visible_tanks(db: sqlite3.Connection, request: Request) -> List[sqlite3.
         )
     return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
 
-def get_visible_tank_ids(db: sqlite3.Connection, user: Optional[sqlite3.Row]) -> List[int]:
+def get_visible_tank_ids(db: Connection, user: Optional[Dict[str, Any]]) -> List[int]:
     if user and row_get(user, "admin"):
         rows = q(db, "SELECT id FROM tanks ORDER BY id")
         return [row["id"] for row in rows]
@@ -1004,7 +1008,7 @@ def get_visible_tank_ids(db: sqlite3.Connection, user: Optional[sqlite3.Row]) ->
     rows = q(db, "SELECT id FROM tanks ORDER BY id")
     return [row["id"] for row in rows]
 
-def get_tank_for_user(db: sqlite3.Connection, user: Optional[sqlite3.Row], tank_id: int) -> Optional[sqlite3.Row]:
+def get_tank_for_user(db: Connection, user: Optional[Dict[str, Any]], tank_id: int) -> Optional[Dict[str, Any]]:
     if user and row_get(user, "admin"):
         return one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
     if user:
@@ -1018,11 +1022,11 @@ def get_tank_for_user(db: sqlite3.Connection, user: Optional[sqlite3.Row], tank_
         )
     return one(db, "SELECT * FROM tanks WHERE id=?", (tank_id,))
 
-def require_admin(user: Optional[sqlite3.Row]) -> None:
+def require_admin(user: Optional[Dict[str, Any]]) -> None:
     if not user or (row_get(user, "admin") not in (1, True) and row_get(user, "role") != "admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-def create_session(db: sqlite3.Connection, user_id: int) -> str:
+def create_session(db: Connection, user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.utcnow() + timedelta(days=30)).isoformat()
     db.execute(
@@ -1035,7 +1039,7 @@ def create_session(db: sqlite3.Connection, user_id: int) -> str:
 def hash_api_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-def create_api_token(db: sqlite3.Connection, user_id: int, label: str | None = None) -> str:
+def create_api_token(db: Connection, user_id: int, label: str | None = None) -> str:
     token = secrets.token_urlsafe(32)
     token_hash = hash_api_token(token)
     token_prefix = token[:8]
@@ -1046,7 +1050,7 @@ def create_api_token(db: sqlite3.Connection, user_id: int, label: str | None = N
     db.commit()
     return token
 
-def get_api_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+def get_api_user(db: Connection, request: Request) -> Optional[Dict[str, Any]]:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header.replace("Bearer ", "", 1).strip()
@@ -1069,24 +1073,24 @@ def get_api_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.R
                 return row
     return None
 
-def get_authenticated_user(db: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+def get_authenticated_user(db: Connection, request: Request) -> Optional[Dict[str, Any]]:
     user = get_api_user(db, request)
     if user:
         return user
     return get_current_user(db, request)
 
-def list_api_tokens(db: sqlite3.Connection, user_id: int) -> List[sqlite3.Row]:
+def list_api_tokens(db: Connection, user_id: int) -> List[Dict[str, Any]]:
     return q(
         db,
         "SELECT id, token_prefix, label, created_at, last_used_at FROM api_tokens WHERE user_id=? ORDER BY created_at DESC",
         (user_id,),
     )
 
-def get_setting(db: sqlite3.Connection, key: str) -> Optional[str]:
+def get_setting(db: Connection, key: str) -> Optional[str]:
     row = one(db, "SELECT value FROM app_settings WHERE key=?", (key,))
     return row["value"] if row else None
 
-def set_setting(db: sqlite3.Connection, key: str, value: str) -> None:
+def set_setting(db: Connection, key: str, value: str) -> None:
     db.execute(
         "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, value),
@@ -1116,7 +1120,7 @@ def _normalize_apex_integration(settings: Dict[str, Any]) -> Dict[str, Any]:
         settings["tank_ids"] = []
     return settings
 
-def get_apex_integrations(db: sqlite3.Connection) -> List[Dict[str, Any]]:
+def get_apex_integrations(db: Connection) -> List[Dict[str, Any]]:
     raw = get_setting(db, APEX_SETTINGS_KEY)
     if not raw:
         return [_normalize_apex_integration({})]
@@ -1141,7 +1145,7 @@ def get_apex_integrations(db: sqlite3.Connection) -> List[Dict[str, Any]]:
         normalized.append(_normalize_apex_integration(entry))
     return normalized or [_normalize_apex_integration({})]
 
-def get_apex_settings(db: sqlite3.Connection, integration_id: Optional[str] = None) -> Dict[str, Any]:
+def get_apex_settings(db: Connection, integration_id: Optional[str] = None) -> Dict[str, Any]:
     integrations = get_apex_integrations(db)
     if integration_id:
         for integration in integrations:
@@ -1149,7 +1153,7 @@ def get_apex_settings(db: sqlite3.Connection, integration_id: Optional[str] = No
                 return integration
     return integrations[0]
 
-def save_apex_settings(db: sqlite3.Connection, integration_id: str, settings: Dict[str, Any]) -> None:
+def save_apex_settings(db: Connection, integration_id: str, settings: Dict[str, Any]) -> None:
     integrations = get_apex_integrations(db)
     updated = False
     for idx, integration in enumerate(integrations):
@@ -1204,7 +1208,7 @@ def clean_apex_host(host: str) -> str:
 def normalize_probe_label(label: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(label).lower())
 
-def infer_apex_auto_mapping(probes: List[str], parameters: List[sqlite3.Row]) -> Dict[str, str]:
+def infer_apex_auto_mapping(probes: List[str], parameters: List[Dict[str, Any]]) -> Dict[str, str]:
     param_by_key = {
         normalize_probe_label(row_get(p, "name")): row_get(p, "name")
         for p in parameters
@@ -1294,7 +1298,7 @@ def is_trace_element(name: str) -> bool:
         return False
     return normalize_probe_label(name) in TRACE_ELEMENT_NAMES
 
-def filter_trace_parameters(parameters: List[sqlite3.Row]) -> List[sqlite3.Row]:
+def filter_trace_parameters(parameters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [p for p in parameters if not is_trace_element(row_get(p, "name"))]
 
 ICP_ELEMENT_ALIASES = {
@@ -1802,7 +1806,7 @@ def normalize_icp_name(name: str) -> str:
     return ICP_ELEMENT_ALIASES.get(stripped_normalized or normalized, stripped_normalized or normalized)
 
 def map_icp_to_parameters(
-    db: sqlite3.Connection,
+    db: Connection,
     results: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     params = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY name")
@@ -1829,7 +1833,7 @@ def map_icp_to_parameters(
     return mapped
 
 def insert_icp_recommendations(
-    db: sqlite3.Connection,
+    db: Connection,
     sample_id: int,
     recommendations: Dict[str, List[Dict[str, Any]]],
 ) -> None:
@@ -1914,7 +1918,7 @@ def parse_icp_dose_schedule(notes: str) -> Dict[str, Any]:
     return {"days": days, "doses": doses, "total": total, "unit": unit}
 
 def get_recent_param_values(
-    db: sqlite3.Connection,
+    db: Connection,
     tank_id: int,
     param_names: List[str],
     limit: int = 6,
@@ -1978,7 +1982,7 @@ def get_recent_param_values(
             series[name] = series_values
     return series
 
-def get_overdue_tests(db: sqlite3.Connection, tank_id: int) -> List[Dict[str, Any]]:
+def get_overdue_tests(db: Connection, tank_id: int) -> List[Dict[str, Any]]:
     now = datetime.now()
     overdue: List[Dict[str, Any]] = []
     pdefs = get_active_param_defs(db)
@@ -2009,32 +2013,100 @@ def get_overdue_tests(db: sqlite3.Connection, tank_id: int) -> List[Dict[str, An
             continue
     return overdue
 
-def users_exist(db: sqlite3.Connection) -> bool:
+def users_exist(db: Connection) -> bool:
     row = one(db, "SELECT COUNT(*) AS count FROM users")
     return bool(row and row["count"] > 0)
 
-def execute_with_retry(cur: sqlite3.Cursor, sql: str, params: Tuple[Any, ...] = (), attempts: int = 5) -> None:
+def _prepare_sql(sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None) -> Tuple[str, Dict[str, Any]]:
+    if params is None:
+        return sql, {}
+    if isinstance(params, dict):
+        return sql, params
+    params_list = list(params)
+    prepared_sql = sql
+    bound_params: Dict[str, Any] = {}
+    for idx, value in enumerate(params_list):
+        key = f"p{idx}"
+        prepared_sql = prepared_sql.replace("?", f":{key}", 1)
+        bound_params[key] = value
+    return prepared_sql, bound_params
+
+class DBConnection:
+    def __init__(self, conn: Connection) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
+        if isinstance(sql, TextClause):
+            return self._conn.execute(sql, params or {})
+        prepared_sql, bound = _prepare_sql(sql, params)
+        return self._conn.execute(text(prepared_sql), bound)
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def executemany(self, sql: str, seq_of_params: List[Tuple[Any, ...]]) -> None:
+        for params in seq_of_params:
+            self.execute(sql, params)
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+class CursorProxy:
+    def __init__(self, db: DBConnection) -> None:
+        self.db = db
+        self.lastrowid: Optional[int] = None
+
+    def execute(self, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
+        result = self.db.execute(sql, params)
+        if result.lastrowid is not None:
+            self.lastrowid = result.lastrowid
+        return result
+
+    def executemany(self, sql: str, seq_of_params: List[Tuple[Any, ...]]):
+        for params in seq_of_params:
+            self.execute(sql, params)
+
+def cursor(db: DBConnection) -> CursorProxy:
+    return CursorProxy(db)
+
+def execute_with_retry(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None, attempts: int = 5) -> None:
     for idx in range(attempts):
         try:
-            cur.execute(sql, params)
+            db.execute(sql, params)
             return
-        except sqlite3.OperationalError as exc:
+        except OperationalError as exc:
             if "locked" not in str(exc).lower() or idx == attempts - 1:
                 raise
             time_module.sleep(0.2 * (idx + 1))
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+def execute_insert_returning_id(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> Optional[int]:
+    if engine.dialect.name == "postgresql":
+        result = db.execute(f"{sql} RETURNING id", params)
+        row = result.mappings().first()
+        return row["id"] if row else None
+    result = db.execute(sql, params)
+    return result.lastrowid
 
-def q(db: sqlite3.Connection, sql: str, params: Tuple[Any, ...] = ()) -> List[sqlite3.Row]:
-    return db.execute(sql, params).fetchall()
+def get_db() -> DBConnection:
+    conn = engine.connect()
+    if engine.dialect.name == "sqlite":
+        conn.execute(text("PRAGMA journal_mode=WAL"))
+        conn.execute(text("PRAGMA busy_timeout=30000"))
+    return DBConnection(conn)
 
-def one(db: sqlite3.Connection, sql: str, params: Tuple[Any, ...] = ()) -> Optional[sqlite3.Row]:
-    return db.execute(sql, params).fetchone()
+def q(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    result = db.execute(sql, params)
+    return list(result.mappings().all())
+
+def one(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
+    result = db.execute(sql, params)
+    return result.mappings().first()
 
 def row_get(row: Any, key: str, default: Any = None) -> Any:
     try:
@@ -2044,17 +2116,18 @@ def row_get(row: Any, key: str, default: Any = None) -> Any:
     except Exception: pass
     return default
 
-def table_exists(db: sqlite3.Connection, name: str) -> bool:
-    r = one(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
-    return r is not None
+def table_exists(db: DBConnection, name: str) -> bool:
+    inspector = inspect(db._conn)
+    return inspector.has_table(name)
 
-def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, details: Any = "") -> None:
+def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, details: Any = "") -> None:
     if not user:
         return
     if isinstance(details, (dict, list)):
         details = json.dumps(details, default=str)
     try:
-        db.execute(
+        execute_with_retry(
+            db,
             "INSERT INTO audit_logs (actor_user_id, action, details, created_at) VALUES (?, ?, ?, ?)",
             (user["id"], action, details, datetime.utcnow().isoformat()),
         )
@@ -2062,11 +2135,11 @@ def log_audit(db: sqlite3.Connection, user: Optional[sqlite3.Row], action: str, 
     except Exception:
         pass
 
-def ensure_column(db: sqlite3.Connection, table: str, col: str, ddl: str) -> None:
-    cur = db.execute(f"PRAGMA table_info({table})")
-    cols = [r[1] for r in cur.fetchall()]
+def ensure_column(db: DBConnection, table: str, col: str, ddl: str) -> None:
+    inspector = inspect(db._conn)
+    cols = {column["name"] for column in inspector.get_columns(table)}
     if col not in cols:
-        db.execute(ddl)
+        db.execute(text(ddl))
 
 
 def to_float(v: Any) -> Optional[float]:
@@ -2096,7 +2169,7 @@ def compute_target(tlow: Any, thigh: Any) -> Any:
         return (fl + fh) / 2.0
     except Exception: return thigh if thigh is not None else tlow
 
-def list_parameters(db: sqlite3.Connection) -> List[sqlite3.Row]:
+def list_parameters(db: Connection) -> List[Dict[str, Any]]:
     if table_exists(db, "parameter_defs"):
         return q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     if table_exists(db, "parameters"):
@@ -2104,7 +2177,7 @@ def list_parameters(db: sqlite3.Connection) -> List[sqlite3.Row]:
         return [{"id": slug_key(r["name"]), "name": r["name"], "unit": r["unit"]} for r in rows]
     return []
 
-def get_active_param_defs(db: sqlite3.Connection) -> List[sqlite3.Row]:
+def get_active_param_defs(db: Connection) -> List[Dict[str, Any]]:
     return list_parameters(db)
 
 def parse_dt_any(v):
@@ -2232,11 +2305,11 @@ def preview_apex_mapping(settings: Dict[str, Any], mapping_raw: Dict[str, str]) 
         raise ValueError("No Apex probes matched the mapping.")
     return preview
 
-def values_mode(db: sqlite3.Connection) -> str:
+def values_mode(db: Connection) -> str:
     try:
-        cur = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('sample_values','parameter_defs')")
-        names = {r[0] for r in cur.fetchall()}
-        if 'sample_values' in names and 'parameter_defs' in names: return "sample_values"
+        inspector = inspect(db._conn)
+        if inspector.has_table("sample_values") and inspector.has_table("parameter_defs"):
+            return "sample_values"
     except Exception: pass
     return "parameters"
 
@@ -2248,7 +2321,7 @@ def format_value(p: Any, v: Any) -> str:
     if "." in s: s = s.rstrip("0").rstrip(".")
     return s
 
-def get_sample_readings(db: sqlite3.Connection, sample_id: int) -> List[sqlite3.Row]:
+def get_sample_readings(db: Connection, sample_id: int) -> List[Dict[str, Any]]:
     mode = values_mode(db)
     if mode == "sample_values":
         return q(db, """
@@ -2277,25 +2350,40 @@ def get_sample_readings(db: sqlite3.Connection, sample_id: int) -> List[sqlite3.
         ORDER BY COALESCE(pd.sort_order, 0), p.name
     """, (sample_id,))
 
-def insert_sample_reading(db: sqlite3.Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
-    cur = db.cursor()
+def insert_sample_reading(db: Connection, sample_id: int, pname: str, value: float, unit: str = "", test_kit_id: int | None = None) -> None:
     mode = values_mode(db)
     if mode == "sample_values":
         pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
         if not pd:
-            cur.execute("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, 0)", (pname, unit or None))
-            pid = cur.lastrowid
-        else: pid = pd["id"]
-        cur.execute("INSERT INTO sample_values (sample_id, parameter_id, value) VALUES (?, ?, ?)", (sample_id, pid, value))
+            execute_with_retry(
+                db,
+                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, 0)",
+                (pname, unit or None),
+            )
+            pd = one(db, "SELECT id FROM parameter_defs WHERE name=?", (pname,))
+        pid = pd["id"] if pd else None
+        if pid is None:
+            return
+        execute_with_retry(
+            db,
+            "INSERT INTO sample_values (sample_id, parameter_id, value) VALUES (?, ?, ?)",
+            (sample_id, pid, value),
+        )
         if test_kit_id:
-            cur.execute(
-                "INSERT OR REPLACE INTO sample_value_kits (sample_id, parameter_id, test_kit_id) VALUES (?, ?, ?)",
+            execute_with_retry(
+                db,
+                "INSERT INTO sample_value_kits (sample_id, parameter_id, test_kit_id) VALUES (?, ?, ?) "
+                "ON CONFLICT (sample_id, parameter_id) DO UPDATE SET test_kit_id=excluded.test_kit_id",
                 (sample_id, pid, test_kit_id),
             )
     else:
-        cur.execute("INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)", (sample_id, pname, value, unit or None, test_kit_id))
+        execute_with_retry(
+            db,
+            "INSERT INTO parameters (sample_id, name, value, unit, test_kit_id) VALUES (?, ?, ?, ?, ?)",
+            (sample_id, pname, value, unit or None, test_kit_id),
+        )
 
-def get_latest_sample_values(db: sqlite3.Connection, tank_id: int, param_names: List[str]) -> Dict[str, float]:
+def get_latest_sample_values(db: Connection, tank_id: int, param_names: List[str]) -> Dict[str, float]:
     if not param_names:
         return {}
     mode = values_mode(db)
@@ -2339,7 +2427,7 @@ def get_latest_sample_values(db: sqlite3.Connection, tank_id: int, param_names: 
     return latest_values
 
 def should_import_apex_sample(
-    db: sqlite3.Connection,
+    db: Connection,
     tank_id: int,
     mapped: List[Tuple[str, Dict[str, Any]]],
 ) -> Tuple[bool, str]:
@@ -2365,7 +2453,7 @@ def should_import_apex_sample(
             return True, ""
     return False, "Alkalinity, Calcium, and Magnesium unchanged from last sample."
 
-def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: Optional[sqlite3.Row]) -> Dict[str, Any]:
+def import_apex_sample(db: Connection, settings: Dict[str, Any], user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not settings.get("host"):
         raise ValueError("Apex host is required.")
     readings = fetch_apex_readings(settings)
@@ -2373,10 +2461,10 @@ def import_apex_sample(db: sqlite3.Connection, settings: Dict[str, Any], user: O
     return import_apex_sample_from_mapped(db, settings, mapped, user)
 
 def import_apex_sample_from_mapped(
-    db: sqlite3.Connection,
+    db: Connection,
     settings: Dict[str, Any],
     mapped: List[Tuple[str, Dict[str, Any]]],
-    user: Optional[sqlite3.Row],
+    user: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     tank_ids = []
     if settings.get("tank_ids"):
@@ -2404,9 +2492,13 @@ def import_apex_sample_from_mapped(
         if not should_import:
             results.append({"tank_id": tank["id"], "skipped": True, "reason": reason})
             continue
-        cur = db.cursor()
-        cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank["id"], when_iso, "Imported from Apex"))
-        sample_id = cur.lastrowid
+        sample_id = execute_insert_returning_id(
+            db,
+            "INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)",
+            (tank["id"], when_iso, "Imported from Apex"),
+        )
+        if sample_id is None:
+            continue
         for param_name, reading in mapped:
             value = reading.get("value")
             if value is None:
@@ -2440,7 +2532,7 @@ def start_apex_polling() -> None:
     thread = threading.Thread(target=apex_polling_loop, name="apex-poller", daemon=True)
     thread.start()
 
-def get_sample_kits(db: sqlite3.Connection, sample_id: int) -> Dict[str, int]:
+def get_sample_kits(db: Connection, sample_id: int) -> Dict[str, int]:
     mode = values_mode(db)
     if mode == "sample_values":
         rows = q(db, """
@@ -2568,7 +2660,7 @@ def compute_conversion_value(remaining: float, table: List[Dict[str, float]]) ->
             return low["value"] + ratio * (high["value"] - low["value"])
     return None
 
-def get_test_kit_conversion(db: sqlite3.Connection, kit_id: int | None) -> Tuple[Optional[str], Optional[str]]:
+def get_test_kit_conversion(db: Connection, kit_id: int | None) -> Tuple[Optional[str], Optional[str]]:
     if not kit_id:
         return None, None
     kit = one(db, "SELECT conversion_type, conversion_data FROM test_kits WHERE id=?", (kit_id,))
@@ -2577,7 +2669,7 @@ def get_test_kit_conversion(db: sqlite3.Connection, kit_id: int | None) -> Tuple
     return kit["conversion_type"], kit["conversion_data"]
 
 # --- NEW HELPER: Get the Latest Reading per Parameter ---
-def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
+def get_latest_per_parameter(db: Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
     """
     Returns a dictionary of the absolute most recent reading for each parameter.
     Format: {'Alkalinity': {'value': 8.5, 'taken_at': datetime(...)}, ...}
@@ -2614,7 +2706,7 @@ def get_latest_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, 
     
     return latest_map
 
-def get_latest_and_previous_per_parameter(db: sqlite3.Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
+def get_latest_and_previous_per_parameter(db: Connection, tank_id: int) -> Dict[str, Dict[str, Any]]:
     latest_map: Dict[str, Dict[str, Any]] = {}
     mode = values_mode(db)
     if mode == "sample_values":
@@ -2649,328 +2741,93 @@ def get_latest_and_previous_per_parameter(db: sqlite3.Connection, tank_id: int) 
             }
     return latest_map
 
-# --- DATABASE MODELS ---
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship
-from database import Base
-
-class DictMixin:
-    def __getitem__(self, key):
-        return getattr(self, key)
-    def get(self, key, default=None):
-        return getattr(self, key, default)
-
-class Tank(Base, DictMixin):
-    __tablename__ = "tanks"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    volume_l = Column(Float, nullable=True)
-
-    profile = relationship("TankProfile", uselist=False, back_populates="tank", cascade="all, delete-orphan")
-    samples = relationship("Sample", back_populates="tank", order_by="desc(Sample.taken_at)", cascade="all, delete-orphan")
-    targets = relationship("Target", back_populates="tank", cascade="all, delete-orphan")
-    dose_logs = relationship("DoseLog", back_populates="tank", cascade="all, delete-orphan")
-
-class TankProfile(Base, DictMixin):
-    __tablename__ = "tank_profiles"
-    tank_id = Column(Integer, ForeignKey("tanks.id"), primary_key=True)
-    volume_l = Column(Float)
-    net_percent = Column(Float, default=100)
-    tank = relationship("Tank", back_populates="profile")
-
-class ParameterDef(Base, DictMixin):
-    __tablename__ = "parameter_defs"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
-    unit = Column(String, nullable=True)
-    active = Column(Integer, default=1)
-    sort_order = Column(Integer, default=0)
-    max_daily_change = Column(Float, nullable=True)
-    default_target_low = Column(Float, nullable=True)
-    default_target_high = Column(Float, nullable=True)
-    default_alert_low = Column(Float, nullable=True)
-    default_alert_high = Column(Float, nullable=True)
-
-class Sample(Base, DictMixin):
-    __tablename__ = "samples"
-    id = Column(Integer, primary_key=True, index=True)
-    tank_id = Column(Integer, ForeignKey("tanks.id"), nullable=False)
-    taken_at = Column(String, nullable=False)
-    notes = Column(String, nullable=True)
-
-    tank = relationship("Tank", back_populates="samples")
-    values = relationship("SampleValue", back_populates="sample", cascade="all, delete-orphan")
-
-    @property
-    def values_dict(self):
-        return {v.parameter_id: v.value for v in self.values}
-
-class SampleValue(Base, DictMixin):
-    __tablename__ = "sample_values"
-    sample_id = Column(Integer, ForeignKey("samples.id"), primary_key=True)
-    parameter_id = Column(Integer, ForeignKey("parameter_defs.id"), primary_key=True)
-    value = Column(Float)
-
-    sample = relationship("Sample", back_populates="values")
-    parameter_def = relationship("ParameterDef")
-
-class Target(Base, DictMixin):
-    __tablename__ = "targets"
-    id = Column(Integer, primary_key=True)
-    tank_id = Column(Integer, ForeignKey("tanks.id"), nullable=False)
-    parameter = Column(String, nullable=False)
-    target_low = Column(Float)
-    target_high = Column(Float)
-    alert_low = Column(Float)
-    alert_high = Column(Float)
-    unit = Column(String)
-    enabled = Column(Integer, default=1)
-    tank = relationship("Tank", back_populates="targets")
-
-class TestKit(Base, DictMixin):
-    __tablename__ = "test_kits"
-    id = Column(Integer, primary_key=True)
-    parameter = Column(String) 
-    name = Column(String)
-    unit = Column(String)
-    resolution = Column(Float)
-    manufacturer_accuracy = Column(Float)
-    min_value = Column(Float)
-    max_value = Column(Float)
-    notes = Column(String)
-    workflow_data = Column(String)
-    active = Column(Integer, default=1)
-
-class Additive(Base, DictMixin):
-    __tablename__ = "additives"
-    id = Column(Integer, primary_key=True)
-    name = Column(String)
-    parameter = Column(String)
-    strength = Column(Float)
-    unit = Column(String)
-    max_daily = Column(Float)
-    notes = Column(String)
-    active = Column(Integer, default=1)
-
-class DoseLog(Base, DictMixin):
-    __tablename__ = "dose_logs"
-    id = Column(Integer, primary_key=True)
-    tank_id = Column(Integer, ForeignKey("tanks.id"))
-    additive_id = Column(Integer, ForeignKey("additives.id"), nullable=True)
-    amount_ml = Column(Float)
-    reason = Column(String)
-    logged_at = Column(String)
-    tank = relationship("Tank", back_populates="dose_logs")
-    additive = relationship("Additive")
-
-class DosePlanCheck(Base, DictMixin):
-    __tablename__ = "dose_plan_checks"
-    id = Column(Integer, primary_key=True)
-    tank_id = Column(Integer, ForeignKey("tanks.id"))
-    parameter = Column(String)
-    additive_id = Column(Integer)
-    planned_date = Column(String)
-    checked = Column(Integer, default=0)
-    checked_at = Column(String)
-    __table_args__ = (UniqueConstraint('tank_id', 'parameter', 'additive_id', 'planned_date', name='_tank_param_add_date_uc'),)
-
 def init_db() -> None:
     db = get_db()
-    cur = db.cursor()
-    cur.executescript('''
-        PRAGMA foreign_keys = ON;
-        CREATE TABLE IF NOT EXISTS tanks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, username TEXT, role TEXT, password_hash TEXT, password_salt TEXT, google_sub TEXT, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, session_token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS user_tanks (user_id INTEGER NOT NULL, tank_id INTEGER NOT NULL, PRIMARY KEY (user_id, tank_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS tank_profiles (tank_id INTEGER PRIMARY KEY, volume_l REAL, net_percent REAL DEFAULT 100, alk_solution TEXT, alk_daily_ml REAL, ca_solution TEXT, ca_daily_ml REAL, mg_solution TEXT, mg_daily_ml REAL, dosing_mode TEXT, all_in_one_solution TEXT, all_in_one_daily_ml REAL, nitrate_solution TEXT, nitrate_daily_ml REAL, phosphate_solution TEXT, phosphate_daily_ml REAL, trace_solution TEXT, trace_daily_ml REAL, nopox_daily_ml REAL, calcium_reactor_daily_ml REAL, calcium_reactor_effluent_dkh REAL, kalk_solution TEXT, kalk_daily_ml REAL, use_all_in_one INTEGER, use_alk INTEGER, use_ca INTEGER, use_mg INTEGER, use_nitrate INTEGER, use_phosphate INTEGER, use_trace INTEGER, use_nopox INTEGER, use_calcium_reactor INTEGER, use_kalkwasser INTEGER, all_in_one_container_ml REAL, all_in_one_remaining_ml REAL, alk_container_ml REAL, alk_remaining_ml REAL, ca_container_ml REAL, ca_remaining_ml REAL, mg_container_ml REAL, mg_remaining_ml REAL, nitrate_container_ml REAL, nitrate_remaining_ml REAL, phosphate_container_ml REAL, phosphate_remaining_ml REAL, trace_container_ml REAL, trace_remaining_ml REAL, nopox_container_ml REAL, nopox_remaining_ml REAL, kalk_container_ml REAL, kalk_remaining_ml REAL, dosing_container_updated_at TEXT, dosing_low_days REAL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS samples (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, taken_at TEXT NOT NULL, notes TEXT, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS parameter_defs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, chemical_symbol TEXT, unit TEXT, active INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, max_daily_change REAL);
-        CREATE TABLE IF NOT EXISTS parameters (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, name TEXT NOT NULL, value REAL, unit TEXT, test_kit_id INTEGER, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, low REAL, high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS test_kits (id INTEGER PRIMARY KEY AUTOINCREMENT, parameter TEXT NOT NULL, name TEXT NOT NULL, unit TEXT, resolution REAL, manufacturer_accuracy REAL, min_value REAL, max_value REAL, notes TEXT, workflow_data TEXT, active INTEGER DEFAULT 1);
-        CREATE TABLE IF NOT EXISTS additives (id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT, name TEXT NOT NULL, parameter TEXT NOT NULL, strength REAL NOT NULL, unit TEXT NOT NULL, max_daily REAL, notes TEXT, active INTEGER DEFAULT 1);
-        CREATE TABLE IF NOT EXISTS dose_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, additive_id INTEGER, amount_ml REAL NOT NULL, reason TEXT, logged_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS dosing_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, solution TEXT, daily_ml REAL, container_ml REAL, remaining_ml REAL, active INTEGER DEFAULT 1, created_at TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS dose_plan_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, additive_id INTEGER NOT NULL, planned_date TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(tank_id, parameter, additive_id, planned_date), FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS sample_value_kits (sample_id INTEGER NOT NULL, parameter_id INTEGER NOT NULL, test_kit_id INTEGER NOT NULL, PRIMARY KEY (sample_id, parameter_id), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS dosing_notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, container_key TEXT NOT NULL, notified_on TEXT NOT NULL, FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL, FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT, label TEXT, created_at TEXT NOT NULL, last_used_at TEXT, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(user_id, endpoint), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT);
-        CREATE TABLE IF NOT EXISTS icp_recommendations (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, category TEXT NOT NULL, label TEXT, value REAL, unit TEXT, notes TEXT, severity TEXT, FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS icp_dose_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, sample_id INTEGER NOT NULL, label TEXT NOT NULL, checked INTEGER DEFAULT 0, checked_at TEXT, UNIQUE(sample_id, label), FOREIGN KEY (sample_id) REFERENCES samples(id) ON DELETE CASCADE);
-    ''')
-    ensure_column(db, "tanks", "volume_l", "ALTER TABLE tanks ADD COLUMN volume_l REAL")
-    ensure_column(db, "tanks", "sort_order", "ALTER TABLE tanks ADD COLUMN sort_order INTEGER")
-    ensure_column(db, "tanks", "owner_user_id", "ALTER TABLE tanks ADD COLUMN owner_user_id INTEGER")
-    ensure_column(db, "users", "username", "ALTER TABLE users ADD COLUMN username TEXT")
-    ensure_column(db, "users", "role", "ALTER TABLE users ADD COLUMN role TEXT")
-    ensure_column(db, "sessions", "session_token", "ALTER TABLE sessions ADD COLUMN session_token TEXT")
-    ensure_column(db, "sessions", "user_id", "ALTER TABLE sessions ADD COLUMN user_id INTEGER")
-    ensure_column(db, "sessions", "created_at", "ALTER TABLE sessions ADD COLUMN created_at TEXT")
-    ensure_column(db, "sessions", "expires_at", "ALTER TABLE sessions ADD COLUMN expires_at TEXT")
-    ensure_column(db, "users", "password_salt", "ALTER TABLE users ADD COLUMN password_salt TEXT")
-    ensure_column(db, "users", "google_sub", "ALTER TABLE users ADD COLUMN google_sub TEXT")
-    ensure_column(db, "users", "admin", "ALTER TABLE users ADD COLUMN admin INTEGER DEFAULT 0")
-    ensure_column(db, "parameter_defs", "max_daily_change", "ALTER TABLE parameter_defs ADD COLUMN max_daily_change REAL")
-    ensure_column(db, "parameter_defs", "chemical_symbol", "ALTER TABLE parameter_defs ADD COLUMN chemical_symbol TEXT")
-    ensure_column(db, "additives", "active", "ALTER TABLE additives ADD COLUMN active INTEGER DEFAULT 1")
-    ensure_column(db, "additives", "brand", "ALTER TABLE additives ADD COLUMN brand TEXT")
-    ensure_column(db, "additives", "group_name", "ALTER TABLE additives ADD COLUMN group_name TEXT")
-    ensure_column(db, "test_kits", "active", "ALTER TABLE test_kits ADD COLUMN active INTEGER DEFAULT 1")
-    ensure_column(db, "targets", "target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
-    ensure_column(db, "targets", "target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
-    ensure_column(db, "targets", "alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
-    ensure_column(db, "targets", "alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
-    ensure_column(db, "parameter_defs", "test_interval_days", "ALTER TABLE parameter_defs ADD COLUMN test_interval_days INTEGER")
-    ensure_column(db, "parameters", "test_kit_id", "ALTER TABLE parameters ADD COLUMN test_kit_id INTEGER")
-    ensure_column(db, "test_kits", "conversion_type", "ALTER TABLE test_kits ADD COLUMN conversion_type TEXT")
-    ensure_column(db, "test_kits", "conversion_data", "ALTER TABLE test_kits ADD COLUMN conversion_data TEXT")
-    ensure_column(db, "test_kits", "manufacturer_accuracy", "ALTER TABLE test_kits ADD COLUMN manufacturer_accuracy REAL")
-    ensure_column(db, "test_kits", "workflow_data", "ALTER TABLE test_kits ADD COLUMN workflow_data TEXT")
-    ensure_column(db, "dosing_notifications", "dismissed_at", "ALTER TABLE dosing_notifications ADD COLUMN dismissed_at TEXT")
+    try:
+        from database import Base
 
-    if table_exists(db, "user_tanks"):
-        db.execute(
-            "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) "
-            "SELECT owner_user_id, id FROM tanks WHERE owner_user_id IS NOT NULL"
-        )
-    
-    # NEW: Add default target columns
-    ensure_column(db, "parameter_defs", "default_target_low", "ALTER TABLE parameter_defs ADD COLUMN default_target_low REAL")
-    ensure_column(db, "parameter_defs", "default_target_high", "ALTER TABLE parameter_defs ADD COLUMN default_target_high REAL")
-    ensure_column(db, "parameter_defs", "default_alert_low", "ALTER TABLE parameter_defs ADD COLUMN default_alert_low REAL")
-    ensure_column(db, "parameter_defs", "default_alert_high", "ALTER TABLE parameter_defs ADD COLUMN default_alert_high REAL")
-    ensure_column(db, "tank_profiles", "alk_solution", "ALTER TABLE tank_profiles ADD COLUMN alk_solution TEXT")
-    ensure_column(db, "tank_profiles", "alk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "ca_solution", "ALTER TABLE tank_profiles ADD COLUMN ca_solution TEXT")
-    ensure_column(db, "tank_profiles", "ca_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "mg_solution", "ALTER TABLE tank_profiles ADD COLUMN mg_solution TEXT")
-    ensure_column(db, "tank_profiles", "mg_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "dosing_mode", "ALTER TABLE tank_profiles ADD COLUMN dosing_mode TEXT")
-    ensure_column(db, "tank_profiles", "all_in_one_solution", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_solution TEXT")
-    ensure_column(db, "tank_profiles", "all_in_one_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "nitrate_solution", "ALTER TABLE tank_profiles ADD COLUMN nitrate_solution TEXT")
-    ensure_column(db, "tank_profiles", "nitrate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "phosphate_solution", "ALTER TABLE tank_profiles ADD COLUMN phosphate_solution TEXT")
-    ensure_column(db, "tank_profiles", "phosphate_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "trace_solution", "ALTER TABLE tank_profiles ADD COLUMN trace_solution TEXT")
-    ensure_column(db, "tank_profiles", "trace_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "nopox_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "calcium_reactor_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN calcium_reactor_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "calcium_reactor_effluent_dkh", "ALTER TABLE tank_profiles ADD COLUMN calcium_reactor_effluent_dkh REAL")
-    ensure_column(db, "tank_profiles", "kalk_solution", "ALTER TABLE tank_profiles ADD COLUMN kalk_solution TEXT")
-    ensure_column(db, "tank_profiles", "kalk_daily_ml", "ALTER TABLE tank_profiles ADD COLUMN kalk_daily_ml REAL")
-    ensure_column(db, "tank_profiles", "use_all_in_one", "ALTER TABLE tank_profiles ADD COLUMN use_all_in_one INTEGER")
-    ensure_column(db, "tank_profiles", "use_alk", "ALTER TABLE tank_profiles ADD COLUMN use_alk INTEGER")
-    ensure_column(db, "tank_profiles", "use_ca", "ALTER TABLE tank_profiles ADD COLUMN use_ca INTEGER")
-    ensure_column(db, "tank_profiles", "use_mg", "ALTER TABLE tank_profiles ADD COLUMN use_mg INTEGER")
-    ensure_column(db, "tank_profiles", "use_nitrate", "ALTER TABLE tank_profiles ADD COLUMN use_nitrate INTEGER")
-    ensure_column(db, "tank_profiles", "use_phosphate", "ALTER TABLE tank_profiles ADD COLUMN use_phosphate INTEGER")
-    ensure_column(db, "tank_profiles", "use_trace", "ALTER TABLE tank_profiles ADD COLUMN use_trace INTEGER")
-    ensure_column(db, "tank_profiles", "use_nopox", "ALTER TABLE tank_profiles ADD COLUMN use_nopox INTEGER")
-    ensure_column(db, "tank_profiles", "use_calcium_reactor", "ALTER TABLE tank_profiles ADD COLUMN use_calcium_reactor INTEGER")
-    ensure_column(db, "tank_profiles", "use_kalkwasser", "ALTER TABLE tank_profiles ADD COLUMN use_kalkwasser INTEGER")
-    ensure_column(db, "tank_profiles", "all_in_one_container_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_container_ml REAL")
-    ensure_column(db, "tank_profiles", "all_in_one_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN all_in_one_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "alk_container_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_container_ml REAL")
-    ensure_column(db, "tank_profiles", "alk_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN alk_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "ca_container_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_container_ml REAL")
-    ensure_column(db, "tank_profiles", "ca_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN ca_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "mg_container_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_container_ml REAL")
-    ensure_column(db, "tank_profiles", "mg_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN mg_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "nitrate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_container_ml REAL")
-    ensure_column(db, "tank_profiles", "nitrate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nitrate_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "phosphate_container_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_container_ml REAL")
-    ensure_column(db, "tank_profiles", "phosphate_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN phosphate_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "trace_container_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_container_ml REAL")
-    ensure_column(db, "tank_profiles", "trace_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN trace_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "nopox_container_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_container_ml REAL")
-    ensure_column(db, "tank_profiles", "nopox_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN nopox_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "kalk_container_ml", "ALTER TABLE tank_profiles ADD COLUMN kalk_container_ml REAL")
-    ensure_column(db, "tank_profiles", "kalk_remaining_ml", "ALTER TABLE tank_profiles ADD COLUMN kalk_remaining_ml REAL")
-    ensure_column(db, "tank_profiles", "dosing_container_updated_at", "ALTER TABLE tank_profiles ADD COLUMN dosing_container_updated_at TEXT")
-    ensure_column(db, "tank_profiles", "dosing_low_days", "ALTER TABLE tank_profiles ADD COLUMN dosing_low_days REAL")
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS tank_journal (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tank_id INTEGER NOT NULL,
-            entry_date TEXT NOT NULL,
-            entry_type TEXT,
-            title TEXT,
-            notes TEXT,
-            FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
-        );
-    ''')
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS tank_maintenance_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tank_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            interval_days INTEGER NOT NULL,
-            next_due_at TEXT NOT NULL,
-            last_completed_at TEXT,
-            notes TEXT,
-            active INTEGER DEFAULT 1,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (tank_id) REFERENCES tanks(id) ON DELETE CASCADE
-        );
-    ''')
+        Base.metadata.create_all(engine)
 
-    cur.execute("SELECT COUNT(1) FROM parameter_defs")
-    cnt = cur.fetchone()[0]
-    if cnt == 0:
-        defaults = [
-            ("Alkalinity/KH", "dKH", 1, 10),
-            ("Calcium", "ppm", 1, 20),
-            ("Magnesium", "ppm", 1, 30),
-            ("Phosphate", "ppm", 1, 40),
-            ("Nitrate", "ppm", 1, 50),
-            ("Salinity", "ppt", 1, 60),
-            ("Temperature", "°C", 1, 70),
-            ("Trace Elements", None, 1, 80),
-        ]
-        cur.executemany("INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)", defaults)
-    else:
-        cur.execute("SELECT id FROM parameter_defs WHERE name=?", ("Trace Elements",))
-        if cur.fetchone() is None:
-            cur.execute(
-                "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, ?)",
-                ("Trace Elements", None, 80),
+        if table_exists(db, "user_tanks"):
+            execute_with_retry(
+                db,
+                "INSERT INTO user_tanks (user_id, tank_id) "
+                "SELECT owner_user_id, id FROM tanks WHERE owner_user_id IS NOT NULL "
+                "ON CONFLICT (user_id, tank_id) DO NOTHING",
             )
-        
-    # MIGRATION: Populate defaults if they are null
-    for name, d in INITIAL_DEFAULTS.items():
-        cur.execute("""
-            UPDATE parameter_defs 
-            SET default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=? 
-            WHERE name=? AND default_target_low IS NULL
-        """, (d["default_target_low"], d["default_target_high"], d["default_alert_low"], d["default_alert_high"], name))
 
-    # Seed common additives if missing (strength = change per 1 mL / 100 L)
-    default_additives = [
-        ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend.", "All-in-one solutions"),
-        ("Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0, "Saturated kalkwasser solution.", "All-in-one solutions"),
-    ]
-    for name, parameter, strength, unit, max_daily, notes, group_name in default_additives:
-        cur.execute("SELECT id, active, group_name FROM additives WHERE name=? AND parameter=?", (name, parameter))
-        row = cur.fetchone()
-        if row is None:
-            cur.execute("""
-                INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, group_name, active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-            """, (name, parameter, strength, unit, max_daily, notes, group_name))
+        count_row = one(db, "SELECT COUNT(1) AS count FROM parameter_defs")
+        count = count_row["count"] if count_row else 0
+        if count == 0:
+            defaults = [
+                ("Alkalinity/KH", "dKH", 1, 10),
+                ("Calcium", "ppm", 1, 20),
+                ("Magnesium", "ppm", 1, 30),
+                ("Phosphate", "ppm", 1, 40),
+                ("Nitrate", "ppm", 1, 50),
+                ("Salinity", "ppt", 1, 60),
+                ("Temperature", "°C", 1, 70),
+                ("Trace Elements", None, 1, 80),
+            ]
+            for entry in defaults:
+                execute_with_retry(
+                    db,
+                    "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, ?, ?)",
+                    entry,
+                )
         else:
-            if row[1] == 0:
-                cur.execute("UPDATE additives SET active=1 WHERE id=?", (row[0],))
-            if not row[2]:
-                cur.execute("UPDATE additives SET group_name=? WHERE id=?", (group_name, row[0]))
-        
-    db.commit()
+            trace = one(db, "SELECT id FROM parameter_defs WHERE name=?", ("Trace Elements",))
+            if trace is None:
+                execute_with_retry(
+                    db,
+                    "INSERT INTO parameter_defs (name, unit, active, sort_order) VALUES (?, ?, 1, ?)",
+                    ("Trace Elements", None, 80),
+                )
 
-    db.close()
+        for name, d in INITIAL_DEFAULTS.items():
+            execute_with_retry(
+                db,
+                """
+                UPDATE parameter_defs
+                SET default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
+                WHERE name=? AND default_target_low IS NULL
+                """,
+                (
+                    d["default_target_low"],
+                    d["default_target_high"],
+                    d["default_alert_low"],
+                    d["default_alert_high"],
+                    name,
+                ),
+            )
+
+        default_additives = [
+            ("All For Reef", "Alkalinity/KH", 0.05, "dKH", 1.0, "All-in-one alkalinity blend.", "All-in-one solutions"),
+            ("Kalkwasser (Saturated)", "Alkalinity/KH", 0.00112, "dKH", 1.0, "Saturated kalkwasser solution.", "All-in-one solutions"),
+        ]
+        for name, parameter, strength, unit, max_daily, notes, group_name in default_additives:
+            row = one(db, "SELECT id, active, group_name FROM additives WHERE name=? AND parameter=?", (name, parameter))
+            if row is None:
+                execute_with_retry(
+                    db,
+                    """
+                    INSERT INTO additives (name, parameter, strength, unit, max_daily, notes, group_name, active)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    (name, parameter, strength, unit, max_daily, notes, group_name),
+                )
+            else:
+                if row.get("active") == 0:
+                    execute_with_retry(db, "UPDATE additives SET active=1 WHERE id=?", (row["id"],))
+                if not row.get("group_name"):
+                    execute_with_retry(
+                        db,
+                        "UPDATE additives SET group_name=? WHERE id=?",
+                        (group_name, row["id"]),
+                    )
+        db.commit()
+    finally:
+        db.close()
 
 init_db()
 
@@ -3554,12 +3411,11 @@ async def tank_order_save(request: Request):
     db = get_db()
     user = get_current_user(db, request)
     allowed_ids = set(get_visible_tank_ids(db, user))
-    cur = db.cursor()
     for idx, tank_id in enumerate(order, start=1):
         tank_id = int(tank_id)
         if allowed_ids and tank_id not in allowed_ids:
             continue
-        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (idx, tank_id))
+        execute_with_retry(db, "UPDATE tanks SET sort_order=? WHERE id=?", (idx, tank_id))
     db.commit()
     db.close()
     return {"ok": True}
@@ -3624,7 +3480,6 @@ async def multi_add_save(request: Request):
             when_iso = datetime.utcnow().isoformat()
     else:
         when_iso = datetime.utcnow().isoformat()
-    cur = db.cursor()
     saved_ids = []
     for tank_id in sorted(allowed_ids):
         value = to_float(form.get(f"value_{tank_id}"))
@@ -3633,11 +3488,13 @@ async def multi_add_save(request: Request):
             value = compute_conversion_value(float(remaining), conversion_table)
         if value is None:
             continue
-        cur.execute(
+        sample_id = execute_insert_returning_id(
+            db,
             "INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)",
             (tank_id, when_iso, notes),
         )
-        sample_id = cur.lastrowid
+        if sample_id is None:
+            continue
         insert_sample_reading(
             db,
             sample_id,
@@ -3660,7 +3517,7 @@ def tank_new_form(request: Request):
     db = get_db()
     params = list_parameters(db)
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
-    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         parameter = (a["parameter"] or "other").strip().lower()
         if "alk" in parameter or "kh" in parameter:
@@ -3700,17 +3557,21 @@ async def tank_new(request: Request):
     dosing_mode = (form.get("dosing_mode") or "").strip() or None
     db = get_db()
     user = get_current_user(db, request)
-    cur = db.cursor()
     max_order = one(db, "SELECT MAX(sort_order) AS max_order FROM tanks")
     next_order = ((max_order["max_order"] or 0) if max_order else 0) + 1
-    cur.execute(
+    tank_id = execute_insert_returning_id(
+        db,
         "INSERT INTO tanks (name, volume_l, sort_order, owner_user_id) VALUES (?, ?, ?, ?)",
         (name, volume_l, next_order, user["id"] if user else None),
     )
-    tank_id = cur.lastrowid
+    if tank_id is None:
+        db.close()
+        raise HTTPException(status_code=500, detail="Failed to create tank")
     if user:
-        cur.execute(
-            "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
+        execute_with_retry(
+            db,
+            "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) "
+            "ON CONFLICT (user_id, tank_id) DO NOTHING",
             (user["id"], tank_id),
         )
     profile_fields = {
@@ -3764,12 +3625,14 @@ async def tank_new(request: Request):
     }
     columns = ", ".join(profile_fields.keys())
     placeholders = ", ".join(["?"] * len(profile_fields))
-    cur.execute(
-        f"INSERT OR IGNORE INTO tank_profiles ({columns}) VALUES ({placeholders})",
+    execute_with_retry(
+        db,
+        f"INSERT INTO tank_profiles ({columns}) VALUES ({placeholders}) ON CONFLICT (tank_id) DO NOTHING",
         tuple(profile_fields.values()),
     )
     if table_exists(db, "targets"):
-        cols = [row[1] for row in db.execute("PRAGMA table_info(targets)").fetchall()]
+        inspector = inspect(db._conn)
+        cols = {column["name"] for column in inspector.get_columns("targets")}
         has_target_cols = "target_low" in cols
         params = list_parameters(db)
         for p in params:
@@ -3801,7 +3664,6 @@ async def tank_order(request: Request, tank_id: int):
     form = await request.form()
     direction = (form.get("direction") or "").strip().lower()
     db = get_db()
-    cur = db.cursor()
     tanks = q(db, "SELECT id, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
     if not tanks:
         db.close()
@@ -3809,7 +3671,7 @@ async def tank_order(request: Request, tank_id: int):
     missing = any(t["sort_order"] is None for t in tanks)
     if missing:
         for idx, t in enumerate(tanks):
-            execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (idx + 1, t["id"]))
+            execute_with_retry(db, "UPDATE tanks SET sort_order=? WHERE id=?", (idx + 1, t["id"]))
         tanks = q(db, "SELECT id, sort_order FROM tanks ORDER BY COALESCE(sort_order, 0), name")
     index_by_id = {t["id"]: idx for idx, t in enumerate(tanks)}
     current_index = index_by_id.get(tank_id)
@@ -3824,8 +3686,8 @@ async def tank_order(request: Request, tank_id: int):
     if swap_index is not None:
         current = tanks[current_index]
         swap = tanks[swap_index]
-        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (swap["sort_order"], current["id"]))
-        execute_with_retry(cur, "UPDATE tanks SET sort_order=? WHERE id=?", (current["sort_order"], swap["id"]))
+        execute_with_retry(db, "UPDATE tanks SET sort_order=? WHERE id=?", (swap["sort_order"], current["id"]))
+        execute_with_retry(db, "UPDATE tanks SET sort_order=? WHERE id=?", (current["sort_order"], swap["id"]))
         db.commit()
     db.close()
     return redirect("/")
@@ -4612,7 +4474,12 @@ def tank_profile(request: Request, tank_id: int):
     if not profile:
         try: vol = tank["volume_l"] if "volume_l" in tank.keys() else None
         except Exception: vol = None
-        db.execute("INSERT OR IGNORE INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, 100)", (tank_id, vol))
+        execute_with_retry(
+            db,
+            "INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, 100) "
+            "ON CONFLICT (tank_id) DO NOTHING",
+            (tank_id, vol),
+        )
         db.commit()
         profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     tank_view = dict(tank)
@@ -4663,7 +4530,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
-    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         parameter = (a["parameter"] or "other").strip().lower()
         if "alk" in parameter or "kh" in parameter:
@@ -4691,7 +4558,12 @@ def tank_dosing_settings(request: Request, tank_id: int):
     if not profile:
         try: vol = tank["volume_l"] if "volume_l" in tank.keys() else None
         except Exception: vol = None
-        db.execute("INSERT OR IGNORE INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, 100)", (tank_id, vol))
+        execute_with_retry(
+            db,
+            "INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, 100) "
+            "ON CONFLICT (tank_id) DO NOTHING",
+            (tank_id, vol),
+        )
         db.commit()
         profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
     tank_view = dict(tank)
@@ -5269,8 +5141,10 @@ async def tank_profile_save(request: Request, tank_id: int):
     ensure_column(db, "tank_profiles", "volume_l", "ALTER TABLE tank_profiles ADD COLUMN volume_l REAL")
     ensure_column(db, "tank_profiles", "net_percent", "ALTER TABLE tank_profiles ADD COLUMN net_percent REAL")
     db.execute("UPDATE tanks SET volume_l=? WHERE id=?", (volume_l, tank_id))
-    db.execute(
-        "INSERT OR IGNORE INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, ?)",
+    execute_with_retry(
+        db,
+        "INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?, ?, ?) "
+        "ON CONFLICT (tank_id) DO NOTHING",
         (tank_id, volume_l, float(net_percent)),
     )
     db.execute(
@@ -5448,8 +5322,11 @@ async def push_subscribe(request: Request):
         db.close()
         raise HTTPException(status_code=400, detail="Missing subscription endpoint")
     try:
-        db.execute(
-            "INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, subscription_json, created_at) VALUES (?, ?, ?, ?)",
+        execute_with_retry(
+            db,
+            "INSERT INTO push_subscriptions (user_id, endpoint, subscription_json, created_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (user_id, endpoint) DO UPDATE "
+            "SET subscription_json=excluded.subscription_json, created_at=excluded.created_at",
             (user["id"], endpoint, json.dumps(payload), datetime.utcnow().isoformat()),
         )
         db.commit()
@@ -5619,7 +5496,6 @@ async def add_sample(request: Request, tank_id: int):
     notes = (form.get("notes") or "").strip() or None
     taken_at = (form.get("taken_at") or "").strip()
     db = get_db()
-    cur = db.cursor()
     user = get_current_user(db, request)
     tank = get_tank_for_user(db, user, tank_id)
     if not tank:
@@ -5629,8 +5505,14 @@ async def add_sample(request: Request, tank_id: int):
         try: when_iso = datetime.fromisoformat(taken_at).isoformat()
         except ValueError: when_iso = datetime.utcnow().isoformat()
     else: when_iso = datetime.utcnow().isoformat()
-    cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank_id, when_iso, notes))
-    sample_id = cur.lastrowid
+    sample_id = execute_insert_returning_id(
+        db,
+        "INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)",
+        (tank_id, when_iso, notes),
+    )
+    if sample_id is None:
+        db.close()
+        raise HTTPException(status_code=500, detail="Failed to save sample")
     pdefs = filter_trace_parameters(get_active_param_defs(db))
     for p in pdefs:
         pid = p["id"]
@@ -5714,7 +5596,6 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     notes = (form.get("notes") or "").strip() or None
     taken_at = (form.get("taken_at") or "").strip()
     db = get_db()
-    cur = db.cursor()
     user = get_current_user(db, request)
     tank = get_tank_for_user(db, user, tank_id)
     if not tank:
@@ -5729,15 +5610,15 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
         try: when_iso = datetime.fromisoformat(taken_at).isoformat()
         except Exception: when_iso = None
     if not when_iso: when_iso = (parse_dt_any(sample["taken_at"]) or datetime.utcnow()).isoformat()
-    execute_with_retry(cur, "UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
+    execute_with_retry(db, "UPDATE samples SET taken_at=?, notes=? WHERE id=? AND tank_id=?", (when_iso, notes, sample_id, tank_id))
     mode = values_mode(db)
     if mode == "sample_values" and table_exists(db, "sample_values"):
-        execute_with_retry(cur, "DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+        execute_with_retry(db, "DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
         if table_exists(db, "sample_value_kits"):
-            execute_with_retry(cur, "DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
+            execute_with_retry(db, "DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
     else:
         if table_exists(db, "parameters"):
-            execute_with_retry(cur, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
+            execute_with_retry(db, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
     pdefs = get_active_param_defs(db)
     for p in pdefs:
         pid = p["id"]
@@ -5893,18 +5774,17 @@ async def tank_samples_dedupe(request: Request, tank_id: int):
 
     removed = 0
     if duplicates:
-        cur = db.cursor()
         mode = values_mode(db)
         for sample_id in duplicates:
-            execute_with_retry(cur, "DELETE FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
+            execute_with_retry(db, "DELETE FROM samples WHERE id=? AND tank_id=?", (sample_id, tank_id))
             if mode == "sample_values":
                 if table_exists(db, "sample_values"):
-                    execute_with_retry(cur, "DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
+                    execute_with_retry(db, "DELETE FROM sample_values WHERE sample_id=?", (sample_id,))
                 if table_exists(db, "sample_value_kits"):
-                    execute_with_retry(cur, "DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
+                    execute_with_retry(db, "DELETE FROM sample_value_kits WHERE sample_id=?", (sample_id,))
             else:
                 if table_exists(db, "parameters"):
-                    execute_with_retry(cur, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
+                    execute_with_retry(db, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
             removed += 1
         log_audit(db, user, "samples-dedupe", {"tank_id": tank_id, "removed": removed})
         db.commit()
@@ -5976,23 +5856,7 @@ def edit_targets(request: Request, tank_id: int):
 @app.post("/tanks/{tank_id}/targets")
 async def save_targets(request: Request, tank_id: int):
     db = get_db()
-    cur = db.cursor()
     form = await request.form()
-    cur.execute('CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY AUTOINCREMENT, tank_id INTEGER NOT NULL, parameter TEXT NOT NULL, target_low REAL, target_high REAL, alert_low REAL, alert_high REAL, unit TEXT, enabled INTEGER DEFAULT 1, UNIQUE(tank_id, parameter))')
-    db.commit()
-    cols = {r["name"] for r in q(db, "PRAGMA table_info(targets)")}
-    def add_col(name: str, ddl: str) -> None:
-        nonlocal cols
-        if name not in cols:
-            cur.execute(ddl)
-            db.commit()
-            cols = {r["name"] for r in q(db, "PRAGMA table_info(targets)")}
-    add_col("target_low", "ALTER TABLE targets ADD COLUMN target_low REAL")
-    add_col("target_high", "ALTER TABLE targets ADD COLUMN target_high REAL")
-    add_col("alert_low", "ALTER TABLE targets ADD COLUMN alert_low REAL")
-    add_col("alert_high", "ALTER TABLE targets ADD COLUMN alert_high REAL")
-    add_col("unit", "ALTER TABLE targets ADD COLUMN unit TEXT")
-    add_col("enabled", "ALTER TABLE targets ADD COLUMN enabled INTEGER DEFAULT 1")
     params = list_parameters(db)
     for p in params:
         name = p["name"]
@@ -6006,9 +5870,23 @@ async def save_targets(request: Request, tank_id: int):
         a_high = to_float(form.get(f"alert_high_{key}"))
         unit = (row_get(p, "unit") or "").strip()
         if (t_low is None and t_high is None and a_low is None and a_high is None) or enabled == 0:
-            cur.execute("UPDATE targets SET enabled=0 WHERE tank_id=? AND parameter=?", (tank_id, name))
+            execute_with_retry(db, "UPDATE targets SET enabled=0 WHERE tank_id=? AND parameter=?", (tank_id, name))
             continue
-        cur.execute('''INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tank_id, parameter) DO UPDATE SET target_low=excluded.target_low, target_high=excluded.target_high, alert_low=excluded.alert_low, alert_high=excluded.alert_high, unit=excluded.unit, enabled=excluded.enabled''', (tank_id, name, t_low, t_high, a_low, a_high, unit, enabled))
+        execute_with_retry(
+            db,
+            """
+            INSERT INTO targets (tank_id, parameter, target_low, target_high, alert_low, alert_high, unit, enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tank_id, parameter) DO UPDATE
+            SET target_low=excluded.target_low,
+                target_high=excluded.target_high,
+                alert_low=excluded.alert_low,
+                alert_high=excluded.alert_high,
+                unit=excluded.unit,
+                enabled=excluded.enabled
+            """,
+            (tank_id, name, t_low, t_high, a_low, a_high, unit, enabled),
+        )
     db.commit()
     db.close()
     return redirect(f"/tanks/{tank_id}/targets")
@@ -6056,7 +5934,7 @@ def parameter_save(
     default_alert_high: Optional[str] = Form(None)
 ):
     db = get_db()
-    cur = db.cursor()
+    cur = cursor(db)
     
     # 1. Prepare Data
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -6154,7 +6032,7 @@ def parameter_save(
 
         db.commit()
         
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         print("Database Integrity Error ignored.")
         db.rollback()
         
@@ -6183,7 +6061,7 @@ async def parameter_bulk_add(request: Request):
     if not raw:
         return redirect("/settings/parameters")
     db = get_db()
-    cur = db.cursor()
+    cur = cursor(db)
     for line in raw.splitlines():
         cleaned = line.strip()
         if not cleaned:
@@ -6616,7 +6494,7 @@ def test_kit_edit(request: Request, kit_id: int):
 @app.post("/settings/test-kits/save")
 def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), manufacturer_accuracy: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), workflow_steps: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
-    cur = db.cursor()
+    cur = cursor(db)
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     conv_type = (conversion_type or "").strip() or None
     conversion_rows = parse_conversion_table(conversion_table or "") if conv_type else []
@@ -6666,7 +6544,7 @@ def additives(request: Request):
     rows = q(db, "SELECT * FROM additives ORDER BY parameter, name")
     db.close()
     grouped = []
-    groups: Dict[str, List[sqlite3.Row]] = {}
+    groups: Dict[str, List[Dict[str, Any]]] = {}
     for r in rows:
         group_name = (r["group_name"] or "").strip()
         if group_name:
@@ -6705,7 +6583,7 @@ def additive_edit(request: Request, additive_id: int):
 @app.post("/additives/save")
 def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), brand: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
     db = get_db()
-    cur = db.cursor()
+    cur = cursor(db)
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     data = (
         name.strip(),
@@ -6777,7 +6655,7 @@ async def dosing_log_add(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    cur = db.cursor()
+    cur = cursor(db)
     when_dt = None
     if logged_at:
         try:
@@ -6967,7 +6845,7 @@ def merge_parameters_page(request: Request):
 @app.post("/admin/merge-parameters")
 def merge_parameters_run(request: Request):
     db = get_db()
-    cur = db.cursor()
+    cur = cursor(db)
     rows = q(db, "SELECT id, name FROM parameter_defs")
     groups = {}
     for r in rows:
@@ -6997,7 +6875,7 @@ def calculators(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
-    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
         grouped_additives.setdefault(key, []).append(a)
@@ -7043,7 +6921,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
         except Exception: pass
     tanks = get_visible_tanks(db, request)
     additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
-    grouped_additives: Dict[str, List[sqlite3.Row]] = {}
+    grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
         grouped_additives.setdefault(key, []).append(a)
@@ -7065,7 +6943,7 @@ def dose_plan(request: Request):
     pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
     pdef_map = {r["name"]: r for r in pdefs}
     all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
-    additives_by_group: Dict[str, List[sqlite3.Row]] = {}
+    additives_by_group: Dict[str, List[Dict[str, Any]]] = {}
     def group_key(value: str) -> str:
         cleaned = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
         if "alk" in cleaned or "kh" in cleaned:
@@ -7575,9 +7453,14 @@ async def icp_import_submit(request: Request):
         db.close()
         return redirect("/tools/icp?error=No mapped ICP values found.")
     when_iso = datetime.utcnow().isoformat()
-    cur = db.cursor()
-    cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)", (tank_id_int, when_iso, "Imported from ICP"))
-    sample_id = cur.lastrowid
+    sample_id = execute_insert_returning_id(
+        db,
+        "INSERT INTO samples (tank_id, taken_at, notes) VALUES (?, ?, ?)",
+        (tank_id_int, when_iso, "Imported from ICP"),
+    )
+    if sample_id is None:
+        db.close()
+        return redirect("/tools/icp?error=Failed to save ICP sample.")
     for row in mapped:
         pname = row.get("parameter")
         value = row.get("value")
@@ -7741,7 +7624,11 @@ async def admin_user_tanks(request: Request, user_id: int):
             tid = int(tank_id)
         except Exception:
             continue
-        db.execute("INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)", (user_id, tid))
+        execute_with_retry(
+            db,
+            "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
+            (user_id, tid),
+        )
     log_audit(db, current_user, "user-tanks-update", {"user_id": user_id, "tanks": tank_ids})
     db.commit()
     db.close()
@@ -7759,7 +7646,7 @@ async def assign_tank(request: Request, tank_id: int):
     else:
         db.execute("UPDATE tanks SET owner_user_id=? WHERE id=?", (int(user_id), tank_id))
         db.execute(
-            "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
+            "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
             (int(user_id), tank_id),
         )
     log_audit(db, current_user, "tank-owner-update", {"tank_id": tank_id, "owner_id": user_id})
@@ -8017,7 +7904,6 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
     try:
         contents = await file.read()
         df = pd.read_excel(BytesIO(contents))
-        cur = db.cursor()
         pdefs = list_parameters(db)
         current_user = get_current_user(db, request)
 
@@ -8029,17 +7915,24 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
             tank = one(db, "SELECT id FROM tanks WHERE name=?", (t_name,))
             if not tank:
                 vol = to_float(row.get("Volume (L)", 0))
-                cur.execute(
+                tid = execute_insert_returning_id(
+                    db,
                     "INSERT INTO tanks (name, volume_l, owner_user_id) VALUES (?,?,?)",
                     (t_name, vol, current_user["id"] if current_user else None),
                 )
-                tid = cur.lastrowid
+                if tid is None:
+                    continue
                 if current_user:
-                    cur.execute(
-                        "INSERT OR IGNORE INTO user_tanks (user_id, tank_id) VALUES (?, ?)",
+                    execute_with_retry(
+                        db,
+                        "INSERT INTO user_tanks (user_id, tank_id) VALUES (?, ?) ON CONFLICT (user_id, tank_id) DO NOTHING",
                         (current_user["id"], tid),
                     )
-                cur.execute("INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?,?,100)", (tid, vol))
+                execute_with_retry(
+                    db,
+                    "INSERT INTO tank_profiles (tank_id, volume_l, net_percent) VALUES (?,?,100) ON CONFLICT (tank_id) DO NOTHING",
+                    (tid, vol),
+                )
                 stats["tanks"] += 1
             else:
                 tid = tank["id"]
@@ -8049,8 +7942,13 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
             dt_str = str(dt_raw.date()) if hasattr(dt_raw, 'date') else str(dt_raw)
             notes = str(row.get("Notes", "")) if row.get("Notes") and str(row.get("Notes")) != "nan" else ""
             
-            cur.execute("INSERT INTO samples (tank_id, taken_at, notes) VALUES (?,?,?)", (tid, dt_str, notes))
-            sid = cur.lastrowid
+            sid = execute_insert_returning_id(
+                db,
+                "INSERT INTO samples (tank_id, taken_at, notes) VALUES (?,?,?)",
+                (tid, dt_str, notes),
+            )
+            if sid is None:
+                continue
             stats["samples"] += 1
             
             # Resolve readings for all parameters
