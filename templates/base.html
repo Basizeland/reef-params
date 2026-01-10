@@ -249,7 +249,7 @@
                                     <span class="badge bg-success d-none" data-guide-badge>Done</span>
                                 </div>
                                 <div class="mt-auto d-flex flex-wrap gap-2">
-                                    <a class="btn btn-sm btn-primary" href="/">Go to dashboard</a>
+                                    <a class="btn btn-sm btn-primary" href="/add" data-guide-link="log-readings">Log a test</a>
                                     <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
                                 </div>
                             </div>
@@ -264,7 +264,7 @@
                                     <span class="badge bg-success d-none" data-guide-badge>Done</span>
                                 </div>
                                 <div class="mt-auto d-flex flex-wrap gap-2">
-                                    <a class="btn btn-sm btn-primary" href="/">Open a tank</a>
+                                    <a class="btn btn-sm btn-primary" href="/tanks/new" data-guide-link="configure-dosing">Open dosing</a>
                                     <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
                                 </div>
                             </div>
@@ -417,6 +417,31 @@
                 });
             };
 
+            const updateGuideLinks = async () => {
+                const linkTargets = {
+                    "log-readings": `/add`,
+                    "configure-dosing": `/tanks/new`,
+                };
+                const links = Array.from(modalEl.querySelectorAll("[data-guide-link]"));
+                if (!links.length) return;
+                try {
+                    const response = await fetch("/api/tanks", { credentials: "same-origin" });
+                    if (!response.ok) return;
+                    const tanks = await response.json();
+                    if (!Array.isArray(tanks) || !tanks.length || !tanks[0].id) return;
+                    const firstTankId = tanks[0].id;
+                    linkTargets["log-readings"] = `/tanks/${firstTankId}/add`;
+                    linkTargets["configure-dosing"] = `/tanks/${firstTankId}/dosing-settings`;
+                } catch (err) {
+                    return;
+                }
+                links.forEach((link) => {
+                    const target = link.dataset.guideLink;
+                    if (!target || !linkTargets[target]) return;
+                    link.setAttribute("href", linkTargets[target]);
+                });
+            };
+
             tasks.forEach((task) => {
                 const button = task.querySelector("[data-guide-complete]");
                 if (!button) return;
@@ -455,6 +480,7 @@
             modalEl.addEventListener("show.bs.modal", () => {
                 state = loadState();
                 updateUI();
+                updateGuideLinks();
             });
 
             updateUI();
