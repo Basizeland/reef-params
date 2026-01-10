@@ -1132,10 +1132,10 @@ def get_visible_tanks(db: Connection, request: Request) -> List[Dict[str, Any]]:
         )
     return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
 
-def ensure_additives_owner_column(db: DBConnection) -> None:
+def ensure_additives_owner_column(db: "DBConnection") -> None:
     ensure_column(db, "additives", "owner_user_id", "ALTER TABLE additives ADD COLUMN owner_user_id INTEGER")
 
-def build_additives_where(db: DBConnection, user: Optional[Dict[str, Any]], active_only: bool = True, extra_clause: Optional[str] = None, extra_params: Tuple[Any, ...] = ()) -> Tuple[str, Tuple[Any, ...]]:
+def build_additives_where(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True, extra_clause: Optional[str] = None, extra_params: Tuple[Any, ...] = ()) -> Tuple[str, Tuple[Any, ...]]:
     ensure_additives_owner_column(db)
     clauses = []
     params: List[Any] = []
@@ -1152,11 +1152,11 @@ def build_additives_where(db: DBConnection, user: Optional[Dict[str, Any]], acti
     where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     return where_sql, tuple(params)
 
-def get_visible_additives(db: DBConnection, user: Optional[Dict[str, Any]], active_only: bool = True) -> List[Dict[str, Any]]:
+def get_visible_additives(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True) -> List[Dict[str, Any]]:
     where_sql, params = build_additives_where(db, user, active_only=active_only)
     return q(db, f"SELECT * FROM additives{where_sql} ORDER BY parameter, name", params)
 
-def get_visible_additive_by_id(db: DBConnection, user: Optional[Dict[str, Any]], additive_id: int, active_only: bool = False) -> Optional[Dict[str, Any]]:
+def get_visible_additive_by_id(db: "DBConnection", user: Optional[Dict[str, Any]], additive_id: int, active_only: bool = False) -> Optional[Dict[str, Any]]:
     where_sql, params = build_additives_where(db, user, active_only=active_only, extra_clause="id=?", extra_params=(additive_id,))
     return one(db, f"SELECT * FROM additives{where_sql}", params)
 
