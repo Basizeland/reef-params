@@ -1228,8 +1228,6 @@ def is_admin_user(user: Optional[Dict[str, Any]]) -> bool:
 
 def build_additives_where(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True, extra_clause: Optional[str] = None, extra_params: Tuple[Any, ...] = ()) -> Tuple[str, Tuple[Any, ...]]:
     ensure_additives_owner_column(db)
-    ensure_test_kits_owner_column(db)
-    ensure_test_kits_owner_column(db)
     clauses = []
     params: List[Any] = []
     if active_only:
@@ -7061,6 +7059,7 @@ def test_kits(request: Request):
             "personal_groups": group_test_kits_by_parameter(personal_rows),
             "is_admin": is_admin,
             "error": request.query_params.get("error"),
+            "success": request.query_params.get("success"),
         },
     )
 
@@ -7597,12 +7596,25 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
             "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, manufacturer_accuracy=?, min_value=?, max_value=?, notes=?, workflow_data=?, conversion_type=?, conversion_data=?, active=?, owner_user_id=? WHERE id=?",
             (*data, int(kit_id)),
         )
+        log_audit(
+            db,
+            user,
+            "test-kit-update",
+            {"kit_id": int(kit_id), "name": name.strip(), "parameter": parameter.strip()},
+        )
     else:
         owner_user_id = None if (is_admin and is_global in ("1", "on", "true", "True")) else user["id"]
         data = (*data_base, owner_user_id)
         cur.execute(
             "INSERT INTO test_kits (parameter, name, unit, resolution, manufacturer_accuracy, min_value, max_value, notes, workflow_data, conversion_type, conversion_data, active, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             data,
+        )
+        new_id = cur.lastrowid
+        log_audit(
+            db,
+            user,
+            "test-kit-create",
+            {"kit_id": new_id, "name": name.strip(), "parameter": parameter.strip()},
         )
     db.commit()
     db.close()
@@ -7628,10 +7640,35 @@ def test_kit_delete(request: Request, kit_id: int):
     if owner_id is not None and not is_admin and owner_id != user["id"]:
         db.close()
         return redirect("/settings/test-kits?error=You%20can%20only%20delete%20your%20own%20test%20kits")
+    log_audit(db, user, "test-kit-delete", {"kit_id": kit_id, "name": row_get(kit, "name")})
     db.execute("DELETE FROM test_kits WHERE id=?", (kit_id,))
     db.commit()
     db.close()
     return redirect("/settings/test-kits")
+
+@app.post("/settings/test-kits/{kit_id}/make-standard")
+def test_kit_make_standard(request: Request, kit_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    if not is_admin_user(user):
+        db.close()
+        return redirect("/settings/test-kits?error=Only%20admins%20can%20modify%20standard%20test%20kits")
+    ensure_test_kits_owner_column(db)
+    kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
+    if not kit:
+        db.close()
+        return redirect("/settings/test-kits?error=Test%20kit%20not%20found")
+    if row_get(kit, "owner_user_id") is None:
+        db.close()
+        return redirect("/settings/test-kits")
+    db.execute("UPDATE test_kits SET owner_user_id=NULL WHERE id=?", (kit_id,))
+    log_audit(db, user, "test-kit-make-standard", {"kit_id": kit_id, "name": row_get(kit, "name")})
+    db.commit()
+    db.close()
+    return redirect("/settings/test-kits?success=Test%20kit%20is%20now%20standard")
 
 @app.get("/additives", response_class=HTMLResponse)
 @app.get("/additives/", response_class=HTMLResponse, include_in_schema=False)

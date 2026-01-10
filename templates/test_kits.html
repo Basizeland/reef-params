@@ -12,6 +12,10 @@
   <div class="alert alert-danger">{{ error }}</div>
 {% endif %}
 
+{% if success %}
+  <div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
 {% if not standard_groups and not personal_groups %}
   <div class="alert alert-info">No test kits yet.</div>
 {% endif %}
@@ -140,7 +144,16 @@
                         </td>
                         <td>{% if k.active %}Yes{% else %}No{% endif %}</td>
                         <td class="text-end">
-                          <a class="btn btn-sm btn-outline-secondary" href="/settings/test-kits/{{ k.id }}/edit">Edit</a>
+                          {% if is_admin %}
+                            <div class="d-inline-flex gap-2">
+                              <a class="btn btn-sm btn-outline-secondary" href="/settings/test-kits/{{ k.id }}/edit">Edit</a>
+                              <form method="post" action="/settings/test-kits/{{ k.id }}/make-standard">
+                                <button class="btn btn-sm btn-outline-primary" type="submit">Make standard</button>
+                              </form>
+                            </div>
+                          {% else %}
+                            <a class="btn btn-sm btn-outline-secondary" href="/settings/test-kits/{{ k.id }}/edit">Edit</a>
+                          {% endif %}
                         </td>
                       </tr>
                       {% endfor %}
