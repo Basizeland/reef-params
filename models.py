@@ -128,6 +128,17 @@ class ParameterDef(Base, DictMixin):
     default_alert_low = Column(Float, nullable=True)
     default_alert_high = Column(Float, nullable=True)
 
+class UserParameterSetting(Base, DictMixin):
+    __tablename__ = "user_parameter_settings"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    parameter_id = Column(Integer, ForeignKey("parameter_defs.id"), primary_key=True)
+    max_daily_change = Column(Float, nullable=True)
+    test_interval_days = Column(Integer, nullable=True)
+    default_target_low = Column(Float, nullable=True)
+    default_target_high = Column(Float, nullable=True)
+    default_alert_low = Column(Float, nullable=True)
+    default_alert_high = Column(Float, nullable=True)
+
 class Sample(Base, DictMixin):
     __tablename__ = "samples"
     id = Column(Integer, primary_key=True, index=True)
@@ -212,6 +223,7 @@ class Additive(Base, DictMixin):
     max_daily = Column(Float)
     notes = Column(String)
     active = Column(Integer, default=1)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 class Preset(Base, DictMixin):
     __tablename__ = "presets"

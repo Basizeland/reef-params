@@ -73,7 +73,6 @@
             </div>
             <div class="d-flex align-items-center gap-2 ms-auto">
                 <a class="nav-link d-none d-lg-inline" href="/account"><i class="bi bi-person-circle"></i> Account</a>
-                <a class="nav-link d-none d-lg-inline" href="/auth/logout"><i class="bi bi-box-arrow-right"></i> Logout</a>
                 {% set global_notifications = global_dosing_notifications(request) %}
                 <div class="dropdown">
                     <a class="nav-link dropdown-toggle position-relative" href="#" role="button" data-bs-toggle="dropdown">
@@ -166,13 +165,22 @@
                 <button class="btn btn-outline-secondary btn-sm" type="button" id="pwa-ios-dismiss">Got it</button>
             </div>
         </div>
+        <div class="alert alert-warning d-none offline-banner" role="alert" id="offline-banner">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div>
+                    <strong>You're offline</strong>
+                    <div class="small text-muted">Check your connection and try again.</div>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" type="button" id="offline-retry">Retry</button>
+            </div>
+        </div>
     </div>
 
     <div class="container pb-5 mobile-content-pad">
         {% block content %}{% endblock %}
     </div>
 
-    <nav class="bottom-nav d-sm-none">
+    <nav class="bottom-nav d-lg-none position-fixed start-50 translate-middle-x">
         <div class="d-flex justify-content-around align-items-center">
             <a class="nav-link {% if request.url.path == '/' %}active{% endif %}" href="/">
                 <i class="bi bi-house-door"></i>
@@ -232,21 +240,6 @@
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="setup-parameters">
-                                <div class="d-flex justify-content-between align-items-start gap-3">
-                                    <div>
-                                        <div class="fw-semibold text-navy">Set parameters &amp; additives</div>
-                                        <div class="text-muted small">Confirm targets, add test kits, and enter additive strengths.</div>
-                                    </div>
-                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
-                                </div>
-                                <div class="mt-auto d-flex flex-wrap gap-2">
-                                    <a class="btn btn-sm btn-primary" href="/settings/parameters">Open settings</a>
-                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
                             <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="log-readings">
                                 <div class="d-flex justify-content-between align-items-start gap-3">
                                     <div>
@@ -256,7 +249,7 @@
                                     <span class="badge bg-success d-none" data-guide-badge>Done</span>
                                 </div>
                                 <div class="mt-auto d-flex flex-wrap gap-2">
-                                    <a class="btn btn-sm btn-primary" href="/">Go to dashboard</a>
+                                    <a class="btn btn-sm btn-primary" href="/add" data-guide-link="log-readings">Log a test</a>
                                     <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
                                 </div>
                             </div>
@@ -271,7 +264,7 @@
                                     <span class="badge bg-success d-none" data-guide-badge>Done</span>
                                 </div>
                                 <div class="mt-auto d-flex flex-wrap gap-2">
-                                    <a class="btn btn-sm btn-primary" href="/">Open a tank</a>
+                                    <a class="btn btn-sm btn-primary" href="/tanks/new" data-guide-link="configure-dosing">Open dosing</a>
                                     <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
                                 </div>
                             </div>
@@ -306,23 +299,6 @@
                                 </div>
                             </div>
                         </div>
-                        {% if request.state.user is defined and request.state.user and request.state.user.admin %}
-                            <div class="col-md-6">
-                                <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="import-backup">
-                                    <div class="d-flex justify-content-between align-items-start gap-3">
-                                        <div>
-                                            <div class="fw-semibold text-navy">Import historical data</div>
-                                            <div class="text-muted small">Restore backups or bulk import readings.</div>
-                                        </div>
-                                        <span class="badge bg-success d-none" data-guide-badge>Done</span>
-                                    </div>
-                                    <div class="mt-auto d-flex flex-wrap gap-2">
-                                        <a class="btn btn-sm btn-primary" href="/admin/import">Open data center</a>
-                                        <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
-                                    </div>
-                                </div>
-                            </div>
-                        {% endif %}
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -402,13 +378,6 @@
             const saveState = (state) => {
                 localStorage.setItem(storageKey, JSON.stringify(state));
             };
-            const state = loadState();
-            if (!state.seen) {
-                const modal = new bootstrap.Modal(modalEl);
-                modal.show();
-                state.seen = true;
-                saveState(state);
-            }
             const tasks = Array.from(modalEl.querySelectorAll("[data-guide-task]"));
             if (!tasks.length) return;
             const completedLabel = modalEl.querySelector("[data-guide-completed]");
@@ -416,12 +385,16 @@
             const progress = modalEl.querySelector("[data-guide-progress]");
             const resetBtn = modalEl.querySelector("[data-guide-reset]");
 
+            let state = loadState();
+
+            const getCompletedCount = () => tasks.reduce((count, task) => {
+                const id = task.dataset.guideTask;
+                return count + (id && state.completed[id] ? 1 : 0);
+            }, 0);
+
             const updateUI = () => {
                 const total = tasks.length;
-                const completedCount = tasks.reduce((count, task) => {
-                    const id = task.dataset.guideTask;
-                    return count + (id && state.completed[id] ? 1 : 0);
-                }, 0);
+                const completedCount = getCompletedCount();
                 if (completedLabel) completedLabel.textContent = completedCount.toString();
                 if (totalLabel) totalLabel.textContent = total.toString();
                 if (progress) {
@@ -441,6 +414,31 @@
                         button.classList.toggle("btn-success", Boolean(isDone));
                         button.classList.toggle("btn-outline-success", !isDone);
                     }
+                });
+            };
+
+            const updateGuideLinks = async () => {
+                const linkTargets = {
+                    "log-readings": `/add`,
+                    "configure-dosing": `/tanks/new`,
+                };
+                const links = Array.from(modalEl.querySelectorAll("[data-guide-link]"));
+                if (!links.length) return;
+                try {
+                    const response = await fetch("/api/tanks", { credentials: "same-origin" });
+                    if (!response.ok) return;
+                    const tanks = await response.json();
+                    if (!Array.isArray(tanks) || !tanks.length || !tanks[0].id) return;
+                    const firstTankId = tanks[0].id;
+                    linkTargets["log-readings"] = `/tanks/${firstTankId}/add`;
+                    linkTargets["configure-dosing"] = `/tanks/${firstTankId}/dosing-settings`;
+                } catch (err) {
+                    return;
+                }
+                links.forEach((link) => {
+                    const target = link.dataset.guideLink;
+                    if (!target || !linkTargets[target]) return;
+                    link.setAttribute("href", linkTargets[target]);
                 });
             };
 
@@ -465,7 +463,28 @@
                 });
             }
 
+            const shouldShowOnDashboard = () => {
+                if (window.location.pathname !== "/") return false;
+                return getCompletedCount() < tasks.length;
+            };
+
+            const maybeShowModal = () => {
+                if (!state.seen || shouldShowOnDashboard()) {
+                    const modal = new bootstrap.Modal(modalEl);
+                    modal.show();
+                    state.seen = true;
+                    saveState(state);
+                }
+            };
+
+            modalEl.addEventListener("show.bs.modal", () => {
+                state = loadState();
+                updateUI();
+                updateGuideLinks();
+            });
+
             updateUI();
+            maybeShowModal();
         });
 
         document.addEventListener("DOMContentLoaded", () => {
@@ -491,6 +510,11 @@
                         btn.disabled = true;
                     });
                     return;
+                }
+                try {
+                    await navigator.serviceWorker.ready;
+                } catch (err) {
+                    // Ignore readiness errors and fall back to manual checks.
                 }
                 const subscription = await getAnySubscription();
                 const permission = Notification?.permission || "default";
@@ -667,6 +691,28 @@
                     }
                 });
             });
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const offlineBanner = document.getElementById("offline-banner");
+            const retryButton = document.getElementById("offline-retry");
+            const updateBanner = () => {
+                if (!offlineBanner) return;
+                if (navigator.onLine) {
+                    offlineBanner.classList.add("d-none");
+                } else {
+                    offlineBanner.classList.remove("d-none");
+                }
+            };
+            window.addEventListener("online", updateBanner);
+            window.addEventListener("offline", updateBanner);
+            retryButton?.addEventListener("click", () => {
+                updateBanner();
+                if (navigator.onLine) {
+                    window.location.reload();
+                }
+            });
+            updateBanner();
         });
     </script>
 </body>

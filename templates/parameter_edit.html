@@ -21,20 +21,25 @@
       <div class="row g-3">
         <div class="col-12 col-md-6">
           <label class="form-label fw-bold">Name</label>
-          <input class="form-control" name="name" value="{{ param.name if param else '' }}" required placeholder="e.g. Alkalinity" />
+          <input class="form-control" name="name" value="{{ param.name if param else '' }}" required placeholder="e.g. Alkalinity" {% if param %}readonly{% endif %} />
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label fw-bold">Chemical Symbol</label>
-          <input class="form-control" name="chemical_symbol" value="{{ param.chemical_symbol if param and param.chemical_symbol else '' }}" placeholder="e.g. Ca" />
+          <input class="form-control" name="chemical_symbol" value="{{ param.chemical_symbol if param and param.chemical_symbol else '' }}" placeholder="e.g. Ca" {% if param %}readonly{% endif %} />
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label fw-bold">Unit</label>
-          <input class="form-control" name="unit" value="{{ param.unit if param and param.unit else '' }}" placeholder="e.g. ppm" />
+          <input class="form-control" name="unit" value="{{ param.unit if param and param.unit else '' }}" placeholder="e.g. ppm" {% if param %}readonly{% endif %} />
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label fw-bold">Sort Order</label>
           <input class="form-control" name="sort_order" type="number" value="{{ param.sort_order if param else '0' }}" />
         </div>
+        {% if param %}
+        <div class="col-12">
+          <div class="form-text">Name, chemical symbol, and unit are locked after creation.</div>
+        </div>
+        {% endif %}
 
         <div class="col-12 col-md-6">
           <label class="form-label fw-bold">Max Daily Change Safe Limit</label>
@@ -85,13 +90,6 @@
       </div>
     </form>
 
-    {% if param %}
-    <div class="mt-5 pt-3 border-top">
-      <form method="post" action="/settings/parameters/{{ param.id }}/delete" onsubmit="return confirm('Delete this parameter? This will remove all associated history and targets.');">
-        <button class="btn btn-sm btn-outline-danger" type="submit">Delete Parameter</button>
-      </form>
-    </div>
-    {% endif %}
   </div>
 </div>
 {% endblock %}

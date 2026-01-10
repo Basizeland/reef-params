@@ -3,7 +3,7 @@
 <div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-3">
   <div>
     <h1 class="h3 mb-0 fw-bold">Account Settings</h1>
-    <div class="text-muted small">Update your password.</div>
+    <div class="text-muted small">Signed in as {{ user.email }}</div>
   </div>
   <a class="btn btn-outline-secondary" href="/">
     <i class="bi bi-arrow-left"></i> Back to Dashboard
@@ -111,6 +111,34 @@
       <button class="btn btn-outline-primary js-enable-browser-alerts" type="button" data-status-target="account-alerts-status">
         <span id="account-alerts-status">Off</span>
       </button>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div>
+        <h5 class="mb-1">Onboarding guide</h5>
+        <div class="text-muted small">Revisit the setup checklist whenever you need it.</div>
+      </div>
+      <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#onboardingModal">
+        <i class="bi bi-compass"></i> Run onboarding
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div>
+        <h5 class="mb-1">Sign out</h5>
+        <div class="text-muted small">Log out of your Reef Metrics account.</div>
+      </div>
+      <a class="btn btn-outline-danger" href="/auth/logout">
+        <i class="bi bi-box-arrow-right"></i> Logout
+      </a>
     </div>
   </div>
 </div>

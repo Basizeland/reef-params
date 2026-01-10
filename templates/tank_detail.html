@@ -4,6 +4,9 @@
   @media (max-width: 575.98px) {
     .tank-action-bar {
       width: 100%;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
     .tank-action-bar .btn {
       padding: 0.35rem 0.5rem;
@@ -31,6 +34,7 @@
     border-radius: 10px 10px 8px 8px;
     background: rgba(74, 103, 161, 0.08);
     overflow: hidden;
+    margin-top: -2px;
   }
   .dose-liquid {
     position: absolute;
@@ -148,7 +152,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.all_in_one_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.all_in_one_daily_ml|fmt2 if tank.all_in_one_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.all_in_one_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ all_in_one_pct }}%; background: {{ all_in_one_color }};"></div>
                       <div class="dose-markings"></div>
@@ -156,7 +160,7 @@
                     <div>
                       <div class="text-muted small">{{ all_in_one_remaining|fmt2 }} / {{ tank.all_in_one_container_ml|fmt2 }} ml</div>
                       {% if all_in_one_days is not none %}
-                        <div class="text-muted small">{{ all_in_one_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ all_in_one_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -185,7 +189,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.alk_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.alk_daily_ml|fmt2 if tank.alk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.alk_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ alk_pct }}%; background: {{ alk_color }};"></div>
                       <div class="dose-markings"></div>
@@ -193,7 +197,7 @@
                     <div>
                       <div class="text-muted small">{{ alk_remaining|fmt2 }} / {{ tank.alk_container_ml|fmt2 }} ml</div>
                       {% if alk_days is not none %}
-                        <div class="text-muted small">{{ alk_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ alk_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -222,7 +226,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.kalk_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.kalk_daily_ml|fmt2 if tank.kalk_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.kalk_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ kalk_pct }}%; background: {{ kalk_color }};"></div>
                       <div class="dose-markings"></div>
@@ -230,7 +234,7 @@
                     <div>
                       <div class="text-muted small">{{ kalk_remaining|fmt2 }} / {{ tank.kalk_container_ml|fmt2 }} ml</div>
                       {% if kalk_days is not none %}
-                        <div class="text-muted small">{{ kalk_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ kalk_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -259,7 +263,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.ca_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.ca_daily_ml|fmt2 if tank.ca_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.ca_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ ca_pct }}%; background: {{ ca_color }};"></div>
                       <div class="dose-markings"></div>
@@ -267,7 +271,7 @@
                     <div>
                       <div class="text-muted small">{{ ca_remaining|fmt2 }} / {{ tank.ca_container_ml|fmt2 }} ml</div>
                       {% if ca_days is not none %}
-                        <div class="text-muted small">{{ ca_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ ca_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -296,7 +300,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.mg_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.mg_daily_ml|fmt2 if tank.mg_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.mg_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ mg_pct }}%; background: {{ mg_color }};"></div>
                       <div class="dose-markings"></div>
@@ -304,7 +308,7 @@
                     <div>
                       <div class="text-muted small">{{ mg_remaining|fmt2 }} / {{ tank.mg_container_ml|fmt2 }} ml</div>
                       {% if mg_days is not none %}
-                        <div class="text-muted small">{{ mg_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ mg_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -333,7 +337,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.nitrate_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.nitrate_daily_ml|fmt2 if tank.nitrate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.nitrate_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ nitrate_pct }}%; background: {{ nitrate_color }};"></div>
                       <div class="dose-markings"></div>
@@ -341,7 +345,7 @@
                     <div>
                       <div class="text-muted small">{{ nitrate_remaining|fmt2 }} / {{ tank.nitrate_container_ml|fmt2 }} ml</div>
                       {% if nitrate_days is not none %}
-                        <div class="text-muted small">{{ nitrate_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ nitrate_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -370,7 +374,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.phosphate_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.phosphate_daily_ml|fmt2 if tank.phosphate_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.phosphate_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ phosphate_pct }}%; background: {{ phosphate_color }};"></div>
                       <div class="dose-markings"></div>
@@ -378,7 +382,7 @@
                     <div>
                       <div class="text-muted small">{{ phosphate_remaining|fmt2 }} / {{ tank.phosphate_container_ml|fmt2 }} ml</div>
                       {% if phosphate_days is not none %}
-                        <div class="text-muted small">{{ phosphate_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ phosphate_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -407,7 +411,7 @@
                 <div class="fw-semibold dose-solution-name">{{ tank.trace_solution or "—" }}</div>
                 <div class="text-secondary small">{{ tank.trace_daily_ml|fmt2 if tank.trace_daily_ml is not none else "—" }} ml/day</div>
                 {% if tank.trace_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ trace_pct }}%; background: {{ trace_color }};"></div>
                       <div class="dose-markings"></div>
@@ -415,7 +419,7 @@
                     <div>
                       <div class="text-muted small">{{ trace_remaining|fmt2 }} / {{ tank.trace_container_ml|fmt2 }} ml</div>
                       {% if trace_days is not none %}
-                        <div class="text-muted small">{{ trace_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ trace_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">
@@ -445,7 +449,7 @@
                   <div class="fw-semibold dose-solution-name">{{ entry.solution or "—" }}</div>
                   <div class="text-secondary small">{{ entry.daily_ml|fmt2 if entry.daily_ml is not none else "—" }} ml/day</div>
                   {% if entry.container_ml %}
-                    <div class="d-flex align-items-end gap-2 mt-2">
+                    <div class="d-flex align-items-start gap-2 mt-2">
                       <div class="dose-container">
                         <div class="dose-liquid" style="height: {{ extra_pct }}%; background: {{ extra_color }};"></div>
                         <div class="dose-markings"></div>
@@ -453,7 +457,7 @@
                       <div>
                         <div class="text-muted small">{{ extra_remaining|fmt2 }} / {{ entry.container_ml|fmt2 }} ml</div>
                         {% if extra_days is not none %}
-                          <div class="text-muted small">{{ extra_days|round(1) }} days remaining</div>
+                          <div class="text-muted small text-nowrap">{{ extra_days|round(1) }} days remaining</div>
                         {% endif %}
                         <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                           <input type="hidden" name="action" value="refill">
@@ -483,7 +487,7 @@
                 <div class="fw-semibold dose-solution-name">Red Sea NoPox</div>
                 <div class="text-secondary small">{{ tank.nopox_daily_ml|fmt2 }} ml/day</div>
                 {% if tank.nopox_container_ml %}
-                  <div class="d-flex align-items-end gap-2 mt-2">
+                  <div class="d-flex align-items-start gap-2 mt-2">
                     <div class="dose-container">
                       <div class="dose-liquid" style="height: {{ nopox_pct }}%; background: {{ nopox_color }};"></div>
                       <div class="dose-markings"></div>
@@ -491,7 +495,7 @@
                     <div>
                       <div class="text-muted small">{{ nopox_remaining|fmt2 }} / {{ tank.nopox_container_ml|fmt2 }} ml</div>
                       {% if nopox_days is not none %}
-                        <div class="text-muted small">{{ nopox_days|round(1) }} days remaining</div>
+                        <div class="text-muted small text-nowrap">{{ nopox_days|round(1) }} days remaining</div>
                       {% endif %}
                       <form method="post" action="/tanks/{{ tank.id }}/dosing-containers" class="mt-1">
                         <input type="hidden" name="action" value="refill">

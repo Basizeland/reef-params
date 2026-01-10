@@ -11,6 +11,7 @@ import time as time_module
 import shutil
 import secrets
 import hashlib
+import base64
 import urllib.parse
 import urllib.request
 import csv
@@ -22,6 +23,7 @@ import smtplib
 import threading
 import logging
 import uuid
+from functools import lru_cache
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
@@ -67,6 +69,7 @@ if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
         profile_lifecycle=os.environ.get("SENTRY_PROFILE_LIFECYCLE"),
     )
 
+@lru_cache(maxsize=None)
 def optional_module(module_name: str):
     if importlib.util.find_spec(module_name) is None:
         return None
@@ -115,7 +118,7 @@ def additive_label(additive: Any) -> str:
     label = f"{brand} {name}".strip()
     return label or name
 
-def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def build_daily_consumption(db: Connection, tank_view: Dict[str, Any], user: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
     daily_consumption: Dict[str, Dict[str, Any]] = {}
     volume_l = row_get(tank_view, "volume_l")
     if not volume_l:
@@ -137,7 +140,8 @@ def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[s
             return has_data
         return bool(flag)
 
-    additives = q(db, "SELECT name, parameter, strength, unit FROM additives WHERE active=1")
+    where_sql, params = build_additives_where(db, user, active_only=True)
+    additives = q(db, f"SELECT name, parameter, strength, unit FROM additives{where_sql}", params)
     additive_by_name = {str(a["name"]).strip().lower(): a for a in additives}
     dosing_entries = [
         ("all_in_one", tank_view.get("all_in_one_solution"), tank_view.get("all_in_one_daily_ml"), tank_view.get("use_all_in_one")),
@@ -198,14 +202,69 @@ def build_daily_consumption(db: Connection, tank_view: Dict[str, Any]) -> Dict[s
 
     return daily_consumption
 
-def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None) -> Tuple[bool, str]:
+def get_email_sender(kind: str | None = None) -> str:
+    sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME") or ""
+    if "@" in sender:
+        return sender
+    transactional = os.environ.get("EMAIL_FROM_TRANSACTIONAL") or "support@reefmetrics.app"
+    alerts = os.environ.get("EMAIL_FROM_ALERTS") or "alerts@reefmetrics.app"
+    billing = os.environ.get("EMAIL_FROM_BILLING") or "billing@reefmetrics.app"
+    marketing = os.environ.get("EMAIL_FROM_MARKETING") or "hello@reefmetrics.app"
+    if kind == "alerts":
+        return alerts
+    if kind == "billing":
+        return billing
+    if kind == "marketing":
+        return marketing
+    if kind == "transactional":
+        return transactional
+    return transactional
+
+def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None, sender: str | None = None, sender_kind: str | None = None) -> Tuple[bool, str]:
+    sender = sender or get_email_sender(sender_kind)
+    if not recipient:
+        msg = "missing recipient"
+        print(f"Email skipped: {msg}")
+        return False, msg
+    mailjet_key = os.environ.get("MAILJET_API_KEY") or ""
+    mailjet_secret = os.environ.get("MAILJET_API_SECRET") or ""
+    if mailjet_key and mailjet_secret:
+        payload = {
+            "Messages": [
+                {
+                    "From": {"Email": sender},
+                    "To": [{"Email": recipient}],
+                    "Subject": subject,
+                    "TextPart": text_body,
+                    "HTMLPart": html_body or text_body,
+                }
+            ]
+        }
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.mailjet.com/v3.1/send",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        auth = base64.b64encode(f"{mailjet_key}:{mailjet_secret}".encode("utf-8")).decode("utf-8")
+        request.add_header("Authorization", f"Basic {auth}")
+        timeout = float(os.environ.get("SMTP_TIMEOUT", "10"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                if response.status >= 400:
+                    return False, f"Mailjet HTTP {response.status}"
+            return True, ""
+        except Exception as exc:
+            msg = str(exc)
+            print(f"Email failed: {msg}")
+            return False, msg
     host = os.environ.get("SMTP_HOST")
-    sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME")
-    if not host or not sender or not recipient:
-        msg = "missing SMTP_HOST/SMTP_FROM or recipient"
+    if not host:
+        msg = "missing SMTP_HOST"
         print(f"Email skipped: {msg}")
         return False, msg
     port = int(os.environ.get("SMTP_PORT", "587"))
+    timeout = float(os.environ.get("SMTP_TIMEOUT", "10"))
     use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     smtp_username = os.environ.get("SMTP_USERNAME")
@@ -220,9 +279,9 @@ def send_email(recipient: str, subject: str, text_body: str, html_body: str | No
         message.add_alternative(html_body, subtype="html")
     try:
         if use_ssl:
-            server = smtplib.SMTP_SSL(host, port, timeout=10)
+            server = smtplib.SMTP_SSL(host, port, timeout=timeout)
         else:
-            server = smtplib.SMTP(host, port, timeout=10)
+            server = smtplib.SMTP(host, port, timeout=timeout)
         with server:
             if use_tls and not use_ssl:
                 server.starttls()
@@ -281,20 +340,9 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
   </body>
 </html>
 """
-    return send_email(recipient, subject, text_body, html_body)
+    return send_email(recipient, subject, text_body, html_body, sender_kind="transactional")
 
-# --- 1. RECOMMENDED DEFAULTS (Used for the UI "Ghosting" logic) ---
-RECOMMENDED_DEFAULTS = {
-    "Alkalinity/KH": {"target_low": 8.0, "target_high": 9.5, "alert_low": 7.0, "alert_high": 11.0},
-    "Calcium": {"target_low": 400, "target_high": 450, "alert_low": 350, "alert_high": 500},
-    "Magnesium": {"target_low": 1300, "target_high": 1400, "alert_low": 1200, "alert_high": 1500},
-    "Phosphate": {"target_low": 0.03, "target_high": 0.1, "alert_low": 0.0, "alert_high": 0.25},
-    "Nitrate": {"target_low": 2, "target_high": 10, "alert_low": 0, "alert_high": 25},
-    "Salinity": {"target_low": 34, "target_high": 35.5, "alert_low": 32, "alert_high": 37},
-    "Temperature": {"target_low": 25, "target_high": 26.5, "alert_low": 23, "alert_high": 29},
-}
-
-# --- 2. INITIAL SEED DEFAULTS (Used for DB Migration only) ---
+# --- 1. INITIAL SEED DEFAULTS (Used for DB Migration only) ---
 # Maps parameter names to the new DB columns we added
 INITIAL_DEFAULTS = {
     "Alkalinity/KH": {"default_target_low": 8.0, "default_target_high": 9.5, "default_alert_low": 7.0, "default_alert_high": 11.0},
@@ -354,6 +402,15 @@ def oauth_cookie_settings(request: Request) -> Dict[str, Any]:
     domain = hostname or None
     secure = parsed.scheme == "https"
     return {"domain": domain, "secure": secure}
+
+def get_google_redirect_uri(request: Request) -> str:
+    mobile_redirect = os.environ.get("GOOGLE_REDIRECT_URI_MOBILE")
+    base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+    default_redirect = os.environ.get("GOOGLE_REDIRECT_URI") or f"{base.rstrip('/')}/auth/google/callback"
+    platform = (request.query_params.get("platform") or "").strip().lower()
+    if platform == "mobile" and mobile_redirect:
+        return mobile_redirect
+    return default_redirect
 
 def get_vapid_settings() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     public_key = os.environ.get("VAPID_PUBLIC_KEY")
@@ -686,11 +743,11 @@ def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
     today = date.today().isoformat()
     tanks = q(
         db,
-        """SELECT DISTINCT t.*
+        """SELECT DISTINCT ON (t.id) t.*
            FROM tanks t
            LEFT JOIN user_tanks ut ON ut.tank_id = t.id
            WHERE t.owner_user_id=? OR ut.user_id=?
-           ORDER BY COALESCE(t.sort_order, 0), t.name""",
+           ORDER BY t.id, COALESCE(t.sort_order, 0), t.name""",
         (user["id"], user["id"]),
     )
     dosing_alerts = collect_dosing_notifications(db, owner_user_id=user["id"], actor_user=user)
@@ -703,7 +760,7 @@ def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
     maintenance_by_tank: Dict[int, List[Dict[str, Any]]] = {}
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
-        pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+        pdefs = {p["name"]: p for p in get_active_param_defs(db, user_id=user["id"])}
         overdue = []
         for pname, pdef in pdefs.items():
             latest = latest_map.get(pname, {}).get("latest")
@@ -930,7 +987,7 @@ def send_daily_summary_email(db: Connection, user: Dict[str, Any]) -> Tuple[bool
   </body>
 </html>
     """
-    return send_email(user["email"], subject, text_body, html_body)
+    return send_email(user["email"], subject, text_body, html_body, sender_kind="alerts")
 
 def send_summaries_if_due() -> None:
     auto_send = os.environ.get("AUTO_SEND_DAILY_SUMMARIES", "false").lower() in {"1", "true", "yes"}
@@ -959,6 +1016,33 @@ def start_daily_summary_scheduler() -> None:
             except Exception:
                 pass
             time_module.sleep(3600)
+    thread = threading.Thread(target=_loop, daemon=True)
+    thread.start()
+
+def send_push_notifications_if_due() -> None:
+    auto_send = os.environ.get("AUTO_SEND_PUSH_NOTIFICATIONS", "true").lower() in {"1", "true", "yes"}
+    if not auto_send:
+        return
+    db = get_db()
+    try:
+        collect_dosing_notifications(db)
+    finally:
+        db.close()
+
+def start_push_notification_scheduler() -> None:
+    try:
+        interval_minutes = int(os.environ.get("PUSH_NOTIFICATION_INTERVAL_MINUTES", "15"))
+    except ValueError:
+        interval_minutes = 15
+    interval_seconds = max(interval_minutes, 1) * 60
+
+    def _loop() -> None:
+        while True:
+            try:
+                send_push_notifications_if_due()
+            except Exception:
+                pass
+            time_module.sleep(interval_seconds)
     thread = threading.Thread(target=_loop, daemon=True)
     thread.start()
 
@@ -1132,6 +1216,48 @@ def get_visible_tanks(db: Connection, request: Request) -> List[Dict[str, Any]]:
             (user["id"], user["id"]),
         )
     return q(db, "SELECT * FROM tanks ORDER BY COALESCE(sort_order, 0), name")
+
+def ensure_additives_owner_column(db: "DBConnection") -> None:
+    ensure_column(db, "additives", "owner_user_id", "ALTER TABLE additives ADD COLUMN owner_user_id INTEGER")
+
+def build_additives_where(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True, extra_clause: Optional[str] = None, extra_params: Tuple[Any, ...] = ()) -> Tuple[str, Tuple[Any, ...]]:
+    ensure_additives_owner_column(db)
+    clauses = []
+    params: List[Any] = []
+    if active_only:
+        clauses.append("active=1")
+    if user:
+        clauses.append("(owner_user_id IS NULL OR owner_user_id=?)")
+        params.append(user["id"])
+    else:
+        clauses.append("owner_user_id IS NULL")
+    if extra_clause:
+        clauses.append(extra_clause)
+        params.extend(extra_params)
+    where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where_sql, tuple(params)
+
+def get_visible_additives(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True) -> List[Dict[str, Any]]:
+    where_sql, params = build_additives_where(db, user, active_only=active_only)
+    return q(db, f"SELECT * FROM additives{where_sql} ORDER BY parameter, name", params)
+
+def get_visible_additive_by_id(db: "DBConnection", user: Optional[Dict[str, Any]], additive_id: int, active_only: bool = False) -> Optional[Dict[str, Any]]:
+    where_sql, params = build_additives_where(db, user, active_only=active_only, extra_clause="id=?", extra_params=(additive_id,))
+    return one(db, f"SELECT * FROM additives{where_sql}", params)
+
+def group_additives_by_parameter(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped = []
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        group_name = (r["group_name"] or "").strip()
+        if group_name:
+            key = group_name
+        else:
+            key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        groups.setdefault(key, []).append(r)
+    for key in sorted(groups.keys(), key=lambda s: s.lower()):
+        grouped.append({"parameter": key, "items": groups[key]})
+    return grouped
 
 def get_visible_tank_ids(db: Connection, user: Optional[Dict[str, Any]]) -> List[int]:
     if user and row_get(user, "admin"):
@@ -2126,10 +2252,10 @@ def get_recent_param_values(
             series[name] = series_values
     return series
 
-def get_overdue_tests(db: Connection, tank_id: int) -> List[Dict[str, Any]]:
+def get_overdue_tests(db: Connection, tank_id: int, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     now = datetime.now()
     overdue: List[Dict[str, Any]] = []
-    pdefs = get_active_param_defs(db)
+    pdefs = get_active_param_defs(db, user_id=user_id)
     latest_map = get_latest_and_previous_per_parameter(db, tank_id)
     for p in pdefs:
         name = row_get(p, "name")
@@ -2272,6 +2398,9 @@ def execute_insert_returning_id(db: DBConnection, sql: str, params: Tuple[Any, .
                     result = db.execute(f"{sql} RETURNING id", params)
                 elif "INSERT INTO tanks" in sql and (constraint in (None, "tanks_pkey")):
                     reset_tanks_sequence(db)
+                    result = db.execute(f"{sql} RETURNING id", params)
+                elif "INSERT INTO users" in sql and (constraint in (None, "users_pkey")):
+                    reset_users_sequence(db)
                     result = db.execute(f"{sql} RETURNING id", params)
                 else:
                     raise
@@ -2428,6 +2557,23 @@ def reset_audit_logs_sequence(db: DBConnection) -> None:
         """
     )
 
+def reset_users_sequence(db: DBConnection) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    db.execute(
+        """
+        WITH max_id AS (
+            SELECT MAX(id) AS max_id FROM users
+        )
+        SELECT setval(
+            pg_get_serial_sequence('users', 'id'),
+            COALESCE(max_id, 1),
+            max_id IS NOT NULL
+        )
+        FROM max_id
+        """
+    )
+
 def insert_tank_journal(db: DBConnection, tank_id: int, entry_date: str, entry_type: str, title: str, notes: str) -> None:
     try:
         db.execute(
@@ -2527,16 +2673,53 @@ def compute_target(tlow: Any, thigh: Any) -> Any:
         return (fl + fh) / 2.0
     except Exception: return thigh if thigh is not None else tlow
 
-def list_parameters(db: Connection) -> List[Dict[str, Any]]:
+USER_PARAMETER_FIELDS = (
+    "max_daily_change",
+    "test_interval_days",
+    "default_target_low",
+    "default_target_high",
+    "default_alert_low",
+    "default_alert_high",
+)
+
+def get_user_parameter_settings(db: Connection, user_id: Optional[int]) -> Dict[int, Dict[str, Any]]:
+    if not user_id or not table_exists(db, "user_parameter_settings"):
+        return {}
+    rows = q(db, "SELECT * FROM user_parameter_settings WHERE user_id=?", (user_id,))
+    return {int(row["parameter_id"]): row for row in rows if row_get(row, "parameter_id") is not None}
+
+def apply_user_parameter_overrides(
+    rows: List[Dict[str, Any]],
+    overrides: Dict[int, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not overrides:
+        return rows
+    merged_rows = []
+    for row in rows:
+        merged = dict(row)
+        override = overrides.get(row_get(row, "id"))
+        if override:
+            for field in USER_PARAMETER_FIELDS:
+                value = row_get(override, field)
+                if value is not None:
+                    merged[field] = value
+        merged_rows.append(merged)
+    return merged_rows
+
+def list_parameters(db: Connection, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     if table_exists(db, "parameter_defs"):
-        return q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
+        rows = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
+        if user_id:
+            overrides = get_user_parameter_settings(db, user_id)
+            rows = apply_user_parameter_overrides(rows, overrides)
+        return rows
     if table_exists(db, "parameters"):
         rows = q(db, "SELECT DISTINCT name, COALESCE(unit,'') AS unit FROM parameters ORDER BY name")
         return [{"id": slug_key(r["name"]), "name": r["name"], "unit": r["unit"]} for r in rows]
     return []
 
-def get_active_param_defs(db: Connection) -> List[Dict[str, Any]]:
-    return list_parameters(db)
+def get_active_param_defs(db: Connection, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    return list_parameters(db, user_id=user_id)
 
 def parse_dt_any(v):
     if v is None: return None
@@ -3184,6 +3367,7 @@ init_db()
 @app.on_event("startup")
 def start_background_jobs() -> None:
     start_daily_summary_scheduler()
+    start_push_notification_scheduler()
     start_apex_polling()
 
 @app.middleware("http")
@@ -3269,10 +3453,11 @@ async def auth_middleware(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
-    pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+    pdefs = {p["name"]: p for p in get_active_param_defs(db, user_id=user["id"] if user else None)}
     available_params = [
         {
             "name": name,
@@ -3411,12 +3596,17 @@ def sentry_test() -> JSONResponse:
 @app.get("/insights", response_class=HTMLResponse)
 def insights(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
     tank_ids = [t["id"] for t in tanks]
     total_tanks = len(tanks)
     total_samples_week = 0
     overdue_items: List[Dict[str, Any]] = []
     volatility: List[Dict[str, Any]] = []
+    tank_summaries: List[Dict[str, Any]] = []
+    samples_week_map: Dict[int, int] = {}
+    last_sample_map: Dict[int, Optional[str]] = {}
+    volatility_count_map: Dict[int, int] = {}
     if tank_ids:
         placeholders = ",".join("?" for _ in tank_ids)
         week_start = (datetime.utcnow() - timedelta(days=7)).isoformat()
@@ -3425,7 +3615,34 @@ def insights(request: Request):
             f"SELECT COUNT(*) AS count FROM samples WHERE tank_id IN ({placeholders}) AND taken_at>=?",
             (*tank_ids, week_start),
         )["count"]
+        sample_rows = q(
+            db,
+            f"""SELECT tank_id, COUNT(*) AS count
+                FROM samples
+                WHERE tank_id IN ({placeholders}) AND taken_at>=?
+                GROUP BY tank_id""",
+            (*tank_ids, week_start),
+        )
+        for row in sample_rows:
+            tank_id_value = row_get(row, "tank_id")
+            if tank_id_value is None:
+                continue
+            samples_week_map[int(tank_id_value)] = int(row_get(row, "count") or 0)
+        last_sample_rows = q(
+            db,
+            f"""SELECT tank_id, MAX(taken_at) AS last_taken
+                FROM samples
+                WHERE tank_id IN ({placeholders})
+                GROUP BY tank_id""",
+            tuple(tank_ids),
+        )
+        for row in last_sample_rows:
+            tank_id_value = row_get(row, "tank_id")
+            if tank_id_value is None:
+                continue
+            last_sample_map[int(tank_id_value)] = row_get(row, "last_taken")
         for tank in tanks:
+            overdue_list = get_overdue_tests(db, tank["id"], user_id=user["id"] if user else None)
             overdue_items.extend(
                 [
                     {
@@ -3433,9 +3650,10 @@ def insights(request: Request):
                         "tank_name": tank["name"],
                         **item,
                     }
-                    for item in get_overdue_tests(db, tank["id"])
+                    for item in overdue_list
                 ]
             )
+            volatility_count_map[int(tank["id"])] = 0
             latest_map = get_latest_and_previous_per_parameter(db, tank["id"])
             for param_name, data in latest_map.items():
                 latest = data.get("latest")
@@ -3457,8 +3675,20 @@ def insights(request: Request):
                             "delta_per_day": delta / days,
                         }
                     )
+                    volatility_count_map[int(tank["id"])] += 1
                 except Exception:
                     continue
+            tank_id_value = int(tank["id"])
+            tank_summaries.append(
+                {
+                    "tank_id": tank_id_value,
+                    "tank_name": tank["name"],
+                    "last_sample": last_sample_map.get(tank_id_value),
+                    "samples_week": samples_week_map.get(tank_id_value, 0),
+                    "overdue_count": len(overdue_list),
+                    "volatility_count": volatility_count_map.get(tank_id_value, 0),
+                }
+            )
     volatility_sorted = sorted(volatility, key=lambda v: abs(v["delta_per_day"]), reverse=True)[:5]
     db.close()
     return templates.TemplateResponse(
@@ -3469,6 +3699,7 @@ def insights(request: Request):
             "total_samples_week": total_samples_week,
             "overdue_items": overdue_items,
             "volatility": volatility_sorted,
+            "tank_summaries": tank_summaries,
         },
     )
 
@@ -3576,11 +3807,14 @@ async def register_submit(request: Request):
         return templates.TemplateResponse("register.html", {"request": request, "error": "Email already registered."})
     password_hash, password_salt = hash_password(password)
     role = "admin" if first_user else "user"
-    db.execute(
+    user_id = execute_insert_returning_id(
+        db,
         "INSERT INTO users (email, username, role, password_hash, password_salt, created_at, admin) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (email, username, role, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
     )
-    user = one(db, "SELECT id FROM users WHERE email=?", (email,))
+    user = one(db, "SELECT id FROM users WHERE id=?", (user_id,)) if user_id else None
+    if not user:
+        user = one(db, "SELECT id FROM users WHERE email=?", (email,))
     sent, reason = send_welcome_email(email, username)
     log_audit(
         db,
@@ -3615,7 +3849,7 @@ def account_settings(request: Request):
         return redirect("/auth/login")
     tokens = list_api_tokens(db, user["id"])
     db.close()
-    return templates.TemplateResponse("account.html", {"request": request, "tokens": tokens})
+    return templates.TemplateResponse("account.html", {"request": request, "tokens": tokens, "user": user})
 
 @app.post("/account/password")
 async def account_change_password(request: Request):
@@ -3632,19 +3866,34 @@ async def account_change_password(request: Request):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current and new password are required.", "tokens": list_api_tokens(db, user["id"])},
+            {
+                "request": request,
+                "error": "Current and new password are required.",
+                "tokens": list_api_tokens(db, user["id"]),
+                "user": user,
+            },
         )
     if new_password != confirm_password:
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "New passwords do not match.", "tokens": list_api_tokens(db, user["id"])},
+            {
+                "request": request,
+                "error": "New passwords do not match.",
+                "tokens": list_api_tokens(db, user["id"]),
+                "user": user,
+            },
         )
     if not verify_password(current_password, user["password_hash"], user["password_salt"]):
         db.close()
         return templates.TemplateResponse(
             "account.html",
-            {"request": request, "error": "Current password is incorrect.", "tokens": list_api_tokens(db, user["id"])},
+            {
+                "request": request,
+                "error": "Current password is incorrect.",
+                "tokens": list_api_tokens(db, user["id"]),
+                "user": user,
+            },
         )
     password_hash, password_salt = hash_password(new_password)
     db.execute(
@@ -3657,7 +3906,7 @@ async def account_change_password(request: Request):
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "Password updated successfully.", "tokens": tokens},
+        {"request": request, "success": "Password updated successfully.", "tokens": tokens, "user": user},
     )
 
 @app.post("/account/api-tokens")
@@ -3675,7 +3924,13 @@ async def account_create_api_token(request: Request):
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "API token created. Copy it now; it won’t be shown again.", "api_token": token, "tokens": tokens},
+        {
+            "request": request,
+            "success": "API token created. Copy it now; it won’t be shown again.",
+            "api_token": token,
+            "tokens": tokens,
+            "user": user,
+        },
     )
 
 @app.post("/account/api-tokens/{token_id}/revoke")
@@ -3692,7 +3947,7 @@ async def account_revoke_api_token(request: Request, token_id: int):
     db.close()
     return templates.TemplateResponse(
         "account.html",
-        {"request": request, "success": "API token revoked.", "tokens": tokens},
+        {"request": request, "success": "API token revoked.", "tokens": tokens, "user": user},
     )
 
 @app.post("/admin/send-daily-summaries")
@@ -3724,10 +3979,7 @@ def google_start(request: Request):
     if not client_id:
         return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})
     state = secrets.token_urlsafe(16)
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
-    if not redirect_uri:
-        base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
-        redirect_uri = f"{base.rstrip('/')}/auth/google/callback"
+    redirect_uri = get_google_redirect_uri(request)
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -3755,10 +4007,7 @@ def google_start(request: Request):
 def google_callback(request: Request, code: str | None = None, state: str | None = None):
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
-    if not redirect_uri:
-        base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
-        redirect_uri = f"{base.rstrip('/')}/auth/google/callback"
+    redirect_uri = get_google_redirect_uri(request)
     expected_state = request.cookies.get("oauth_state")
     if not client_id or not client_secret:
         return templates.TemplateResponse("login.html", {"request": request, "error": "Google OAuth is not configured."})
@@ -3799,7 +4048,8 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         first_user = not users_exist(db)
         role = "admin" if first_user else "user"
         oauth_password_hash, oauth_password_salt = hash_password(secrets.token_urlsafe(24))
-        db.execute(
+        user_id = execute_insert_returning_id(
+            db,
             "INSERT INTO users (email, username, role, password_hash, password_salt, google_sub, created_at, admin) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -3813,7 +4063,9 @@ def google_callback(request: Request, code: str | None = None, state: str | None
                 1 if first_user else 0,
             ),
         )
-        user = one(db, "SELECT * FROM users WHERE email=?", (email,))
+        user = one(db, "SELECT * FROM users WHERE id=?", (user_id,)) if user_id else None
+        if not user:
+            user = one(db, "SELECT * FROM users WHERE email=?", (email,))
         sent, reason = send_welcome_email(email, username)
         log_audit(
             db,
@@ -3866,8 +4118,9 @@ def add_reading_selector(request: Request):
 @app.get("/tanks/multi-add", response_class=HTMLResponse)
 def multi_add_form(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
-    params_rows = get_active_param_defs(db)
+    params_rows = get_active_param_defs(db, user_id=user["id"] if user else None)
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
     for k in kits:
@@ -3949,8 +4202,18 @@ async def multi_add_save(request: Request):
 @app.get("/tanks/new", response_class=HTMLResponse)
 def tank_new_form(request: Request):
     db = get_db()
-    params = list_parameters(db)
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    user = get_current_user(db, request)
+    params = list_parameters(db, user_id=user["id"] if user else None)
+    recommended_targets = {
+        row_get(p, "name"): {
+            "target_low": row_get(p, "default_target_low"),
+            "target_high": row_get(p, "default_target_high"),
+            "alert_low": row_get(p, "default_alert_low"),
+            "alert_high": row_get(p, "default_alert_high"),
+        }
+        for p in params
+    }
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         parameter = (a["parameter"] or "other").strip().lower()
@@ -3976,7 +4239,7 @@ def tank_new_form(request: Request):
         {
             "request": request,
             "params": params,
-            "recommended_targets": RECOMMENDED_DEFAULTS,
+            "recommended_targets": recommended_targets,
             "additives": additives_rows,
             "grouped_additives": grouped_additives,
         },
@@ -4084,7 +4347,7 @@ async def tank_new(request: Request):
         inspector = inspect(db._conn)
         cols = {column["name"] for column in inspector.get_columns("targets")}
         has_target_cols = "target_low" in cols
-        params = list_parameters(db)
+        params = list_parameters(db, user_id=user["id"] if user else None)
         for p in params:
             pname = p["name"]
             pid = p["id"]
@@ -4393,10 +4656,10 @@ def tank_detail(request: Request, tank_id: int):
             "dosing_low_days": dosing_low_days,
         })
 
-    daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
+    daily_consumption = build_daily_consumption(db, tank_view, user) if profile else {}
     if profile:
         try:
-            additive_rows = q(db, "SELECT name, brand FROM additives")
+            additive_rows = get_visible_additives(db, user, active_only=False)
             additive_map = {str(a["name"]).strip(): additive_label(a) for a in additive_rows}
             for key in (
                 "all_in_one_solution",
@@ -4539,7 +4802,7 @@ def tank_detail(request: Request, tank_id: int):
     latest_by_param_id = get_latest_per_parameter(db, tank_id)
     latest_and_previous = get_latest_and_previous_per_parameter(db, tank_id)
     targets_by_param = {t["parameter"]: t for t in targets if row_get(t, "parameter") is not None}
-    pdef_map = {p["name"]: p for p in get_active_param_defs(db)}
+    pdef_map = {p["name"]: p for p in get_active_param_defs(db, user_id=user["id"] if user else None)}
 
     latest_sample_ids = {data.get("sample_id") for data in latest_by_param_id.values() if data.get("sample_id")}
     icp_sample_ids: set[int] = set()
@@ -5035,7 +5298,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         parameter = (a["parameter"] or "other").strip().lower()
@@ -5127,7 +5390,9 @@ def tank_dosing_settings(request: Request, tank_id: int):
         except Exception: pass
     param_limits = {}
     try:
-        pdefs = q(db, "SELECT name, max_daily_change, unit FROM parameter_defs WHERE active=1")
+        pdefs = q(db, "SELECT id, name, max_daily_change, unit FROM parameter_defs WHERE active=1")
+        if user:
+            pdefs = apply_user_parameter_overrides(pdefs, get_user_parameter_settings(db, user["id"]))
         for row in pdefs:
             name = row_get(row, "name")
             if not name:
@@ -5138,7 +5403,7 @@ def tank_dosing_settings(request: Request, tank_id: int):
             }
     except Exception:
         param_limits = {}
-    daily_consumption = build_daily_consumption(db, tank_view) if profile else {}
+    daily_consumption = build_daily_consumption(db, tank_view, user) if profile else {}
     suggested_dosing: Dict[str, float] = {}
     volume_l = row_get(tank_view, "volume_l")
     if volume_l and daily_consumption:
@@ -5228,8 +5493,10 @@ async def tank_dosing_settings_save(request: Request, tank_id: int):
         "nopox": ("NoPox", None, "nopox_daily_ml", "nopox_container_ml", "nopox_remaining_ml", "use_nopox"),
     }
     db = get_db()
+    user = get_current_user(db, request)
+    additives_visible = get_visible_additives(db, user, active_only=True)
     additives_by_name = {
-        row_get(row, "name"): row for row in q(db, "SELECT name, parameter, group_name FROM additives")
+        row_get(row, "name"): row for row in additives_visible
     }
 
     def type_key_for_additive(solution_name: str) -> str | None:
@@ -5865,7 +6132,7 @@ def tank_summary(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     latest_map = get_latest_per_parameter(db, tank_id)
-    unit_by_name = {p["name"]: row_get(p, "unit") or "" for p in get_active_param_defs(db)}
+    unit_by_name = {p["name"]: row_get(p, "unit") or "" for p in get_active_param_defs(db, user_id=user["id"] if user else None)}
     latest_values = []
     for name, data in latest_map.items():
         taken_at = data.get("taken_at")
@@ -5980,7 +6247,7 @@ def add_sample_form(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    params_rows = filter_trace_parameters(get_active_param_defs(db))
+    params_rows = filter_trace_parameters(get_active_param_defs(db, user_id=user["id"] if user else None))
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
     for k in kits:
@@ -6013,7 +6280,7 @@ async def add_sample(request: Request, tank_id: int):
     if sample_id is None:
         db.close()
         raise HTTPException(status_code=500, detail="Failed to save sample")
-    pdefs = filter_trace_parameters(get_active_param_defs(db))
+    pdefs = filter_trace_parameters(get_active_param_defs(db, user_id=user["id"] if user else None))
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
@@ -6078,7 +6345,7 @@ def sample_edit(request: Request, tank_id: int, sample_id: int):
     if not tank or not sample:
         db.close()
         raise HTTPException(status_code=404, detail="Sample not found")
-    pdefs = get_active_param_defs(db)
+    pdefs = get_active_param_defs(db, user_id=user["id"] if user else None)
     readings = {r["name"]: r["value"] for r in get_sample_readings(db, sample_id)}
     kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
     kits_by_param = {}
@@ -6119,7 +6386,7 @@ async def sample_edit_save(request: Request, tank_id: int, sample_id: int):
     else:
         if table_exists(db, "parameters"):
             execute_with_retry(db, "DELETE FROM parameters WHERE sample_id=?", (sample_id,))
-    pdefs = get_active_param_defs(db)
+    pdefs = get_active_param_defs(db, user_id=user["id"] if user else None)
     for p in pdefs:
         pid = p["id"]
         pname = p["name"]
@@ -6300,7 +6567,7 @@ def edit_targets(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
         
-    params = list_parameters(db)
+    params = list_parameters(db, user_id=user["id"] if user else None)
     existing = {}
     
     if table_exists(db, "targets"):
@@ -6357,7 +6624,8 @@ def edit_targets(request: Request, tank_id: int):
 async def save_targets(request: Request, tank_id: int):
     db = get_db()
     form = await request.form()
-    params = list_parameters(db)
+    user = get_current_user(db, request)
+    params = list_parameters(db, user_id=user["id"] if user else None)
     for p in params:
         name = p["name"]
         key = slug_key(name)
@@ -6401,7 +6669,10 @@ async def save_targets_alias(request: Request, tank_id: int): return await save_
 @app.get("/settings/parameters/", response_class=HTMLResponse, include_in_schema=False)
 def parameters_settings(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     rows = q(db, "SELECT * FROM parameter_defs ORDER BY sort_order, name")
+    if user:
+        rows = apply_user_parameter_overrides(rows, get_user_parameter_settings(db, user["id"]))
     db.close()
     error = request.query_params.get("error")
     return templates.TemplateResponse(
@@ -6418,6 +6689,18 @@ def parameter_new(request: Request):
 def parameter_edit(request: Request, param_id: int):
     db = get_db()
     row = one(db, "SELECT * FROM parameter_defs WHERE id=?", (param_id,))
+    user = get_current_user(db, request)
+    if row and user and table_exists(db, "user_parameter_settings"):
+        override = one(
+            db,
+            "SELECT * FROM user_parameter_settings WHERE user_id=? AND parameter_id=?",
+            (user["id"], param_id),
+        )
+        if override:
+            for field in USER_PARAMETER_FIELDS:
+                value = row_get(override, field)
+                if value is not None:
+                    row[field] = value
     db.close()
     return templates.TemplateResponse("parameter_edit.html", {"request": request, "param": row})
 
@@ -6439,6 +6722,10 @@ def parameter_save(
 ):
     db = get_db()
     cur = cursor(db)
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     # 1. Prepare Data
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
@@ -6456,74 +6743,38 @@ def parameter_save(
         db.close()
         return redirect("/settings/parameters")
 
-    data = (
-        clean_name,
-        (chemical_symbol or "").strip() or None,
-        (unit or "").strip() or None,
-        mdc,
-        interval,
-        order,
-        is_active,
-        dt_low,
-        dt_high,
-        da_low,
-        da_high,
-    )
+    existing_row = None
+    if param_id and str(param_id).strip().isdigit():
+        existing_row = one(db, "SELECT * FROM parameter_defs WHERE id=?", (int(param_id),))
+        if not existing_row:
+            db.close()
+            return redirect("/settings/parameters")
+        clean_name = (row_get(existing_row, "name") or clean_name).strip()
+        chemical_symbol = row_get(existing_row, "chemical_symbol")
+        unit = row_get(existing_row, "unit")
 
     try:
-        # 2. Logic for Update/Merge
-        if param_id and str(param_id).strip().isdigit():
+        # 2. Update existing definition (name/unit locked)
+        if existing_row:
             pid = int(param_id)
-            old = one(db, "SELECT * FROM parameter_defs WHERE id=?", (pid,))
-            old_name = (old["name"] if old else "").strip()
-            
-            # Check if we are renaming
-            if old_name and clean_name and old_name != clean_name:
-                # Does the target name already exist?
-                existing = one(
-                    db,
-                    "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
-                    (clean_name,),
-                )
-                
-                if existing and int(existing["id"]) != pid:
-                    # MERGE SCENARIO: 
-                    existing_id = int(existing["id"])
-                    
-                    if table_exists(db, "sample_values"):
-                        cur.execute("UPDATE sample_values SET parameter_id=? WHERE parameter_id=?", (existing_id, pid))
-                    
-                    for tbl, col in (("parameters", "name"), ("targets", "parameter"), ("additives", "parameter"), ("test_kits", "parameter")):
-                        if table_exists(db, tbl): 
-                            cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
+            cur.execute(
+                """
+                UPDATE parameter_defs
+                SET name=?, chemical_symbol=?, unit=?, sort_order=?, active=?
+                WHERE id=?
+                """,
+                (
+                    clean_name,
+                    (chemical_symbol or "").strip() or None,
+                    (unit or "").strip() or None,
+                    order,
+                    is_active,
+                    pid,
+                ),
+            )
+            param_id_value = pid
 
-                    cur.execute("DELETE FROM parameter_defs WHERE id=?", (pid,))
-                    cur.execute("""
-                        UPDATE parameter_defs 
-                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                            default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                        WHERE id=?""", (*data, existing_id))
-                    
-                else:
-                    # RENAME SCENARIO (No conflict):
-                    for tbl, col in (("parameters", "name"), ("targets", "parameter"), ("additives", "parameter"), ("test_kits", "parameter")):
-                        if table_exists(db, tbl): 
-                            cur.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (clean_name, old_name))
-                            
-                    cur.execute("""
-                        UPDATE parameter_defs 
-                        SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                            default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                        WHERE id=?""", (*data, pid))
-            else:
-                # SIMPLE UPDATE
-                cur.execute("""
-                    UPDATE parameter_defs 
-                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                        default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (*data, pid))
-        
-        # 3. Logic for Insert
+        # 3. Insert new definition
         else:
             existing = one(
                 db,
@@ -6531,18 +6782,45 @@ def parameter_save(
                 (clean_name,),
             )
             if existing:
-                cur.execute("""
-                    UPDATE parameter_defs 
-                    SET name=?, chemical_symbol=?, unit=?, max_daily_change=?, test_interval_days=?, sort_order=?, active=?, 
-                        default_target_low=?, default_target_high=?, default_alert_low=?, default_alert_high=?
-                    WHERE id=?""", (data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], existing["id"]))
+                message = "Parameter name already exists."
+                param_payload = {
+                    "id": None,
+                    "name": clean_name,
+                    "chemical_symbol": (chemical_symbol or "").strip() or None,
+                    "unit": (unit or "").strip() or None,
+                    "sort_order": order,
+                    "max_daily_change": mdc,
+                    "test_interval_days": interval,
+                    "active": is_active,
+                    "default_target_low": dt_low,
+                    "default_target_high": dt_high,
+                    "default_alert_low": da_low,
+                    "default_alert_high": da_high,
+                }
+                return templates.TemplateResponse(
+                    "parameter_edit.html",
+                    {"request": request, "param": param_payload, "error": message},
+                    status_code=400,
+                )
             else:
                 try:
                     cur.execute("""
                         INSERT INTO parameter_defs 
                         (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        data,
+                        (
+                            clean_name,
+                            (chemical_symbol or "").strip() or None,
+                            (unit or "").strip() or None,
+                            mdc,
+                            interval,
+                            order,
+                            is_active,
+                            dt_low,
+                            dt_high,
+                            da_low,
+                            da_high,
+                        ),
                     )
                 except IntegrityError as exc:
                     orig = getattr(exc, "orig", None)
@@ -6553,10 +6831,67 @@ def parameter_save(
                             INSERT INTO parameter_defs 
                             (name, chemical_symbol, unit, max_daily_change, test_interval_days, sort_order, active, default_target_low, default_target_high, default_alert_low, default_alert_high) 
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            data,
+                            (
+                                clean_name,
+                                (chemical_symbol or "").strip() or None,
+                                (unit or "").strip() or None,
+                                mdc,
+                                interval,
+                                order,
+                                is_active,
+                                dt_low,
+                                dt_high,
+                                da_low,
+                                da_high,
+                            ),
                         )
                     else:
                         raise
+                param_id_value = cur.lastrowid
+                if not param_id_value:
+                    inserted = one(
+                        db,
+                        "SELECT id FROM parameter_defs WHERE LOWER(TRIM(name))=LOWER(TRIM(?))",
+                        (clean_name,),
+                    )
+                    if inserted:
+                        param_id_value = int(inserted["id"])
+
+        if table_exists(db, "user_parameter_settings") and param_id_value:
+            if all(
+                value is None
+                for value in (mdc, interval, dt_low, dt_high, da_low, da_high)
+            ):
+                db.execute(
+                    "DELETE FROM user_parameter_settings WHERE user_id=? AND parameter_id=?",
+                    (user["id"], param_id_value),
+                )
+            else:
+                execute_with_retry(
+                    db,
+                    """
+                    INSERT INTO user_parameter_settings
+                    (user_id, parameter_id, max_daily_change, test_interval_days, default_target_low, default_target_high, default_alert_low, default_alert_high)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (user_id, parameter_id) DO UPDATE
+                    SET max_daily_change=excluded.max_daily_change,
+                        test_interval_days=excluded.test_interval_days,
+                        default_target_low=excluded.default_target_low,
+                        default_target_high=excluded.default_target_high,
+                        default_alert_low=excluded.default_alert_low,
+                        default_alert_high=excluded.default_alert_high
+                    """,
+                    (
+                        user["id"],
+                        param_id_value,
+                        mdc,
+                        interval,
+                        dt_low,
+                        dt_high,
+                        da_low,
+                        da_high,
+                    ),
+                )
 
         db.commit()
         
@@ -6614,28 +6949,8 @@ def parameter_save(
 @app.post("/settings/parameters/{param_id}/delete")
 def parameter_delete(request: Request, param_id: int):
     db = get_db()
-    param = one(db, "SELECT id, name FROM parameter_defs WHERE id=?", (param_id,))
-    if not param:
-        db.close()
-        return redirect("/settings/parameters")
-    param_name = row_get(param, "name")
-    try:
-        if table_exists(db, "sample_value_kits"):
-            db.execute("DELETE FROM sample_value_kits WHERE parameter_id=?", (param_id,))
-        if table_exists(db, "sample_values"):
-            db.execute("DELETE FROM sample_values WHERE parameter_id=?", (param_id,))
-        if param_name:
-            for tbl, col in (("parameters", "name"), ("targets", "parameter")):
-                if table_exists(db, tbl):
-                    db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (param_name,))
-        db.execute("DELETE FROM parameter_defs WHERE id=?", (param_id,))
-        db.commit()
-        return redirect("/settings/parameters")
-    except IntegrityError:
-        db.rollback()
-        return redirect("/settings/parameters?error=Unable+to+delete+parameter+with+existing+references.")
-    finally:
-        db.close()
+    db.close()
+    return redirect("/settings/parameters?error=Parameter+deletion+is+disabled.")
 
 @app.post("/settings/parameters/bulk-add")
 async def parameter_bulk_add(request: Request):
@@ -6687,6 +7002,10 @@ def system_settings(request: Request):
     base_url = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
     redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or f"{base_url.rstrip('/')}/auth/google/callback"
     vapid_public, _, _ = get_vapid_settings()
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = os.environ.get("SMTP_PORT", "587")
+    smtp_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+    smtp_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     db.close()
     return templates.TemplateResponse(
         "system_settings.html",
@@ -6696,6 +7015,56 @@ def system_settings(request: Request):
             "google_client_id": os.environ.get("GOOGLE_CLIENT_ID"),
             "google_redirect_uri": redirect_uri,
             "vapid_public_key": vapid_public,
+            "smtp_host": smtp_host,
+            "smtp_port": smtp_port,
+            "smtp_tls": smtp_tls,
+            "smtp_ssl": smtp_ssl,
+            "smtp_sender_transactional": os.environ.get("EMAIL_FROM_TRANSACTIONAL") or "support@reefmetrics.app",
+            "smtp_sender_alerts": os.environ.get("EMAIL_FROM_ALERTS") or "alerts@reefmetrics.app",
+            "smtp_sender_billing": os.environ.get("EMAIL_FROM_BILLING") or "billing@reefmetrics.app",
+            "smtp_sender_marketing": os.environ.get("EMAIL_FROM_MARKETING") or "hello@reefmetrics.app",
+            "smtp_test_recipient": row_get(current_user, "email"),
+        },
+    )
+
+@app.post("/admin/smtp-test")
+async def admin_smtp_test(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    form = await request.form()
+    recipient = (form.get("recipient") or row_get(current_user, "email") or "").strip()
+    if not recipient:
+        db.close()
+        return templates.TemplateResponse(
+            "simple_message.html",
+            {
+                "request": request,
+                "title": "SMTP Test",
+                "message": "Recipient email is required to run the SMTP test.",
+                "actions": [{"label": "Back to system settings", "href": "/settings/system"}],
+            },
+        )
+    subject = "Reef Metrics SMTP Test"
+    text_body = "This is a test email to verify SMTP settings."
+    html_body = "<p>This is a test email to verify SMTP settings.</p>"
+    success, reason = send_email(recipient, subject, text_body, html_body, sender_kind="transactional")
+    log_audit(
+        db,
+        current_user,
+        "smtp-test",
+        {"recipient": recipient, "sent": success, "reason": reason} if reason else {"recipient": recipient, "sent": success},
+    )
+    db.commit()
+    db.close()
+    message = f"SMTP test email sent to {recipient}." if success else f"SMTP test failed: {reason}"
+    return templates.TemplateResponse(
+        "simple_message.html",
+        {
+            "request": request,
+            "title": "SMTP Test",
+            "message": message,
+            "actions": [{"label": "Back to system settings", "href": "/settings/system"}],
         },
     )
 
@@ -7123,20 +7492,24 @@ def test_kit_delete(request: Request, kit_id: int):
 @app.get("/additives/", response_class=HTMLResponse, include_in_schema=False)
 def additives(request: Request):
     db = get_db()
-    rows = q(db, "SELECT * FROM additives ORDER BY parameter, name")
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    rows = get_visible_additives(db, user, active_only=False)
+    standard_rows = [row for row in rows if row_get(row, "owner_user_id") is None]
+    personal_rows = [row for row in rows if row_get(row, "owner_user_id") == user["id"]]
     db.close()
-    grouped = []
-    groups: Dict[str, List[Dict[str, Any]]] = {}
-    for r in rows:
-        group_name = (r["group_name"] or "").strip()
-        if group_name:
-            key = group_name
-        else:
-            key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
-        groups.setdefault(key, []).append(r)
-    for key in sorted(groups.keys(), key=lambda s: s.lower()):
-        grouped.append({"parameter": key, "items": groups[key]})
-    return templates.TemplateResponse("additives.html", {"request": request, "additives": rows, "rows": rows, "grouped_additives": grouped})
+    return templates.TemplateResponse(
+        "additives.html",
+        {
+            "request": request,
+            "standard_groups": group_additives_by_parameter(standard_rows),
+            "personal_groups": group_additives_by_parameter(personal_rows),
+            "is_admin": row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin",
+            "error": request.query_params.get("error"),
+        },
+    )
 
 @app.get("/settings/additives", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/settings/additives/", response_class=HTMLResponse, include_in_schema=False)
@@ -7146,27 +7519,69 @@ def additives_settings_redirect(): return redirect("/additives")
 @app.get("/additives/new/", response_class=HTMLResponse, include_in_schema=False)
 def additive_new(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
     selected_parameter = (request.query_params.get("parameter") or "").strip()
     return templates.TemplateResponse(
         "additive_edit.html",
-        {"request": request, "additive": None, "parameters": parameters, "selected_parameter": selected_parameter},
+        {
+            "request": request,
+            "additive": None,
+            "parameters": parameters,
+            "selected_parameter": selected_parameter,
+            "is_admin": row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin",
+        },
     )
 
 @app.get("/additives/{additive_id}/edit", response_class=HTMLResponse)
 def additive_edit(request: Request, additive_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
     additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
+    if not additive:
+        db.close()
+        return redirect("/additives")
+    is_admin = row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin"
+    owner_id = row_get(additive, "owner_user_id")
+    if owner_id is None and not is_admin:
+        db.close()
+        return redirect("/additives?error=Only%20admins%20can%20edit%20standard%20additives")
+    if owner_id is not None and not is_admin and owner_id != user["id"]:
+        db.close()
+        return redirect("/additives?error=You%20can%20only%20edit%20your%20own%20additives")
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("additive_edit.html", {"request": request, "additive": additive, "parameters": parameters})
+    return templates.TemplateResponse(
+        "additive_edit.html",
+        {
+            "request": request,
+            "additive": additive,
+            "parameters": parameters,
+            "is_admin": is_admin,
+        },
+    )
 
 @app.post("/additives/save")
-def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), brand: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def additive_save(request: Request, additive_id: Optional[str] = Form(None), name: str = Form(...), brand: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), strength: str = Form(...), unit: str = Form(...), max_daily: Optional[str] = Form(None), notes: Optional[str] = Form(None), active: Optional[str] = Form(None), is_global: Optional[str] = Form(None)):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
     cur = cursor(db)
+    is_admin = row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin"
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
+    owner_user_id = None if (is_admin and is_global in ("1", "on", "true", "True")) else user["id"]
     data = (
         name.strip(),
         (brand or "").strip() or None,
@@ -7176,16 +7591,28 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
         to_float(max_daily),
         (notes or "").strip() or None,
         is_active,
+        owner_user_id,
     )
     if additive_id and str(additive_id).strip().isdigit():
+        existing = one(db, "SELECT * FROM additives WHERE id=?", (int(additive_id),))
+        if not existing:
+            db.close()
+            return redirect("/additives")
+        existing_owner = row_get(existing, "owner_user_id")
+        if existing_owner is None and not is_admin:
+            db.close()
+            return redirect("/additives?error=Only%20admins%20can%20edit%20standard%20additives")
+        if existing_owner is not None and not is_admin and existing_owner != user["id"]:
+            db.close()
+            return redirect("/additives?error=You%20can%20only%20edit%20your%20own%20additives")
         cur.execute(
-            "UPDATE additives SET name=?, brand=?, parameter=?, strength=?, unit=?, max_daily=?, notes=?, active=? WHERE id=?",
+            "UPDATE additives SET name=?, brand=?, parameter=?, strength=?, unit=?, max_daily=?, notes=?, active=?, owner_user_id=? WHERE id=?",
             (*data, int(additive_id)),
         )
     else:
         try:
             cur.execute(
-                "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 data,
             )
         except IntegrityError as exc:
@@ -7193,7 +7620,7 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
             if engine.dialect.name == "postgresql" and isinstance(orig, psycopg.errors.UniqueViolation):
                 reset_additives_sequence(db)
                 cur.execute(
-                    "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO additives (name, brand, parameter, strength, unit, max_daily, notes, active, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     data,
                 )
             else:
@@ -7205,6 +7632,23 @@ def additive_save(request: Request, additive_id: Optional[str] = Form(None), nam
 @app.post("/additives/{additive_id}/delete")
 def additive_delete(request: Request, additive_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_additives_owner_column(db)
+    additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
+    if not additive:
+        db.close()
+        return redirect("/additives")
+    is_admin = row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin"
+    owner_id = row_get(additive, "owner_user_id")
+    if owner_id is None and not is_admin:
+        db.close()
+        return redirect("/additives?error=Only%20admins%20can%20delete%20standard%20additives")
+    if owner_id is not None and not is_admin and owner_id != user["id"]:
+        db.close()
+        return redirect("/additives?error=You%20can%20only%20delete%20your%20own%20additives")
     db.execute("DELETE FROM additives WHERE id=?", (additive_id,))
     db.commit()
     db.close()
@@ -7219,7 +7663,7 @@ def dosing_log(request: Request, tank_id: int):
     if not tank:
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    additives_rows = get_visible_additives(db, user, active_only=True)
     logs = q(
         db,
         "SELECT dl.*, COALESCE(NULLIF(TRIM(a.brand), '') || ' ' || a.name, a.name) AS additive_name FROM dose_logs dl LEFT JOIN additives a ON a.id = dl.additive_id WHERE dl.tank_id=? ORDER BY dl.logged_at DESC, dl.id DESC",
@@ -7260,7 +7704,7 @@ async def dosing_log_add(request: Request, tank_id: int):
     cur.execute("INSERT INTO dose_logs (tank_id, additive_id, amount_ml, reason, logged_at) VALUES (?, ?, ?, ?, ?)", (tank_id, aid, float(amount_ml), reason, when_iso))
     if aid is not None:
         profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-        additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
+        additive = get_visible_additive_by_id(db, user, aid, active_only=False)
         if profile and additive:
             additive_name = (row_get(additive, "name") or "").strip().lower()
             additive_label_name = additive_label(additive).strip().lower()
@@ -7344,7 +7788,7 @@ async def dosing_log_delete(request: Request, log_id: int, tank_id: int = Form(.
         amount_ml = row_get(log_row, "amount_ml")
         if aid is not None and amount_ml is not None:
             profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-            additive = one(db, "SELECT name, brand FROM additives WHERE id=?", (aid,))
+            additive = get_visible_additive_by_id(db, user, aid, active_only=False)
             if profile and additive:
                 additive_name = (row_get(additive, "name") or "").strip().lower()
                 additive_label_name = additive_label(additive).strip().lower()
@@ -7467,7 +7911,8 @@ def merge_parameters_run(request: Request):
 def calculators(request: Request):
     db = get_db()
     tanks = get_visible_tanks(db, request)
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    user = get_current_user(db, request)
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
@@ -7483,7 +7928,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
     user = get_current_user(db, request)
     tank = get_tank_for_user(db, user, tank_id)
     tank_profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
-    additive = one(db, "SELECT * FROM additives WHERE id=?", (additive_id,))
+    additive = get_visible_additive_by_id(db, user, additive_id, active_only=True)
     if not tank or not additive:
         db.close()
         return redirect("/tools/calculators")
@@ -7497,6 +7942,17 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
         dose_ml = (float(desired_change) * volume * 1000.0) / float(strength)
         pname = (additive['parameter'] or '').strip()
         pdef = one(db, "SELECT * FROM parameter_defs WHERE name=?", (pname,))
+        if pdef and user and table_exists(db, "user_parameter_settings"):
+            override = one(
+                db,
+                "SELECT * FROM user_parameter_settings WHERE user_id=? AND parameter_id=?",
+                (user["id"], pdef["id"]),
+            )
+            if override:
+                for field in USER_PARAMETER_FIELDS:
+                    value = row_get(override, field)
+                    if value is not None:
+                        pdef[field] = value
         if not pdef and pname:
             defs = q(db, "SELECT * FROM parameter_defs WHERE active=1")
             lname = pname.lower()
@@ -7513,7 +7969,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
                 daily_ml = (daily_change * volume * 1000.0) / float(strength)
         except Exception: pass
     tanks = get_visible_tanks(db, request)
-    additives_rows = q(db, "SELECT * FROM additives WHERE active=1 ORDER BY parameter, name")
+    additives_rows = get_visible_additives(db, user, active_only=True)
     grouped_additives: Dict[str, List[Dict[str, Any]]] = {}
     for a in additives_rows:
         key = (a["parameter"] or "Uncategorized").strip() or "Uncategorized"
@@ -7527,6 +7983,7 @@ def calculators_post(request: Request, tank_id: int = Form(...), additive_id: in
 @app.get("/tools/dose-plan/", response_class=HTMLResponse, include_in_schema=False)
 def dose_plan(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
     today = date.today()
     try:
         chk_rows = q(
@@ -7555,9 +8012,14 @@ def dose_plan(request: Request):
         check_map = {}
         latest_check_map = {}
     tanks = get_visible_tanks(db, request)
-    pdefs = q(db, "SELECT name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
+    pdefs = q(db, "SELECT id, name, unit, max_daily_change, default_target_low, default_target_high FROM parameter_defs")
+    if user:
+        pdefs = apply_user_parameter_overrides(pdefs, get_user_parameter_settings(db, user["id"]))
     pdef_map = {r["name"]: r for r in pdefs}
-    all_additives = q(db, "SELECT id, name, parameter FROM additives WHERE active=1 ORDER BY name")
+    all_additives = [
+        {"id": row_get(row, "id"), "name": row_get(row, "name"), "parameter": row_get(row, "parameter")}
+        for row in get_visible_additives(db, user, active_only=True)
+    ]
     additives_by_group: Dict[str, List[Dict[str, Any]]] = {}
     def group_key(value: str) -> str:
         cleaned = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
@@ -7670,7 +8132,8 @@ def dose_plan(request: Request):
             days = 1
             if max_change_f and max_change_f > 0 and delta > max_change_f: days = int(math.ceil(delta / max_change_f))
             per_day_change = delta / float(days)
-            adds = q(db, "SELECT * FROM additives WHERE active=1 AND parameter=? ORDER BY name", (pname,))
+            where_sql, params = build_additives_where(db, user, active_only=True, extra_clause="parameter=?", extra_params=(pname,))
+            adds = q(db, f"SELECT * FROM additives{where_sql} ORDER BY name", params)
             if not adds:
                 suggestion = None
                 for candidate in additives_by_group.get(group_key(pname), []):
@@ -8391,6 +8854,16 @@ async def admin_user_delete(request: Request, user_id: int):
         if admin_count <= 1:
             db.close()
             return redirect("/admin/users?error=Cannot delete the last admin")
+    ensure_additives_owner_column(db)
+    db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM api_tokens WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM push_subscriptions WHERE user_id=?", (user_id,))
+    if table_exists(db, "user_parameter_settings"):
+        db.execute("DELETE FROM user_parameter_settings WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
+    db.execute("UPDATE tanks SET owner_user_id=NULL WHERE owner_user_id=?", (user_id,))
+    db.execute("UPDATE additives SET owner_user_id=NULL WHERE owner_user_id=?", (user_id,))
+    db.execute("DELETE FROM audit_logs WHERE actor_user_id=?", (user_id,))
     db.execute("DELETE FROM users WHERE id=?", (user_id,))
     log_audit(db, current_user, "user-delete", {"user_id": user_id})
     db.commit()

@@ -13,6 +13,8 @@
     --reef-muted: #5e6f7f;
     --reef-border: rgba(12, 40, 64, 0.14);
     --reef-shadow: 0 20px 45px rgba(9, 28, 48, 0.12);
+    --safe-area-top: env(safe-area-inset-top);
+    --safe-area-bottom: env(safe-area-inset-bottom);
 }
 
 body {
@@ -44,7 +46,7 @@ h1, h2, h3, h4, h5 {
     border-bottom: 1px solid rgba(12, 40, 64, 0.08);
     box-shadow: 0 12px 28px rgba(10, 34, 54, 0.1);
     backdrop-filter: blur(16px);
-    padding: 0.6rem 1.1rem;
+    padding: calc(0.6rem + var(--safe-area-top)) 1.1rem 0.6rem;
 }
 
 .navbar-brand {
@@ -184,6 +186,13 @@ h1, h2, h3, h4, h5 {
 
 .badge.text-bg-info {
     background-color: rgba(69, 209, 216, 0.24) !important;
+}
+
+.offline-banner {
+    border-radius: 16px;
+    border: 1px solid rgba(255, 156, 42, 0.25);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 12px 28px rgba(9, 28, 48, 0.08);
 }
 
 /* Alert/Status Indicators */
@@ -335,9 +344,57 @@ h1, h2, h3, h4, h5 {
     box-shadow: 0 18px 32px rgba(12, 40, 64, 0.12);
 }
 
-@media (max-width: 576px) {
+.bottom-nav {
+    position: fixed;
+    left: 50%;
+    bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    width: calc(100% - 1.5rem);
+    max-width: 720px;
+    z-index: 1030;
+    background: var(--reef-surface);
+    border-top: 1px solid var(--reef-border);
+    box-shadow: 0 -6px 18px rgba(15, 45, 69, 0.08);
+    padding: 0.6rem 0.75rem;
+    border-radius: 16px;
+}
+
+@media (max-width: 991.98px) {
+    .bottom-nav .nav-link {
+        color: var(--reef-muted) !important;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.2rem;
+    }
+
+    .bottom-nav .nav-link i {
+        font-size: 1.2rem;
+    }
+
+    .bottom-nav .nav-link.active {
+        color: var(--reef-teal) !important;
+    }
+}
+
+@media (max-width: 991.98px) {
     body {
         padding-bottom: calc(7.5rem + env(safe-area-inset-bottom));
+    }
+
+    .btn,
+    .btn-sm {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1.1;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
     }
 
     .brand-logo-img {
@@ -359,38 +416,6 @@ h1, h2, h3, h4, h5 {
 
     .mobile-content-pad {
         padding-bottom: calc(7.5rem + env(safe-area-inset-bottom));
-    }
-
-    .bottom-nav {
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 1030;
-        background: var(--reef-surface);
-        border-top: 1px solid var(--reef-border);
-        box-shadow: 0 -6px 18px rgba(15, 45, 69, 0.08);
-        padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));
-    }
-
-    .bottom-nav .nav-link {
-        color: var(--reef-muted) !important;
-        font-size: 0.7rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0.2rem;
-    }
-
-    .bottom-nav .nav-link i {
-        font-size: 1.2rem;
-    }
-
-    .bottom-nav .nav-link.active {
-        color: var(--reef-teal) !important;
     }
 
     .reef-hero {
