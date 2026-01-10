@@ -6963,6 +6963,10 @@ def system_settings(request: Request):
     base_url = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
     redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or f"{base_url.rstrip('/')}/auth/google/callback"
     vapid_public, _, _ = get_vapid_settings()
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = os.environ.get("SMTP_PORT", "587")
+    smtp_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+    smtp_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     db.close()
     return templates.TemplateResponse(
         "system_settings.html",
@@ -6972,6 +6976,56 @@ def system_settings(request: Request):
             "google_client_id": os.environ.get("GOOGLE_CLIENT_ID"),
             "google_redirect_uri": redirect_uri,
             "vapid_public_key": vapid_public,
+            "smtp_host": smtp_host,
+            "smtp_port": smtp_port,
+            "smtp_tls": smtp_tls,
+            "smtp_ssl": smtp_ssl,
+            "smtp_sender_transactional": os.environ.get("EMAIL_FROM_TRANSACTIONAL") or "support@reefmetrics.app",
+            "smtp_sender_alerts": os.environ.get("EMAIL_FROM_ALERTS") or "alerts@reefmetrics.app",
+            "smtp_sender_billing": os.environ.get("EMAIL_FROM_BILLING") or "billing@reefmetrics.app",
+            "smtp_sender_marketing": os.environ.get("EMAIL_FROM_MARKETING") or "hello@reefmetrics.app",
+            "smtp_test_recipient": row_get(current_user, "email"),
+        },
+    )
+
+@app.post("/admin/smtp-test")
+async def admin_smtp_test(request: Request):
+    db = get_db()
+    current_user = get_current_user(db, request)
+    require_admin(current_user)
+    form = await request.form()
+    recipient = (form.get("recipient") or row_get(current_user, "email") or "").strip()
+    if not recipient:
+        db.close()
+        return templates.TemplateResponse(
+            "simple_message.html",
+            {
+                "request": request,
+                "title": "SMTP Test",
+                "message": "Recipient email is required to run the SMTP test.",
+                "actions": [{"label": "Back to system settings", "href": "/settings/system"}],
+            },
+        )
+    subject = "Reef Metrics SMTP Test"
+    text_body = "This is a test email to verify SMTP settings."
+    html_body = "<p>This is a test email to verify SMTP settings.</p>"
+    success, reason = send_email(recipient, subject, text_body, html_body, sender_kind="transactional")
+    log_audit(
+        db,
+        current_user,
+        "smtp-test",
+        {"recipient": recipient, "sent": success, "reason": reason} if reason else {"recipient": recipient, "sent": success},
+    )
+    db.commit()
+    db.close()
+    message = f"SMTP test email sent to {recipient}." if success else f"SMTP test failed: {reason}"
+    return templates.TemplateResponse(
+        "simple_message.html",
+        {
+            "request": request,
+            "title": "SMTP Test",
+            "message": message,
+            "actions": [{"label": "Back to system settings", "href": "/settings/system"}],
         },
     )
 
