@@ -225,6 +225,7 @@ def send_email(recipient: str, subject: str, text_body: str, html_body: str | No
         print(f"Email skipped: {msg}")
         return False, msg
     port = int(os.environ.get("SMTP_PORT", "587"))
+    timeout = float(os.environ.get("SMTP_TIMEOUT", "10"))
     use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     smtp_username = os.environ.get("SMTP_USERNAME")
@@ -239,9 +240,9 @@ def send_email(recipient: str, subject: str, text_body: str, html_body: str | No
         message.add_alternative(html_body, subtype="html")
     try:
         if use_ssl:
-            server = smtplib.SMTP_SSL(host, port, timeout=10)
+            server = smtplib.SMTP_SSL(host, port, timeout=timeout)
         else:
-            server = smtplib.SMTP(host, port, timeout=10)
+            server = smtplib.SMTP(host, port, timeout=timeout)
         with server:
             if use_tls and not use_ssl:
                 server.starttls()
