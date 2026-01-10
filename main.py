@@ -23,6 +23,7 @@ import smtplib
 import threading
 import logging
 import uuid
+from functools import lru_cache
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
@@ -68,6 +69,7 @@ if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
         profile_lifecycle=os.environ.get("SENTRY_PROFILE_LIFECYCLE"),
     )
 
+@lru_cache(maxsize=None)
 def optional_module(module_name: str):
     if importlib.util.find_spec(module_name) is None:
         return None
