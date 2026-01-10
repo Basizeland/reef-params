@@ -3679,6 +3679,7 @@ async def register_submit(request: Request):
     password_hash, password_salt = hash_password(password)
     role = "admin" if first_user else "user"
     user_id = execute_insert_returning_id(
+        db,
         "INSERT INTO users (email, username, role, password_hash, password_salt, created_at, admin) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (email, username, role, password_hash, password_salt, datetime.utcnow().isoformat(), 1 if first_user else 0),
     )
@@ -3919,6 +3920,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         role = "admin" if first_user else "user"
         oauth_password_hash, oauth_password_salt = hash_password(secrets.token_urlsafe(24))
         user_id = execute_insert_returning_id(
+            db,
             "INSERT INTO users (email, username, role, password_hash, password_salt, google_sub, created_at, admin) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
