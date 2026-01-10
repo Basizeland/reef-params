@@ -240,21 +240,6 @@
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="setup-parameters">
-                                <div class="d-flex justify-content-between align-items-start gap-3">
-                                    <div>
-                                        <div class="fw-semibold text-navy">Set parameters &amp; additives</div>
-                                        <div class="text-muted small">Confirm targets, add test kits, and enter additive strengths.</div>
-                                    </div>
-                                    <span class="badge bg-success d-none" data-guide-badge>Done</span>
-                                </div>
-                                <div class="mt-auto d-flex flex-wrap gap-2">
-                                    <a class="btn btn-sm btn-primary" href="/settings/parameters">Open settings</a>
-                                    <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
                             <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="log-readings">
                                 <div class="d-flex justify-content-between align-items-start gap-3">
                                     <div>
@@ -314,23 +299,6 @@
                                 </div>
                             </div>
                         </div>
-                        {% if request.state.user is defined and request.state.user and request.state.user.admin %}
-                            <div class="col-md-6">
-                                <div class="border rounded p-3 h-100 d-flex flex-column gap-3" data-guide-task="import-backup">
-                                    <div class="d-flex justify-content-between align-items-start gap-3">
-                                        <div>
-                                            <div class="fw-semibold text-navy">Import historical data</div>
-                                            <div class="text-muted small">Restore backups or bulk import readings.</div>
-                                        </div>
-                                        <span class="badge bg-success d-none" data-guide-badge>Done</span>
-                                    </div>
-                                    <div class="mt-auto d-flex flex-wrap gap-2">
-                                        <a class="btn btn-sm btn-primary" href="/admin/import">Open data center</a>
-                                        <button type="button" class="btn btn-sm btn-outline-success" data-guide-complete>Mark complete</button>
-                                    </div>
-                                </div>
-                            </div>
-                        {% endif %}
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -410,13 +378,6 @@
             const saveState = (state) => {
                 localStorage.setItem(storageKey, JSON.stringify(state));
             };
-            let state = loadState();
-            if (!state.seen) {
-                const modal = new bootstrap.Modal(modalEl);
-                modal.show();
-                state.seen = true;
-                saveState(state);
-            }
             const tasks = Array.from(modalEl.querySelectorAll("[data-guide-task]"));
             if (!tasks.length) return;
             const completedLabel = modalEl.querySelector("[data-guide-completed]");
@@ -424,12 +385,16 @@
             const progress = modalEl.querySelector("[data-guide-progress]");
             const resetBtn = modalEl.querySelector("[data-guide-reset]");
 
+            let state = loadState();
+
+            const getCompletedCount = () => tasks.reduce((count, task) => {
+                const id = task.dataset.guideTask;
+                return count + (id && state.completed[id] ? 1 : 0);
+            }, 0);
+
             const updateUI = () => {
                 const total = tasks.length;
-                const completedCount = tasks.reduce((count, task) => {
-                    const id = task.dataset.guideTask;
-                    return count + (id && state.completed[id] ? 1 : 0);
-                }, 0);
+                const completedCount = getCompletedCount();
                 if (completedLabel) completedLabel.textContent = completedCount.toString();
                 if (totalLabel) totalLabel.textContent = total.toString();
                 if (progress) {
@@ -473,12 +438,27 @@
                 });
             }
 
+            const shouldShowOnDashboard = () => {
+                if (window.location.pathname !== "/") return false;
+                return getCompletedCount() < tasks.length;
+            };
+
+            const maybeShowModal = () => {
+                if (!state.seen || shouldShowOnDashboard()) {
+                    const modal = new bootstrap.Modal(modalEl);
+                    modal.show();
+                    state.seen = true;
+                    saveState(state);
+                }
+            };
+
             modalEl.addEventListener("show.bs.modal", () => {
                 state = loadState();
                 updateUI();
             });
 
             updateUI();
+            maybeShowModal();
         });
 
         document.addEventListener("DOMContentLoaded", () => {
