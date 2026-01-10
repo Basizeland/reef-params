@@ -42,6 +42,12 @@ from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
+PASSWORD_HASH_ITERATIONS = int(os.environ.get("PASSWORD_HASH_ITERATIONS", "200000"))
+RUN_BACKGROUND_JOBS = os.environ.get("RUN_BACKGROUND_JOBS", "true").lower() in {"1", "true", "yes", "on"}
+SESSION_ROTATE_ON_LOGIN = os.environ.get("SESSION_ROTATE_ON_LOGIN", "true").lower() in {"1", "true", "yes", "on"}
+CSRF_EXEMPT_PATHS = tuple(
+    path.strip() for path in os.environ.get("CSRF_EXEMPT_PATHS", "").split(",") if path.strip()
+)
 R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
@@ -1182,7 +1188,12 @@ async def extract_csrf_token(request: Request) -> str | None:
 def hash_password(password: str, salt: str | None = None) -> Tuple[str, str]:
     if not salt:
         salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_HASH_ITERATIONS,
+    )
     return digest.hex(), salt
 
 def verify_password(password: str, password_hash: str, salt: str) -> bool:
@@ -1342,6 +1353,8 @@ def require_admin(user: Optional[Dict[str, Any]]) -> None:
 def create_session(db: Connection, user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    if SESSION_ROTATE_ON_LOGIN:
+        db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     db.execute(
         "INSERT INTO sessions (user_id, session_token, created_at, expires_at) VALUES (?, ?, ?, ?)",
         (user_id, token, datetime.utcnow().isoformat(), expires_at),
@@ -2679,8 +2692,8 @@ def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, detai
     try:
         insert_audit_log(db, user["id"], action, str(details), datetime.utcnow().isoformat())
         db.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Audit log write failed: %s", exc)
 
 def ensure_column(db: DBConnection, table: str, col: str, ddl: str) -> None:
     inspector = inspect(db._conn)
@@ -3409,6 +3422,9 @@ init_db()
 
 @app.on_event("startup")
 def start_background_jobs() -> None:
+    if not RUN_BACKGROUND_JOBS:
+        logger.info("Background jobs disabled by RUN_BACKGROUND_JOBS setting.")
+        return
     start_daily_summary_scheduler()
     start_push_notification_scheduler()
     start_apex_polling()
@@ -3420,15 +3436,17 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     csrf_token = ensure_csrf_token(request.cookies.get("csrf_token"))
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not path.startswith("/static"):
-        if request.headers.get("Authorization", "").startswith("Bearer "):
-            pass
-        else:
-            request_token = await extract_csrf_token(request)
-            if not request_token or request_token != csrf_token:
-                response = JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
-                response.headers["X-Request-Id"] = request_id
-                response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
-                return response
+        csrf_exempt = CSRF_EXEMPT_PATHS and any(path.startswith(prefix) for prefix in CSRF_EXEMPT_PATHS)
+        if not csrf_exempt:
+            if request.headers.get("Authorization", "").startswith("Bearer "):
+                pass
+            else:
+                request_token = await extract_csrf_token(request)
+                if not request_token or request_token != csrf_token:
+                    response = JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
+                    response.headers["X-Request-Id"] = request_id
+                    response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
+                    return response
     if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
         start_time = time_module.time()
         response = await call_next(request)
