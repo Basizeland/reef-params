@@ -199,22 +199,27 @@ def build_daily_consumption(db: Connection, tank_view: Dict[str, Any], user: Opt
 
     return daily_consumption
 
-def get_email_sender() -> str:
+def get_email_sender(kind: str | None = None) -> str:
     sender = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USERNAME") or ""
     if "@" in sender:
         return sender
-    base = PUBLIC_BASE_URL or ""
-    parsed = urllib.parse.urlparse(base)
-    hostname = parsed.hostname or ""
-    if hostname.startswith("www."):
-        hostname = hostname[4:]
-    if hostname and "." in hostname:
-        return f"noreply@{hostname}"
-    return "noreply@reefmetrics.app"
+    transactional = os.environ.get("EMAIL_FROM_TRANSACTIONAL") or "support@reefmetrics.app"
+    alerts = os.environ.get("EMAIL_FROM_ALERTS") or "alerts@reefmetrics.app"
+    billing = os.environ.get("EMAIL_FROM_BILLING") or "billing@reefmetrics.app"
+    marketing = os.environ.get("EMAIL_FROM_MARKETING") or "hello@reefmetrics.app"
+    if kind == "alerts":
+        return alerts
+    if kind == "billing":
+        return billing
+    if kind == "marketing":
+        return marketing
+    if kind == "transactional":
+        return transactional
+    return transactional
 
-def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None) -> Tuple[bool, str]:
+def send_email(recipient: str, subject: str, text_body: str, html_body: str | None = None, sender: str | None = None, sender_kind: str | None = None) -> Tuple[bool, str]:
     host = os.environ.get("SMTP_HOST")
-    sender = get_email_sender()
+    sender = sender or get_email_sender(sender_kind)
     if not host or not recipient:
         msg = "missing SMTP_HOST or recipient"
         print(f"Email skipped: {msg}")
@@ -295,7 +300,7 @@ def send_welcome_email(recipient: str, username: str) -> Tuple[bool, str]:
   </body>
 </html>
 """
-    return send_email(recipient, subject, text_body, html_body)
+    return send_email(recipient, subject, text_body, html_body, sender_kind="transactional")
 
 # --- 1. INITIAL SEED DEFAULTS (Used for DB Migration only) ---
 # Maps parameter names to the new DB columns we added
@@ -942,7 +947,7 @@ def send_daily_summary_email(db: Connection, user: Dict[str, Any]) -> Tuple[bool
   </body>
 </html>
     """
-    return send_email(user["email"], subject, text_body, html_body)
+    return send_email(user["email"], subject, text_body, html_body, sender_kind="alerts")
 
 def send_summaries_if_due() -> None:
     auto_send = os.environ.get("AUTO_SEND_DAILY_SUMMARIES", "false").lower() in {"1", "true", "yes"}
