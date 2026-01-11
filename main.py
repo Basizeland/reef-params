@@ -530,6 +530,12 @@ async def service_worker():
     sw_path = os.path.join(static_dir, "service-worker.js")
     return FileResponse(sw_path, media_type="application/javascript")
 
+@app.get("/favicon.ico")
+async def favicon():
+    from fastapi.responses import FileResponse
+    favicon_path = os.path.join(static_dir, "favicon.ico")
+    return FileResponse(favicon_path, media_type="image/x-icon")
+
 # --- Jinja Helpers ---
 def fmt2(v: Any) -> str:
     if v is None: return ""
@@ -3692,7 +3698,7 @@ async def auth_middleware(request: Request, call_next):
                     response.headers["X-Request-Id"] = request_id
                     response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
                     return response
-    if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
+    if path.startswith(("/static", "/auth")) or path.startswith("/favicon") or path == "/service-worker.js":
         start_time = time_module.time()
         response = await call_next(request)
         log_payload = {
