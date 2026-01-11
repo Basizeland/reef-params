@@ -367,7 +367,9 @@
             });
         });
         if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("/static/service-worker.js").catch(() => {});
+            navigator.serviceWorker.register("/static/service-worker.js")
+                .then(reg => console.log("[DEBUG] Service worker registered:", reg))
+                .catch(err => console.error("[ERROR] Service worker registration failed:", err));
         }
         document.addEventListener("DOMContentLoaded", () => {
             const modalEl = document.getElementById("onboardingModal");
@@ -507,17 +509,15 @@
                     return null;
                 }
                 try {
-                    const registration = await navigator.serviceWorker.ready;
-                    console.log("[DEBUG] getAnySubscription: Got ready registration:", registration);
-                    if (registration?.pushManager) {
-                        const subscription = await registration.pushManager.getSubscription();
-                        console.log("[DEBUG] getAnySubscription: Subscription from ready registration:", subscription);
-                        if (subscription) return subscription;
-                    }
+                    // Don't wait for ready, just get all registrations directly
                     const registrations = await navigator.serviceWorker.getRegistrations();
                     console.log("[DEBUG] getAnySubscription: All registrations count:", registrations.length);
                     for (const reg of registrations) {
-                        if (!reg?.pushManager) continue;
+                        console.log("[DEBUG] getAnySubscription: Checking registration:", reg);
+                        if (!reg?.pushManager) {
+                            console.log("[DEBUG] getAnySubscription: No pushManager on this registration");
+                            continue;
+                        }
                         const subscription = await reg.pushManager.getSubscription();
                         console.log("[DEBUG] getAnySubscription: Subscription from registration:", subscription);
                         if (subscription) return subscription;
@@ -540,12 +540,6 @@
                         btn.disabled = true;
                     });
                     return;
-                }
-                try {
-                    await navigator.serviceWorker.ready;
-                } catch (err) {
-                    console.log("[DEBUG] updateStatus: Error waiting for ready:", err);
-                    // Ignore readiness errors and fall back to manual checks.
                 }
                 if (!("Notification" in window) || !("PushManager" in window)) {
                     console.log("[DEBUG] updateStatus: Notification or PushManager not supported");
@@ -607,8 +601,29 @@
                     return null;
                 }
                 try {
-                    const registration = await navigator.serviceWorker.ready;
-                    console.log("[DEBUG] subscribePush: Got registration:", registration);
+                    // Get existing registrations instead of waiting for ready
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    console.log("[DEBUG] subscribePush: Found registrations:", registrations.length);
+
+                    let registration = registrations.find(reg => reg.active);
+                    console.log("[DEBUG] subscribePush: Active registration:", registration);
+
+                    if (!registration) {
+                        console.log("[DEBUG] subscribePush: No active registration, registering service worker...");
+                        registration = await navigator.serviceWorker.register("/static/service-worker.js");
+                        console.log("[DEBUG] subscribePush: Registered new service worker:", registration);
+                        // Wait for it to become active
+                        if (registration.installing) {
+                            console.log("[DEBUG] subscribePush: Waiting for service worker to install...");
+                            await new Promise((resolve) => {
+                                registration.installing.addEventListener('statechange', function() {
+                                    if (this.state === 'activated') resolve();
+                                });
+                            });
+                        }
+                    }
+
+                    console.log("[DEBUG] subscribePush: Using registration:", registration);
                     const subscription = await registration.pushManager.subscribe({
                         userVisibleOnly: true,
                         applicationServerKey: urlBase64ToUint8Array(publicKey),
