@@ -2826,12 +2826,13 @@ def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, detai
         )
 
 def ensure_column(db: DBConnection, table: str, col: str, ddl: str) -> None:
-    if not ALLOW_RUNTIME_SCHEMA_CHANGES:
-        raise RuntimeError(f"Runtime schema changes are disabled; missing {table}.{col}")
     inspector = inspect(db._conn)
     cols = {column["name"] for column in inspector.get_columns(table)}
-    if col not in cols:
-        db.execute(text(ddl))
+    if col in cols:
+        return  # Column already exists, no action needed
+    if not ALLOW_RUNTIME_SCHEMA_CHANGES:
+        raise RuntimeError(f"Runtime schema changes are disabled; missing {table}.{col}")
+    db.execute(text(ddl))
 
 
 def to_float(v: Any) -> Optional[float]:
