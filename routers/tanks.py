@@ -23,7 +23,8 @@ def fmt2(v):
         if isinstance(v, int): return str(v)
         fv = float(v)
         return f"{fv:.2f}".rstrip("0").rstrip(".") if "." in f"{fv:.2f}" else f"{fv:.2f}"
-    except: return str(v)
+    except (ValueError, TypeError):
+        return str(v)
 
 def dtfmt(v):
     if not v: return ""
@@ -31,7 +32,8 @@ def dtfmt(v):
         if isinstance(v, str): dt = datetime.fromisoformat(v)
         else: dt = v
         return dt.strftime("%H:%M - %d/%m/%Y")
-    except: return str(v)
+    except (ValueError, AttributeError, TypeError):
+        return str(v)
 
 def slug_key(name: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "_", (name or "").strip().lower()).strip("_")

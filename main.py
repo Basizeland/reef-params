@@ -493,7 +493,8 @@ def fmt2(v: Any) -> str:
         if isinstance(v, bool): return "1" if v else "0"
         if isinstance(v, int): return str(v)
         fv = float(v)
-    except Exception: return str(v)
+    except (ValueError, TypeError):
+        return str(v)
     
     # Updated: 2 decimal places standard
     s = f"{fv:.2f}" 
@@ -566,7 +567,7 @@ def send_web_push(db: Connection, user_ids: List[int], payload: Dict[str, Any]) 
         subscription_info = None
         try:
             subscription_info = json.loads(row["subscription_json"])
-        except Exception:
+        except (json.JSONDecodeError, TypeError, KeyError):
             subscription_info = None
         if not subscription_info:
             db.execute("DELETE FROM push_subscriptions WHERE id=?", (row["id"],))
@@ -647,7 +648,7 @@ def audit_details(details: Any) -> List[Dict[str, Any]]:
     if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
         try:
             payload = json.loads(text)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             payload = None
         if isinstance(payload, dict):
             for key, value in payload.items():
@@ -678,11 +679,9 @@ templates.env.filters["additive_label"] = additive_label
 templates.env.filters["audit_details"] = audit_details
 
 def _finalize(v: Any) -> Any:
-    try:
-        if isinstance(v, bool) or v is None: return v
-        if isinstance(v, int): return v
-        if isinstance(v, float): return fmt2(v)
-    except Exception: pass
+    if isinstance(v, bool) or v is None: return v
+    if isinstance(v, int): return v
+    if isinstance(v, float): return fmt2(v)
     return v
 
 templates.env.finalize = _finalize
@@ -739,7 +738,7 @@ def collect_dosing_notifications(
         threshold_days = row_get(row, "dosing_low_days", 5)
         try:
             threshold_days = float(threshold_days) if threshold_days is not None else 5
-        except Exception:
+        except (ValueError, TypeError):
             threshold_days = 5
         for key, container_col, remaining_col, daily_col, solution_col, default_label in dosing_containers:
             container_ml = row_get(row, container_col)
@@ -912,7 +911,7 @@ def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             try:
                 val_f = float(val)
-            except Exception:
+            except (ValueError, TypeError):
                 continue
             al = row_get(target, "alert_low")
             ah = row_get(target, "alert_high")
@@ -970,7 +969,7 @@ def build_daily_summary(db: Connection, user: Dict[str, Any]) -> Dict[str, Any]:
                             "unit": row_get(pdef, "unit") or "",
                         }
                     )
-            except Exception:
+            except (ValueError, TypeError, AttributeError, KeyError):
                 continue
         if trend_rows:
             trend_alerts_by_tank[t["id"]] = trend_rows
@@ -1571,7 +1570,7 @@ def get_apex_integrations(db: Connection) -> List[Dict[str, Any]]:
         return [_normalize_apex_integration({})]
     try:
         stored = json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         stored = {}
     if isinstance(stored, dict) and "integrations" in stored:
         integrations = stored.get("integrations") or []
@@ -1615,7 +1614,7 @@ def parse_apex_mapping(mapping_text: str) -> Dict[str, str]:
         return {}
     try:
         payload = json.loads(mapping_text)
-    except Exception as exc:
+    except (json.JSONDecodeError, TypeError) as exc:
         raise ValueError("Mapping JSON must be valid JSON.") from exc
     if isinstance(payload, dict):
         return {str(k): str(v) for k, v in payload.items() if k and v}
@@ -1931,7 +1930,7 @@ def parse_triton_csv(content: str) -> List[Dict[str, Any]]:
 def parse_triton_pdf(content: bytes) -> List[Dict[str, Any]]:
     try:
         PdfReader = importlib.import_module("PyPDF2").PdfReader
-    except Exception as exc:
+    except (ImportError, ModuleNotFoundError, AttributeError) as exc:
         raise ValueError("PDF parsing requires PyPDF2. Install it and rebuild the container.") from exc
     reader = PdfReader(BytesIO(content))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -1984,7 +1983,7 @@ def extract_json_candidates(content: str) -> List[Any]:
             continue
         try:
             candidates.append(json.loads(raw))
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             continue
 
     inline_pattern = re.compile(
@@ -1995,7 +1994,7 @@ def extract_json_candidates(content: str) -> List[Any]:
         raw = match.strip()
         try:
             candidates.append(json.loads(raw))
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             continue
 
     return candidates
@@ -2417,7 +2416,7 @@ def get_recent_param_values(
             continue
         try:
             values_by_param[str(name)][int(sample_id)] = float(value)
-        except Exception:
+        except (ValueError, TypeError, KeyError):
             continue
     ordered_ids = list(reversed(sample_ids))
     series: Dict[str, List[float]] = {}
