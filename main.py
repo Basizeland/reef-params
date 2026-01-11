@@ -3671,7 +3671,7 @@ async def security_headers_middleware(request: Request, call_next):
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "img-src 'self' data: https:; "
         "font-src 'self' data: https://cdn.jsdelivr.net; "
-        "connect-src 'self' https://www.google-analytics.com https://cdn.jsdelivr.net; "
+        "connect-src 'self' https://www.google-analytics.com https://cdn.jsdelivr.net https://static.cloudflareinsights.com; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "form-action 'self'"
