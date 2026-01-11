@@ -645,6 +645,51 @@
                         alert("Browser notifications are not supported on this device.");
                         return;
                     }
+                    const permission = await Notification.requestPermission();
+                    if (permission !== "granted") {
+                        alert("Notifications are blocked for this device.");
+                        return;
+                    }
+                    let subscription = null;
+                    try {
+                        const registration = await navigator.serviceWorker.ready;
+                        subscription = await registration.pushManager.getSubscription();
+                        if (!subscription) {
+                            const response = await fetch("/api/push/public-key");
+                            if (!response.ok) {
+                                alert("Push notifications are not configured on the server.");
+                                return;
+                            }
+                            const data = await response.json();
+                            if (!data?.public_key) {
+                                alert("Push notifications are not configured on the server.");
+                                return;
+                            }
+                            const padding = "=".repeat((4 - (data.public_key.length % 4)) % 4);
+                            const base64 = (data.public_key + padding).replace(/-/g, "+").replace(/_/g, "/");
+                            const rawData = atob(base64);
+                            const outputArray = new Uint8Array(rawData.length);
+                            for (let i = 0; i < rawData.length; i += 1) {
+                                outputArray[i] = rawData.charCodeAt(i);
+                            }
+                            subscription = await registration.pushManager.subscribe({
+                                userVisibleOnly: true,
+                                applicationServerKey: outputArray,
+                            });
+                            await fetch("/api/push/subscribe", {
+                                method: "POST",
+                                credentials: "same-origin",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    "X-CSRF-Token": window.csrfToken || "",
+                                },
+                                body: JSON.stringify(subscription),
+                            });
+                        }
+                    } catch (err) {
+                        alert("Unable to prepare a push subscription.");
+                        return;
+                    }
                     try {
                         const response = await fetch("/api/push/test", {
                             method: "POST",
@@ -653,7 +698,9 @@
                                 "Content-Type": "application/json",
                                 "X-CSRF-Token": window.csrfToken || "",
                             },
-                            body: JSON.stringify({}),
+                            body: JSON.stringify({
+                                subscription,
+                            }),
                         });
                         if (!response.ok) {
                             const data = await response.json().catch(() => ({}));

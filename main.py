@@ -6228,6 +6228,22 @@ async def push_test(request: Request):
     if not user:
         db.close()
         raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    subscription = payload.get("subscription") if isinstance(payload, dict) else None
+    if subscription and isinstance(subscription, dict):
+        endpoint = subscription.get("endpoint")
+        if endpoint:
+            try:
+                execute_with_retry(
+                    db,
+                    "INSERT INTO push_subscriptions (user_id, endpoint, subscription_json, created_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (user_id, endpoint) DO UPDATE "
+                    "SET subscription_json=excluded.subscription_json, created_at=excluded.created_at",
+                    (user["id"], endpoint, json.dumps(subscription), datetime.utcnow().isoformat()),
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
     public_key, private_key, subject = get_vapid_settings()
     if not public_key or not private_key or not subject:
         db.close()
