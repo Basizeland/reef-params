@@ -501,27 +501,38 @@
         document.addEventListener("DOMContentLoaded", () => {
             const toggleButtons = Array.from(document.querySelectorAll(".js-enable-browser-alerts"));
             const getAnySubscription = async () => {
-                if (!("serviceWorker" in navigator)) return null;
+                console.log("[DEBUG] getAnySubscription: Starting...");
+                if (!("serviceWorker" in navigator)) {
+                    console.log("[DEBUG] getAnySubscription: serviceWorker not supported");
+                    return null;
+                }
                 try {
                     const registration = await navigator.serviceWorker.ready;
+                    console.log("[DEBUG] getAnySubscription: Got ready registration:", registration);
                     if (registration?.pushManager) {
                         const subscription = await registration.pushManager.getSubscription();
+                        console.log("[DEBUG] getAnySubscription: Subscription from ready registration:", subscription);
                         if (subscription) return subscription;
                     }
                     const registrations = await navigator.serviceWorker.getRegistrations();
+                    console.log("[DEBUG] getAnySubscription: All registrations count:", registrations.length);
                     for (const reg of registrations) {
                         if (!reg?.pushManager) continue;
                         const subscription = await reg.pushManager.getSubscription();
+                        console.log("[DEBUG] getAnySubscription: Subscription from registration:", subscription);
                         if (subscription) return subscription;
                     }
+                    console.log("[DEBUG] getAnySubscription: No subscription found, returning null");
                     return null;
                 } catch (err) {
-                    console.error("Error getting push subscription:", err);
+                    console.error("[ERROR] getAnySubscription:", err);
                     return null;
                 }
             };
             const updateStatus = async () => {
+                console.log("[DEBUG] updateStatus: Starting...");
                 if (!("serviceWorker" in navigator)) {
+                    console.log("[DEBUG] updateStatus: serviceWorker not supported");
                     toggleButtons.forEach((btn) => {
                         const targetId = btn.getAttribute("data-status-target");
                         const label = targetId ? document.getElementById(targetId) : null;
@@ -533,9 +544,11 @@
                 try {
                     await navigator.serviceWorker.ready;
                 } catch (err) {
+                    console.log("[DEBUG] updateStatus: Error waiting for ready:", err);
                     // Ignore readiness errors and fall back to manual checks.
                 }
                 if (!("Notification" in window) || !("PushManager" in window)) {
+                    console.log("[DEBUG] updateStatus: Notification or PushManager not supported");
                     toggleButtons.forEach((btn) => {
                         const targetId = btn.getAttribute("data-status-target");
                         const label = targetId ? document.getElementById(targetId) : null;
@@ -546,15 +559,20 @@
                 }
                 const subscription = await getAnySubscription();
                 const permission = Notification?.permission || "default";
+                console.log("[DEBUG] updateStatus: subscription =", subscription);
+                console.log("[DEBUG] updateStatus: permission =", permission);
                 toggleButtons.forEach((btn) => {
                     const targetId = btn.getAttribute("data-status-target");
                     const label = targetId ? document.getElementById(targetId) : null;
                     if (label) {
                         if (subscription) {
+                            console.log("[DEBUG] updateStatus: Setting label to 'On' for", targetId);
                             label.textContent = "On";
                         } else if (permission === "denied") {
+                            console.log("[DEBUG] updateStatus: Setting label to 'Blocked' for", targetId);
                             label.textContent = "Blocked";
                         } else {
+                            console.log("[DEBUG] updateStatus: Setting label to 'Off' for", targetId);
                             label.textContent = "Off";
                         }
                     }
@@ -577,18 +595,25 @@
                 return data.public_key || null;
             };
             const subscribePush = async () => {
-                if (!("serviceWorker" in navigator)) return null;
+                console.log("[DEBUG] subscribePush: Starting...");
+                if (!("serviceWorker" in navigator)) {
+                    console.log("[DEBUG] subscribePush: serviceWorker not supported");
+                    return null;
+                }
                 const publicKey = await getPublicKey();
+                console.log("[DEBUG] subscribePush: Got public key:", publicKey);
                 if (!publicKey) {
                     alert("Push notifications are not configured on the server.");
                     return null;
                 }
                 try {
                     const registration = await navigator.serviceWorker.ready;
+                    console.log("[DEBUG] subscribePush: Got registration:", registration);
                     const subscription = await registration.pushManager.subscribe({
                         userVisibleOnly: true,
                         applicationServerKey: urlBase64ToUint8Array(publicKey),
                     });
+                    console.log("[DEBUG] subscribePush: Created subscription:", subscription);
                     const response = await fetch("/api/push/subscribe", {
                         method: "POST",
                         credentials: "same-origin",
@@ -598,14 +623,16 @@
                         },
                         body: JSON.stringify(subscription),
                     });
+                    console.log("[DEBUG] subscribePush: Backend response status:", response.status);
                     if (!response.ok) {
-                        console.error("Failed to save push subscription:", response.status);
+                        console.error("[ERROR] subscribePush: Failed to save push subscription:", response.status);
                         await subscription.unsubscribe();
                         return null;
                     }
+                    console.log("[DEBUG] subscribePush: Successfully saved subscription, returning it");
                     return subscription;
                 } catch (err) {
-                    console.error("Error subscribing to push notifications:", err);
+                    console.error("[ERROR] subscribePush:", err);
                     return null;
                 }
             };
@@ -628,30 +655,40 @@
             };
             toggleButtons.forEach((btn) => {
                 btn.addEventListener("click", async () => {
+                    console.log("[DEBUG] Button clicked!");
                     if (!("Notification" in window)) {
                         alert("Browser notifications are not supported on this device.");
                         return;
                     }
                     const permission = await Notification.requestPermission();
+                    console.log("[DEBUG] Permission result:", permission);
                     if (permission !== "granted") {
                         await updateStatus();
                         return;
                     }
                     const subscription = await getAnySubscription();
+                    console.log("[DEBUG] Existing subscription check:", subscription);
                     if (subscription) {
+                        console.log("[DEBUG] Unsubscribing...");
                         await unsubscribePush();
                         await updateStatus();
                     } else {
+                        console.log("[DEBUG] Subscribing...");
                         const newSubscription = await subscribePush();
+                        console.log("[DEBUG] New subscription result:", newSubscription);
                         if (newSubscription) {
+                            console.log("[DEBUG] Waiting 100ms before updating status...");
                             // Give the service worker a moment to fully register the subscription
                             await new Promise(resolve => setTimeout(resolve, 100));
+                            console.log("[DEBUG] Now calling updateStatus...");
                             await updateStatus();
                         } else {
+                            console.log("[DEBUG] Subscription failed, updating status...");
                             // Subscription failed, update status to show current state
                             await updateStatus();
                         }
                     }
+                    console.log("[DEBUG] Button click handler complete");
                 });
             });
             updateStatus();
