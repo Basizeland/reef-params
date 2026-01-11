@@ -355,7 +355,31 @@
         }
         resetProgress();
       };
+      const playTimerAlert = () => {
+        if ("vibrate" in navigator) {
+          navigator.vibrate([200, 100, 200]);
+        }
+        if (!("AudioContext" in window || "webkitAudioContext" in window)) return;
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          const audioContext = new AudioCtx();
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          oscillator.type = "sine";
+          oscillator.frequency.value = 880;
+          gain.gain.setValueAtTime(0.2, audioContext.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.6);
+          oscillator.connect(gain);
+          gain.connect(audioContext.destination);
+          oscillator.start();
+          oscillator.stop(audioContext.currentTime + 0.6);
+          oscillator.onended = () => audioContext.close();
+        } catch (err) {
+          // Ignore audio playback failures.
+        }
+      };
       const sendNotification = (message) => {
+        playTimerAlert();
         if (!("Notification" in window)) return;
         if (Notification.permission !== "granted") return;
         new Notification("Test kit timer", { body: message });
