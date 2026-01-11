@@ -24,6 +24,8 @@ import smtplib
 import threading
 import logging
 import uuid
+import atexit
+from contextlib import contextmanager
 from functools import lru_cache
 from email.message import EmailMessage
 from io import BytesIO
@@ -35,19 +37,27 @@ from database import engine, DB_PATH
 import models  # noqa: F401
 from html.parser import HTMLParser
 
-from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile
+from fastapi import FastAPI, Form, Request, HTTPException, File, UploadFile, Query, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from cachetools import TTLCache, cached
+from apscheduler.schedulers.background import BackgroundScheduler
+from pythonjsonlogger import jsonlogger
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
 PASSWORD_HASH_ITERATIONS = int(os.environ.get("PASSWORD_HASH_ITERATIONS", "200000"))
+SESSION_LIFETIME_DAYS = int(os.environ.get("SESSION_LIFETIME_DAYS", "30"))
+MIN_PASSWORD_LENGTH = int(os.environ.get("MIN_PASSWORD_LENGTH", "12"))
 RUN_BACKGROUND_JOBS = os.environ.get("RUN_BACKGROUND_JOBS", "true").lower() in {"1", "true", "yes", "on"}
 BACKGROUND_JOB_LOCK_PATH = os.environ.get("BACKGROUND_JOB_LOCK_PATH", "").strip() or None
 SESSION_ROTATE_ON_LOGIN = os.environ.get("SESSION_ROTATE_ON_LOGIN", "true").lower() in {"1", "true", "yes", "on"}
-ALLOW_RUNTIME_SCHEMA_CHANGES = os.environ.get("ALLOW_RUNTIME_SCHEMA_CHANGES", "true").lower() in {"1", "true", "yes", "on"}
+ALLOW_RUNTIME_SCHEMA_CHANGES = os.environ.get("ALLOW_RUNTIME_SCHEMA_CHANGES", "false").lower() in {"1", "true", "yes", "on"}
 CSRF_EXEMPT_PATHS = tuple(
     path.strip() for path in os.environ.get("CSRF_EXEMPT_PATHS", "").split(",") if path.strip()
 )
@@ -59,9 +69,37 @@ R2_REGION = os.environ.get("R2_REGION", "auto")
 R2_BACKUP_RETENTION_DAYS = os.environ.get("R2_BACKUP_RETENTION_DAYS", "")
 R2_ICP_RETENTION_DAYS = os.environ.get("R2_ICP_RETENTION_DAYS", "")
 
-app = FastAPI(title="Reef Tank Parameters")
+# Initialize FastAPI with OpenAPI documentation
+app = FastAPI(
+    title="Reef Metrics API",
+    description="Water parameter tracking and dosing management for reef aquariums",
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
+
+# Setup structured JSON logging
 logger = logging.getLogger("reef")
-logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+log_handler = logging.StreamHandler()
+formatter = jsonlogger.JsonFormatter()
+log_handler.setFormatter(formatter)
+logger.addHandler(log_handler)
+logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
+
+# Setup rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Setup caching
+param_cache = TTLCache(maxsize=100, ttl=300)  # 5 min cache for parameter definitions
+profile_cache = TTLCache(maxsize=1000, ttl=60)  # 1 min cache for tank profiles
+tank_cache = TTLCache(maxsize=500, ttl=120)  # 2 min cache for tanks
+
+# Setup background scheduler
+scheduler = BackgroundScheduler()
+scheduler.start()
+atexit.register(lambda: scheduler.shutdown())
 
 sentry_dsn = os.environ.get("SENTRY_DSN")
 if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
@@ -100,6 +138,65 @@ def is_csrf_exempt(path: str) -> bool:
         elif path == entry:
             return True
     return False
+
+@contextmanager
+def get_db_connection():
+    """Context manager for database connections - ensures cleanup even on exceptions"""
+    db = get_db()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def validate_password(password: str) -> Tuple[bool, str]:
+    """Validate password meets security requirements"""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return False, f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    if not re.search(r'[0-9]', password):
+        return False, "Password must contain at least one number"
+    return True, ""
+
+async def get_authorized_tank(request: Request, tank_id: int) -> Dict[str, Any]:
+    """FastAPI dependency to verify tank access and return tank or raise 404"""
+    db = get_db()
+    try:
+        user = get_current_user(db, request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        tank = get_tank_for_user(db, user, tank_id)
+        if not tank:
+            raise HTTPException(status_code=404, detail="Tank not found or access denied")
+        return tank
+    finally:
+        db.close()
+
+def get_cached_parameter_defs(db: Connection) -> List[Dict[str, Any]]:
+    """Get active parameter definitions with caching"""
+    cache_key = "active_params"
+    if cache_key in param_cache:
+        return param_cache[cache_key]
+    params = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
+    param_cache[cache_key] = params
+    return params
+
+def get_cached_tank_profile(db: Connection, tank_id: int) -> Optional[Dict[str, Any]]:
+    """Get tank profile with caching"""
+    cache_key = f"tank_profile_{tank_id}"
+    if cache_key in profile_cache:
+        return profile_cache[cache_key]
+    profile = one(db, "SELECT * FROM tank_profiles WHERE tank_id=?", (tank_id,))
+    if profile:
+        profile_cache[cache_key] = profile
+    return profile
+
+def invalidate_tank_profile_cache(tank_id: int) -> None:
+    """Invalidate tank profile cache for a specific tank"""
+    cache_key = f"tank_profile_{tank_id}"
+    profile_cache.pop(cache_key, None)
 
 def require_pandas():
     pandas = get_pandas()
@@ -1035,16 +1132,12 @@ def send_summaries_if_due() -> None:
     finally:
         db.close()
 
-def start_daily_summary_scheduler() -> None:
-    def _loop() -> None:
-        while True:
-            try:
-                send_summaries_if_due()
-            except Exception:
-                pass
-            time_module.sleep(3600)
-    thread = threading.Thread(target=_loop, daemon=True)
-    thread.start()
+def run_daily_summary_check() -> None:
+    """Check and send daily summaries if due - called by scheduler"""
+    try:
+        send_summaries_if_due()
+    except Exception as exc:
+        logger.error(f"Daily summary check error: {exc}", exc_info=True)
 
 def send_push_notifications_if_due() -> None:
     auto_send = os.environ.get("AUTO_SEND_PUSH_NOTIFICATIONS", "true").lower() in {"1", "true", "yes"}
@@ -1057,21 +1150,25 @@ def send_push_notifications_if_due() -> None:
         db.close()
 
 def start_push_notification_scheduler() -> None:
+    """Add push notification job to scheduler"""
     try:
         interval_minutes = int(os.environ.get("PUSH_NOTIFICATION_INTERVAL_MINUTES", "15"))
     except ValueError:
         interval_minutes = 15
-    interval_seconds = max(interval_minutes, 1) * 60
 
-    def _loop() -> None:
-        while True:
-            try:
-                send_push_notifications_if_due()
-            except Exception:
-                pass
-            time_module.sleep(interval_seconds)
-    thread = threading.Thread(target=_loop, daemon=True)
-    thread.start()
+    def run_push_check():
+        try:
+            send_push_notifications_if_due()
+        except Exception as exc:
+            logger.error(f"Push notification check error: {exc}", exc_info=True)
+
+    scheduler.add_job(
+        run_push_check,
+        'interval',
+        minutes=interval_minutes,
+        id='push_notifications',
+        replace_existing=True
+    )
 
 def global_dosing_notifications(request: Request) -> List[Dict[str, Any]]:
     db = get_db()
@@ -1373,7 +1470,7 @@ def require_admin(user: Optional[Dict[str, Any]]) -> None:
 
 def create_session(db: Connection, user_id: int, rotate_existing: Optional[bool] = None) -> str:
     token = secrets.token_urlsafe(32)
-    expires_at = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    expires_at = (datetime.utcnow() + timedelta(days=SESSION_LIFETIME_DAYS)).isoformat()
     rotate = SESSION_ROTATE_ON_LOGIN if rotate_existing is None else rotate_existing
     if rotate:
         db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
@@ -3132,28 +3229,20 @@ def import_apex_sample_from_mapped(
         results.append({"sample_id": sample_id, "tank_id": tank["id"], "mapped_count": len(mapped), "skipped": False})
     return {"imports": results, "mapped_count": len(mapped)}
 
-def apex_polling_loop() -> None:
-    while True:
-        db = get_db()
+def run_apex_polling() -> None:
+    """Run one iteration of Apex polling - called by scheduler"""
+    db = get_db()
+    try:
         integrations = get_apex_integrations(db)
-        intervals = []
         for settings in integrations:
             enabled = bool(settings.get("enabled"))
-            interval = int(to_float(settings.get("poll_interval_minutes")) or 15)
-            interval = max(interval, 1)
-            intervals.append(interval)
             if enabled and settings.get("host") and settings.get("mapping"):
                 try:
                     import_apex_sample(db, settings, None)
                 except Exception as exc:
                     logger.error(f"Apex polling error: {exc}", exc_info=True)
+    finally:
         db.close()
-        sleep_minutes = min(intervals) if intervals else 15
-        time_module.sleep(sleep_minutes * 60)
-
-def start_apex_polling() -> None:
-    thread = threading.Thread(target=apex_polling_loop, name="apex-poller", daemon=True)
-    thread.start()
 
 def get_sample_kits(db: Connection, sample_id: int) -> Dict[str, int]:
     mode = values_mode(db)
@@ -3466,9 +3555,23 @@ def start_background_jobs() -> None:
             lock_handle.close()
             return
         app.state.background_job_lock = lock_handle
-    start_daily_summary_scheduler()
+
+    # Schedule recurring jobs
+    scheduler.add_job(
+        run_daily_summary_check,
+        'interval',
+        hours=1,
+        id='daily_summaries',
+        replace_existing=True
+    )
     start_push_notification_scheduler()
-    start_apex_polling()
+    scheduler.add_job(
+        run_apex_polling,
+        'interval',
+        minutes=15,
+        id='apex_polling',
+        replace_existing=True
+    )
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -3681,9 +3784,22 @@ def dashboard(request: Request):
 @app.get("/health")
 def health_check() -> JSONResponse:
     try:
+        # Check database connectivity
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return JSONResponse({"status": "ok"})
+
+        # Get scheduler status
+        scheduler_running = scheduler.running if hasattr(scheduler, 'running') else False
+        scheduled_jobs = len(scheduler.get_jobs()) if scheduler_running else 0
+
+        return JSONResponse({
+            "status": "ok",
+            "database": "connected",
+            "scheduler": {
+                "running": scheduler_running,
+                "jobs": scheduled_jobs
+            }
+        })
     except Exception as exc:
         logger.error(json.dumps({"event": "health_check_failed", "error": str(exc)}))
         return JSONResponse({"status": "error", "detail": "database unavailable"}, status_code=503)
@@ -3866,6 +3982,7 @@ def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/auth/login")
+@limiter.limit("10/minute")
 async def login_submit(request: Request):
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
@@ -3884,7 +4001,7 @@ async def login_submit(request: Request):
     token = create_session(db, user["id"], rotate_existing=rotate_existing)
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * SESSION_LIFETIME_DAYS)
     return response
 
 @app.get("/auth/register", response_class=HTMLResponse)
@@ -3892,6 +4009,7 @@ def register_form(request: Request):
     return templates.TemplateResponse("register.html", {"request": request})
 
 @app.post("/auth/register")
+@limiter.limit("5/minute")
 async def register_submit(request: Request):
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
@@ -3904,6 +4022,10 @@ async def register_submit(request: Request):
         return templates.TemplateResponse("register.html", {"request": request, "error": "Email and password are required."})
     if password != confirm:
         return templates.TemplateResponse("register.html", {"request": request, "error": "Passwords do not match."})
+    # Validate password strength
+    is_valid, error_msg = validate_password(password)
+    if not is_valid:
+        return templates.TemplateResponse("register.html", {"request": request, "error": error_msg})
     db = get_db()
     first_user = not users_exist(db)
     existing = one(db, "SELECT id FROM users WHERE email=?", (email,))
@@ -3930,7 +4052,7 @@ async def register_submit(request: Request):
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * SESSION_LIFETIME_DAYS)
     return response
 
 @app.get("/auth/logout")
@@ -3957,6 +4079,7 @@ def account_settings(request: Request):
     return templates.TemplateResponse("account.html", {"request": request, "tokens": tokens, "user": user})
 
 @app.post("/account/password")
+@limiter.limit("5/minute")
 async def account_change_password(request: Request):
     form = await request.form()
     current_password = form.get("current_password") or ""
@@ -3996,6 +4119,19 @@ async def account_change_password(request: Request):
             {
                 "request": request,
                 "error": "Current password is incorrect.",
+                "tokens": list_api_tokens(db, user["id"]),
+                "user": user,
+            },
+        )
+    # Validate new password strength
+    is_valid, error_msg = validate_password(new_password)
+    if not is_valid:
+        db.close()
+        return templates.TemplateResponse(
+            "account.html",
+            {
+                "request": request,
+                "error": error_msg,
                 "tokens": list_api_tokens(db, user["id"]),
                 "user": user,
             },
@@ -4181,7 +4317,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     token = create_session(db, user["id"])
     db.close()
     response = redirect("/")
-    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * SESSION_LIFETIME_DAYS)
     cookie_settings = oauth_cookie_settings(request)
     response.delete_cookie("oauth_state", domain=cookie_settings["domain"], path="/")
     return response
@@ -6182,6 +6318,7 @@ def push_public_key():
     return JSONResponse({"public_key": public_key})
 
 @app.post("/api/push/subscribe")
+@limiter.limit("20/minute")
 async def push_subscribe(request: Request):
     db = get_db()
     user = get_current_user(db, request)
@@ -6229,6 +6366,7 @@ async def push_unsubscribe(request: Request):
     return JSONResponse({"ok": True})
 
 @app.post("/api/push/test")
+@limiter.limit("10/minute")
 async def push_test(request: Request):
     db = get_db()
     user = get_current_user(db, request)
@@ -9536,6 +9674,7 @@ def api_samples(request: Request, tank_id: int, limit: int = 50):
     return {"tank": {"id": tank["id"], "name": tank["name"]}, "samples": data}
     
 @app.post("/admin/upload-excel")
+@limiter.limit("10/minute")
 async def upload_excel(request: Request, file: UploadFile = File(...)):
     pd = get_pandas()
     if pd is None:
