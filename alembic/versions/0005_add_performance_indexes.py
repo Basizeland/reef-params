@@ -34,9 +34,28 @@ def index_exists(index_name: str) -> bool:
     return False
 
 
+def column_exists(table_name: str, column_name: str) -> bool:
+    """Check if a column exists in a table."""
+    if not table_exists(table_name):
+        return False
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    columns = [col['name'] for col in inspector.get_columns(table_name)]
+    return column_name in columns
+
+
 def create_index_if_not_exists(index_name: str, table_name: str, columns: list) -> None:
-    """Create an index only if the table exists and index doesn't exist."""
-    if table_exists(table_name) and not index_exists(index_name):
+    """Create an index only if the table exists, all columns exist, and index doesn't exist."""
+    if not table_exists(table_name):
+        return
+
+    # Check if all columns exist
+    for column in columns:
+        if not column_exists(table_name, column):
+            return
+
+    # Check if index already exists
+    if not index_exists(index_name):
         op.create_index(index_name, table_name, columns)
 
 
