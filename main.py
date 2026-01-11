@@ -48,6 +48,7 @@ from slowapi.errors import RateLimitExceeded
 from cachetools import TTLCache, cached
 from apscheduler.schedulers.background import BackgroundScheduler
 from pythonjsonlogger import jsonlogger
+from pydantic import BaseModel, EmailStr, Field, validator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
@@ -470,6 +471,35 @@ INITIAL_DEFAULTS = {
     "Salinity": {"default_target_low": 34, "default_target_high": 35.5, "default_alert_low": 32, "default_alert_high": 37},
     "Temperature": {"default_target_low": 25, "default_target_high": 26.5, "default_alert_low": 23, "default_alert_high": 29},
 }
+
+# Pydantic Models for Request Validation
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1)
+    rotate_sessions: bool = False
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    username: Optional[str] = None
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH)
+    confirm_password: str
+
+    @validator('confirm_password')
+    def passwords_match(cls, v, values):
+        if 'password' in values and v != values['password']:
+            raise ValueError('Passwords do not match')
+        return v
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
+    confirm_password: str
+
+    @validator('confirm_password')
+    def passwords_match(cls, v, values):
+        if 'new_password' in values and v != values['new_password']:
+            raise ValueError('Passwords do not match')
+        return v
 
 static_dir = os.path.join(BASE_DIR, "static")
 templates_dir = os.path.join(BASE_DIR, "templates")
