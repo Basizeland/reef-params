@@ -6248,6 +6248,33 @@ async def push_test(request: Request):
     if not public_key or not private_key or not subject:
         db.close()
         raise HTTPException(status_code=404, detail="Push notifications not configured.")
+    if subscription and isinstance(subscription, dict):
+        webpush_module = get_webpush()
+        if webpush_module is None:
+            db.close()
+            raise HTTPException(status_code=503, detail="Push notifications are unavailable.")
+        try:
+            webpush_module.webpush(
+                subscription_info=subscription,
+                data=json.dumps(
+                    {
+                        "title": "Reef Metrics",
+                        "body": "Test notification sent successfully.",
+                        "url": "/account",
+                        "tag": f"test-{user['id']}",
+                        "require_interaction": True,
+                        "renotify": True,
+                        "vibrate": [200, 100, 200],
+                    }
+                ),
+                vapid_private_key=private_key,
+                vapid_claims={"sub": subject},
+            )
+        except webpush_module.WebPushException:
+            db.close()
+            raise HTTPException(status_code=400, detail="Unable to send test notification.")
+        db.close()
+        return JSONResponse({"ok": True})
     has_subscription = one(
         db,
         "SELECT 1 FROM push_subscriptions WHERE user_id=?",
