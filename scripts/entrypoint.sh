@@ -63,36 +63,80 @@ command.upgrade(cfg, 'head')
 print('Migrations completed successfully')
 
 # Verify critical columns exist and add them if missing
-print('Verifying critical schema elements...')
+print('='*60)
+print('CRITICAL SCHEMA VERIFICATION')
+print('='*60)
 inspector = inspect(engine)
 tables = inspector.get_table_names()
 print(f'Database has {len(tables)} tables')
 
+columns_added = False
+
 # Check additives.owner_user_id
 if 'additives' in tables:
     additives_cols = [c['name'] for c in inspector.get_columns('additives')]
-    print(f'additives table columns: {additives_cols}')
+    print(f'additives table has {len(additives_cols)} columns: {additives_cols}')
     if 'owner_user_id' not in additives_cols:
-        print('WARNING: additives.owner_user_id missing, adding now...')
-        with engine.begin() as conn:
-            conn.execute(text('ALTER TABLE additives ADD COLUMN owner_user_id INTEGER'))
-        print('Added additives.owner_user_id')
+        print('❌ MISSING: additives.owner_user_id')
+        print('Adding column now...')
+        try:
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE additives ADD COLUMN owner_user_id INTEGER'))
+            print('✅ Successfully added additives.owner_user_id')
+            columns_added = True
+        except Exception as e:
+            print(f'ERROR adding column: {e}')
+            raise
     else:
-        print('✓ additives.owner_user_id exists')
+        print('✓ additives.owner_user_id already exists')
+else:
+    print('⚠ additives table does not exist')
 
 # Check test_kits.owner_user_id
 if 'test_kits' in tables:
     test_kits_cols = [c['name'] for c in inspector.get_columns('test_kits')]
-    print(f'test_kits table columns: {test_kits_cols}')
+    print(f'test_kits table has {len(test_kits_cols)} columns: {test_kits_cols}')
     if 'owner_user_id' not in test_kits_cols:
-        print('WARNING: test_kits.owner_user_id missing, adding now...')
-        with engine.begin() as conn:
-            conn.execute(text('ALTER TABLE test_kits ADD COLUMN owner_user_id INTEGER'))
-        print('Added test_kits.owner_user_id')
+        print('❌ MISSING: test_kits.owner_user_id')
+        print('Adding column now...')
+        try:
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE test_kits ADD COLUMN owner_user_id INTEGER'))
+            print('✅ Successfully added test_kits.owner_user_id')
+            columns_added = True
+        except Exception as e:
+            print(f'ERROR adding column: {e}')
+            raise
     else:
-        print('✓ test_kits.owner_user_id exists')
+        print('✓ test_kits.owner_user_id already exists')
+else:
+    print('⚠ test_kits table does not exist')
 
+# If we added columns, verify they exist now
+if columns_added:
+    print('Refreshing schema and verifying additions...')
+    engine.dispose()  # Clear connection pool
+    inspector = inspect(engine)  # Fresh inspector
+
+    if 'additives' in tables:
+        additives_cols_after = [c['name'] for c in inspector.get_columns('additives')]
+        if 'owner_user_id' in additives_cols_after:
+            print('✅ CONFIRMED: additives.owner_user_id now exists')
+        else:
+            print('❌ FAILED: additives.owner_user_id still missing after ALTER TABLE')
+            raise RuntimeError('Failed to add additives.owner_user_id column')
+
+    if 'test_kits' in tables:
+        test_kits_cols_after = [c['name'] for c in inspector.get_columns('test_kits')]
+        if 'owner_user_id' in test_kits_cols_after:
+            print('✅ CONFIRMED: test_kits.owner_user_id now exists')
+        else:
+            print('❌ FAILED: test_kits.owner_user_id still missing after ALTER TABLE')
+            raise RuntimeError('Failed to add test_kits.owner_user_id column')
+
+print('='*60)
 print('Schema verification complete')
+print('='*60)
 "
 
 exec uvicorn main:app --host 0.0.0.0 --port 8000
