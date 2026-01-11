@@ -516,6 +516,7 @@
                     }
                     return null;
                 } catch (err) {
+                    console.error("Error getting push subscription:", err);
                     return null;
                 }
             };
@@ -576,27 +577,37 @@
                 return data.public_key || null;
             };
             const subscribePush = async () => {
-                if (!("serviceWorker" in navigator)) return;
+                if (!("serviceWorker" in navigator)) return null;
                 const publicKey = await getPublicKey();
                 if (!publicKey) {
                     alert("Push notifications are not configured on the server.");
                     return null;
                 }
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(publicKey),
-                });
-                await fetch("/api/push/subscribe", {
-                    method: "POST",
-                    credentials: "same-origin",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-CSRF-Token": window.csrfToken || "",
-                    },
-                    body: JSON.stringify(subscription),
-                });
-                return subscription;
+                try {
+                    const registration = await navigator.serviceWorker.ready;
+                    const subscription = await registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(publicKey),
+                    });
+                    const response = await fetch("/api/push/subscribe", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRF-Token": window.csrfToken || "",
+                        },
+                        body: JSON.stringify(subscription),
+                    });
+                    if (!response.ok) {
+                        console.error("Failed to save push subscription:", response.status);
+                        await subscription.unsubscribe();
+                        return null;
+                    }
+                    return subscription;
+                } catch (err) {
+                    console.error("Error subscribing to push notifications:", err);
+                    return null;
+                }
             };
             const unsubscribePush = async () => {
                 const registrations = await navigator.serviceWorker.getRegistrations();
@@ -629,17 +640,18 @@
                     const subscription = await getAnySubscription();
                     if (subscription) {
                         await unsubscribePush();
+                        await updateStatus();
                     } else {
                         const newSubscription = await subscribePush();
                         if (newSubscription) {
-                            toggleButtons.forEach((button) => {
-                                const targetId = button.getAttribute("data-status-target");
-                                const label = targetId ? document.getElementById(targetId) : null;
-                                if (label) label.textContent = "On";
-                            });
+                            // Give the service worker a moment to fully register the subscription
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            await updateStatus();
+                        } else {
+                            // Subscription failed, update status to show current state
+                            await updateStatus();
                         }
                     }
-                    await updateStatus();
                 });
             });
             updateStatus();
