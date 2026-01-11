@@ -7612,7 +7612,7 @@ async def apex_client_import(request: Request):
     settings = get_apex_settings(db, integration_id)
     if not content:
         db.close()
-        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+        return JSONResponse({"detail": "Apex payload is required."}, status_code=400)
     try:
         readings = readings_from_payload(content)
         normalized = normalize_apex_readings(readings)
@@ -7626,7 +7626,7 @@ async def apex_client_import(request: Request):
         return JSONResponse({"success": message, "result": result})
     except Exception as exc:
         db.close()
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"detail": str(exc)}, status_code=400)
 
 @app.post("/settings/integrations/apex/client-test")
 async def apex_client_test(request: Request):
@@ -7641,14 +7641,14 @@ async def apex_client_test(request: Request):
     get_apex_settings(db, integration_id)
     if not content:
         db.close()
-        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+        return JSONResponse({"detail": "Apex payload is required."}, status_code=400)
     try:
         readings = readings_from_payload(content)
         db.close()
         return JSONResponse({"success": f"Connected successfully. Found {len(readings)} probes."})
     except Exception as exc:
         db.close()
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"detail": str(exc)}, status_code=400)
 
 @app.post("/settings/integrations/apex/client-probes")
 async def apex_client_probes(request: Request):
@@ -7663,7 +7663,7 @@ async def apex_client_probes(request: Request):
     settings = get_apex_settings(db, integration_id)
     if not content:
         db.close()
-        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+        return JSONResponse({"detail": "Apex payload is required."}, status_code=400)
     try:
         readings = readings_from_payload(content)
         probes = sorted({reading.name for reading in readings if reading.name})
@@ -7674,7 +7674,7 @@ async def apex_client_probes(request: Request):
         return JSONResponse({"success": f"Loaded {len(probes)} probes.", "probes": probes})
     except Exception as exc:
         db.close()
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"detail": str(exc)}, status_code=400)
 
 @app.post("/settings/integrations/apex/client-preview")
 async def apex_client_preview(request: Request):
@@ -7690,7 +7690,7 @@ async def apex_client_preview(request: Request):
     settings = get_apex_settings(db, integration_id)
     if not content:
         db.close()
-        return JSONResponse({"error": "Apex payload is required."}, status_code=400)
+        return JSONResponse({"detail": "Apex payload is required."}, status_code=400)
     try:
         readings = readings_from_payload(content)
         normalized = normalize_apex_readings(readings)
@@ -7711,7 +7711,7 @@ async def apex_client_preview(request: Request):
         return JSONResponse({"success": f"Previewed {len(preview)} mapped probes.", "preview": preview})
     except Exception as exc:
         db.close()
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"detail": str(exc)}, status_code=400)
 
 @app.post("/settings/integrations/apex/probes", response_class=HTMLResponse)
 async def apex_settings_probes(request: Request):
