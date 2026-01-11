@@ -29,9 +29,25 @@ def column_exists(table_name: str, column_name: str) -> bool:
 
 
 def upgrade() -> None:
-    if not column_exists("additives", "owner_user_id"):
-        with op.batch_alter_table("additives") as batch_op:
-            batch_op.add_column(sa.Column("owner_user_id", sa.Integer(), nullable=True))
+    bind = op.get_bind()
+    inspector = inspect(bind)
+
+    # Check if additives table exists
+    if "additives" not in inspector.get_table_names():
+        print("MIGRATION 0004: additives table does not exist, skipping")
+        return
+
+    # Check if column already exists
+    columns = [col['name'] for col in inspector.get_columns("additives")]
+    print(f"MIGRATION 0004: additives columns: {columns}")
+
+    if "owner_user_id" in columns:
+        print("MIGRATION 0004: owner_user_id column already exists, skipping")
+        return
+
+    print("MIGRATION 0004: Adding owner_user_id column to additives")
+    op.add_column("additives", sa.Column("owner_user_id", sa.Integer(), nullable=True))
+    print("MIGRATION 0004: Successfully added owner_user_id column")
 
 
 def downgrade() -> None:
