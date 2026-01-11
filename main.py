@@ -3661,11 +3661,11 @@ async def security_headers_middleware(request: Request, call_next):
     # Content Security Policy
     csp = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://www.googletagmanager.com; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://www.googletagmanager.com https://static.cloudflareinsights.com; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "img-src 'self' data: https:; "
-        "font-src 'self' data:; "
-        "connect-src 'self' https://www.google-analytics.com; "
+        "font-src 'self' data: https://cdn.jsdelivr.net; "
+        "connect-src 'self' https://www.google-analytics.com https://cdn.jsdelivr.net; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "form-action 'self'"
