@@ -3583,6 +3583,54 @@ def start_background_jobs() -> None:
     )
 
 @app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Add security headers to all responses"""
+    response = await call_next(request)
+
+    # Cache control for static assets
+    if request.url.path.startswith("/static/"):
+        # Cache static assets for 1 year (immutable resources)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        # No caching for dynamic content
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+
+    # Prevent MIME type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Prevent clickjacking
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+
+    # Enable browser XSS protection
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # Control referrer information
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Restrict feature access
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+    # HSTS for HTTPS connections
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # Content Security Policy
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://www.googletagmanager.com; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data:; "
+        "connect-src 'self' https://www.google-analytics.com; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    response.headers["Content-Security-Policy"] = csp
+
+    return response
+
+@app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     request.state.request_id = request_id
