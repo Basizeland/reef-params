@@ -34,8 +34,12 @@ engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     connect_args=connect_args,
     future=True,
-    pool_pre_ping=True,
-    pool_recycle=300,
+    pool_pre_ping=True,  # Test connections before using
+    pool_recycle=300,  # Recycle connections after 5 minutes
+    pool_size=10,  # Base connection pool size
+    max_overflow=20,  # Allow up to 20 additional connections
+    pool_timeout=30,  # Wait up to 30s for a connection
+    echo_pool=False,  # Set to True for debugging pool issues
 )
 
 Base = declarative_base()
