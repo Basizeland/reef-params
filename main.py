@@ -6223,21 +6223,15 @@ async def push_unsubscribe(request: Request):
 
 @app.post("/api/push/test")
 async def push_test(request: Request):
-    print("[DEBUG] /api/push/test endpoint called")
     db = get_db()
     user = get_current_user(db, request)
     if not user:
-        print("[DEBUG] User not authenticated")
         db.close()
         raise HTTPException(status_code=401, detail="Not authenticated")
-    print(f"[DEBUG] User authenticated: {user['id']}")
     payload = await request.json()
     subscription = payload.get("subscription") if isinstance(payload, dict) else None
-    print(f"[DEBUG] Received payload: {payload}")
-    print(f"[DEBUG] Extracted subscription: {subscription}")
     if subscription and isinstance(subscription, dict):
         endpoint = subscription.get("endpoint")
-        print(f"[DEBUG] Endpoint: {endpoint}")
         if endpoint:
             try:
                 execute_with_retry(
@@ -6248,9 +6242,8 @@ async def push_test(request: Request):
                     (user["id"], endpoint, json.dumps(subscription), datetime.utcnow().isoformat()),
                 )
                 db.commit()
-                print("[DEBUG] Subscription saved to database")
             except Exception as e:
-                print(f"[ERROR] Database error: {e}")
+                print(f"Error saving subscription: {e}")
                 db.rollback()
     public_key, private_key, subject = get_vapid_settings()
     if not public_key or not private_key or not subject:
@@ -6262,8 +6255,6 @@ async def push_test(request: Request):
             db.close()
             raise HTTPException(status_code=503, detail="Push notifications are unavailable.")
         try:
-            print(f"[DEBUG] Sending push with subscription: {subscription}")
-            print(f"[DEBUG] VAPID subject: {subject}")
             webpush_module.webpush(
                 subscription_info=subscription,
                 data=json.dumps(
@@ -6280,13 +6271,12 @@ async def push_test(request: Request):
                 vapid_private_key=private_key,
                 vapid_claims={"sub": subject},
             )
-            print("[DEBUG] Push sent successfully")
         except webpush_module.WebPushException as e:
-            print(f"[ERROR] WebPushException: {e}")
+            print(f"WebPushException: {e}")
             db.close()
             raise HTTPException(status_code=400, detail=f"Unable to send test notification: {str(e)}")
         except Exception as e:
-            print(f"[ERROR] Unexpected error in webpush: {type(e).__name__}: {e}")
+            print(f"Unexpected error in webpush: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
             db.close()
