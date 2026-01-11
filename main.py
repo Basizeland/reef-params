@@ -49,6 +49,7 @@ from cachetools import TTLCache, cached
 from apscheduler.schedulers.background import BackgroundScheduler
 from pythonjsonlogger import jsonlogger
 from pydantic import BaseModel, Field, validator
+from collections import defaultdict
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
@@ -58,6 +59,67 @@ MIN_PASSWORD_LENGTH = int(os.environ.get("MIN_PASSWORD_LENGTH", "12"))
 RUN_BACKGROUND_JOBS = os.environ.get("RUN_BACKGROUND_JOBS", "true").lower() in {"1", "true", "yes", "on"}
 BACKGROUND_JOB_LOCK_PATH = os.environ.get("BACKGROUND_JOB_LOCK_PATH", "").strip() or None
 SESSION_ROTATE_ON_LOGIN = os.environ.get("SESSION_ROTATE_ON_LOGIN", "true").lower() in {"1", "true", "yes", "on"}
+
+# Simple metrics collection
+class MetricsCollector:
+    """
+    Simple metrics collector for tracking application performance.
+    Tracks request counts, timing, and background job status.
+    """
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.request_count = defaultdict(int)
+        self.request_duration = defaultdict(list)
+        self.slow_queries = []
+        self.background_jobs = {}
+
+    def record_request(self, method: str, path: str, duration_ms: float, status: int) -> None:
+        """Record an HTTP request with timing"""
+        with self._lock:
+            key = f"{method} {path}"
+            self.request_count[key] += 1
+            self.request_duration[key].append(duration_ms)
+            # Keep only last 100 durations per endpoint
+            if len(self.request_duration[key]) > 100:
+                self.request_duration[key] = self.request_duration[key][-100:]
+
+    def record_slow_query(self, query: str, duration_ms: float, timestamp: datetime) -> None:
+        """Record a slow database query"""
+        with self._lock:
+            self.slow_queries.append({
+                "query": query[:200],  # Truncate long queries
+                "duration_ms": duration_ms,
+                "timestamp": timestamp.isoformat()
+            })
+            # Keep only last 50 slow queries
+            if len(self.slow_queries) > 50:
+                self.slow_queries = self.slow_queries[-50:]
+
+    def update_job_status(self, job_id: str, status: str, last_run: Optional[datetime] = None, error: Optional[str] = None) -> None:
+        """Update background job status"""
+        with self._lock:
+            self.background_jobs[job_id] = {
+                "status": status,
+                "last_run": last_run.isoformat() if last_run else None,
+                "error": error
+            }
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current metrics statistics"""
+        with self._lock:
+            stats = {
+                "requests": dict(self.request_count),
+                "avg_duration": {
+                    k: sum(v) / len(v) if v else 0
+                    for k, v in self.request_duration.items()
+                },
+                "slow_queries_count": len(self.slow_queries),
+                "recent_slow_queries": self.slow_queries[-10:],
+                "background_jobs": dict(self.background_jobs)
+            }
+            return stats
+
+metrics = MetricsCollector()
 ALLOW_RUNTIME_SCHEMA_CHANGES = os.environ.get("ALLOW_RUNTIME_SCHEMA_CHANGES", "false").lower() in {"1", "true", "yes", "on"}
 CSRF_EXEMPT_PATHS = tuple(
     path.strip() for path in os.environ.get("CSRF_EXEMPT_PATHS", "").split(",") if path.strip()
@@ -1184,9 +1246,12 @@ def send_summaries_if_due() -> None:
 def run_daily_summary_check() -> None:
     """Check and send daily summaries if due - called by scheduler"""
     try:
+        metrics.update_job_status("daily_summaries", "running", datetime.now())
         send_summaries_if_due()
+        metrics.update_job_status("daily_summaries", "success", datetime.now())
     except Exception as exc:
         logger.error(f"Daily summary check error: {exc}", exc_info=True)
+        metrics.update_job_status("daily_summaries", "error", datetime.now(), str(exc))
 
 def send_push_notifications_if_due() -> None:
     auto_send = os.environ.get("AUTO_SEND_PUSH_NOTIFICATIONS", "true").lower() in {"1", "true", "yes"}
@@ -1207,9 +1272,12 @@ def start_push_notification_scheduler() -> None:
 
     def run_push_check():
         try:
+            metrics.update_job_status("push_notifications", "running", datetime.now())
             send_push_notifications_if_due()
+            metrics.update_job_status("push_notifications", "success", datetime.now())
         except Exception as exc:
             logger.error(f"Push notification check error: {exc}", exc_info=True)
+            metrics.update_job_status("push_notifications", "error", datetime.now(), str(exc))
 
     scheduler.add_job(
         run_push_check,
@@ -2535,14 +2603,26 @@ class DBConnection:
         return isinstance(orig, psycopg.errors.InFailedSqlTransaction)
 
     def execute(self, sql: str | TextClause, params: Tuple[Any, ...] | Dict[str, Any] | None = None):
+        """Execute a SQL query with slow query monitoring"""
         if self._needs_rollback:
             self._conn.rollback()
             self._needs_rollback = False
+
+        start_time = time_module.time()
         try:
             if isinstance(sql, TextClause):
-                return self._conn.execute(sql, params or {})
-            prepared_sql, bound = _prepare_sql(sql, params)
-            return self._conn.execute(text(prepared_sql), bound)
+                result = self._conn.execute(sql, params or {})
+            else:
+                prepared_sql, bound = _prepare_sql(sql, params)
+                result = self._conn.execute(text(prepared_sql), bound)
+
+            # Monitor slow queries (> 1 second)
+            duration_ms = (time_module.time() - start_time) * 1000
+            if duration_ms > 1000:
+                query_str = str(sql) if isinstance(sql, TextClause) else prepared_sql
+                metrics.record_slow_query(query_str, duration_ms, datetime.now())
+
+            return result
         except SQLAlchemyError as exc:
             self._needs_rollback = True
             self._conn.rollback()
@@ -3292,6 +3372,7 @@ def run_apex_polling() -> None:
     """Run one iteration of Apex polling - called by scheduler"""
     db = get_db()
     try:
+        metrics.update_job_status("apex_polling", "running", datetime.now())
         integrations = get_apex_integrations(db)
         for settings in integrations:
             enabled = bool(settings.get("enabled"))
@@ -3300,6 +3381,9 @@ def run_apex_polling() -> None:
                     import_apex_sample(db, settings, None)
                 except Exception as exc:
                     logger.error(f"Apex polling error: {exc}", exc_info=True)
+                    metrics.update_job_status("apex_polling", "error", datetime.now(), str(exc))
+                    return
+        metrics.update_job_status("apex_polling", "success", datetime.now())
     finally:
         db.close()
 
@@ -3712,6 +3796,7 @@ async def auth_middleware(request: Request, call_next):
             "tank_id": request.query_params.get("tank_id"),
         }
         logger.info(json.dumps(log_payload))
+        metrics.record_request(request.method, path, log_payload["duration_ms"], response.status_code)
         response.headers["X-Request-Id"] = request_id
         response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
         return response
@@ -3734,6 +3819,7 @@ async def auth_middleware(request: Request, call_next):
                 "tank_id": request.path_params.get("tank_id") or request.query_params.get("tank_id"),
             }
             logger.info(json.dumps(log_payload))
+            metrics.record_request(request.method, path, log_payload["duration_ms"], response.status_code)
             response.headers["X-Request-Id"] = request_id
             return response
         response = await call_next(request)
@@ -3756,6 +3842,7 @@ async def auth_middleware(request: Request, call_next):
             "tank_id": tank_id,
         }
         logger.info(json.dumps(log_payload))
+        metrics.record_request(request.method, path, log_payload["duration_ms"], response.status_code)
         response.headers["X-Request-Id"] = request_id
         response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
         return response
@@ -3939,6 +4026,24 @@ def health_check() -> JSONResponse:
     except Exception as exc:
         logger.error(json.dumps({"event": "health_check_failed", "error": str(exc)}))
         return JSONResponse({"status": "error", "detail": "database unavailable"}, status_code=503)
+
+@app.get("/metrics")
+def metrics_endpoint(request: Request) -> JSONResponse:
+    """
+    Expose application metrics for monitoring.
+    Returns request counts, average durations, slow queries, and background job status.
+    """
+    db = get_db()
+    try:
+        user = get_current_user(db, request)
+        # Only allow admin users to view metrics
+        if not is_admin(user):
+            raise HTTPException(status_code=403, detail="Admin access required")
+
+        stats = metrics.get_stats()
+        return JSONResponse(stats)
+    finally:
+        db.close()
 
 @app.get("/debug/sentry")
 def sentry_test() -> JSONResponse:
