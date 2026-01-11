@@ -210,6 +210,7 @@ class TestKit(Base, DictMixin):
     conversion_data = Column(String)
     workflow_data = Column(String)
     active = Column(Integer, default=1)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 class Additive(Base, DictMixin):
     __tablename__ = "additives"

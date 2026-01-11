@@ -114,6 +114,16 @@ def main() -> None:
             with engine.begin() as pg_conn:
                 for ddl in missing:
                     pg_conn.execute(text(ddl))
+    if inspector.has_table("test_kits"):
+        existing_columns = {col["name"] for col in inspector.get_columns("test_kits")}
+        if "owner_user_id" not in existing_columns:
+            with engine.begin() as pg_conn:
+                pg_conn.execute(text("ALTER TABLE test_kits ADD COLUMN owner_user_id INTEGER"))
+    if inspector.has_table("additives"):
+        existing_columns = {col["name"] for col in inspector.get_columns("additives")}
+        if "owner_user_id" not in existing_columns:
+            with engine.begin() as pg_conn:
+                pg_conn.execute(text("ALTER TABLE additives ADD COLUMN owner_user_id INTEGER"))
 
     fk_cache: dict[tuple[str, str], set] = {}
 

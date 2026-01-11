@@ -1,4 +1,5 @@
 import os
+import fcntl
 import psycopg
 from sqlalchemy import text, inspect
 from sqlalchemy.engine import Connection
@@ -42,6 +43,14 @@ from fastapi.responses import StreamingResponse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
+PASSWORD_HASH_ITERATIONS = int(os.environ.get("PASSWORD_HASH_ITERATIONS", "200000"))
+RUN_BACKGROUND_JOBS = os.environ.get("RUN_BACKGROUND_JOBS", "true").lower() in {"1", "true", "yes", "on"}
+BACKGROUND_JOB_LOCK_PATH = os.environ.get("BACKGROUND_JOB_LOCK_PATH", "").strip() or None
+SESSION_ROTATE_ON_LOGIN = os.environ.get("SESSION_ROTATE_ON_LOGIN", "true").lower() in {"1", "true", "yes", "on"}
+ALLOW_RUNTIME_SCHEMA_CHANGES = os.environ.get("ALLOW_RUNTIME_SCHEMA_CHANGES", "true").lower() in {"1", "true", "yes", "on"}
+CSRF_EXEMPT_PATHS = tuple(
+    path.strip() for path in os.environ.get("CSRF_EXEMPT_PATHS", "").split(",") if path.strip()
+)
 R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
@@ -80,6 +89,17 @@ def get_pandas():
 
 def get_webpush():
     return optional_module("pywebpush")
+
+def is_csrf_exempt(path: str) -> bool:
+    if not CSRF_EXEMPT_PATHS:
+        return False
+    for entry in CSRF_EXEMPT_PATHS:
+        if entry.endswith("*"):
+            if path.startswith(entry[:-1]):
+                return True
+        elif path == entry:
+            return True
+    return False
 
 def require_pandas():
     pandas = get_pandas()
@@ -1182,7 +1202,12 @@ async def extract_csrf_token(request: Request) -> str | None:
 def hash_password(password: str, salt: str | None = None) -> Tuple[str, str]:
     if not salt:
         salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_HASH_ITERATIONS,
+    )
     return digest.hex(), salt
 
 def verify_password(password: str, password_hash: str, salt: str) -> bool:
@@ -1220,6 +1245,12 @@ def get_visible_tanks(db: Connection, request: Request) -> List[Dict[str, Any]]:
 def ensure_additives_owner_column(db: "DBConnection") -> None:
     ensure_column(db, "additives", "owner_user_id", "ALTER TABLE additives ADD COLUMN owner_user_id INTEGER")
 
+def ensure_test_kits_owner_column(db: "DBConnection") -> None:
+    ensure_column(db, "test_kits", "owner_user_id", "ALTER TABLE test_kits ADD COLUMN owner_user_id INTEGER")
+
+def is_admin_user(user: Optional[Dict[str, Any]]) -> bool:
+    return bool(user and (row_get(user, "admin") in (1, True) or row_get(user, "role") == "admin"))
+
 def build_additives_where(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True, extra_clause: Optional[str] = None, extra_params: Tuple[Any, ...] = ()) -> Tuple[str, Tuple[Any, ...]]:
     ensure_additives_owner_column(db)
     clauses = []
@@ -1245,6 +1276,33 @@ def get_visible_additive_by_id(db: "DBConnection", user: Optional[Dict[str, Any]
     where_sql, params = build_additives_where(db, user, active_only=active_only, extra_clause="id=?", extra_params=(additive_id,))
     return one(db, f"SELECT * FROM additives{where_sql}", params)
 
+def build_test_kits_where(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True, extra_clause: Optional[str] = None, extra_params: Tuple[Any, ...] = ()) -> Tuple[str, Tuple[Any, ...]]:
+    ensure_test_kits_owner_column(db)
+    clauses = []
+    params: List[Any] = []
+    if active_only:
+        clauses.append("active=1")
+    if user and is_admin_user(user):
+        pass
+    elif user:
+        clauses.append("(owner_user_id IS NULL OR owner_user_id=?)")
+        params.append(user["id"])
+    else:
+        clauses.append("owner_user_id IS NULL")
+    if extra_clause:
+        clauses.append(extra_clause)
+        params.extend(extra_params)
+    where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where_sql, tuple(params)
+
+def get_visible_test_kits(db: "DBConnection", user: Optional[Dict[str, Any]], active_only: bool = True) -> List[Dict[str, Any]]:
+    where_sql, params = build_test_kits_where(db, user, active_only=active_only)
+    return q(db, f"SELECT * FROM test_kits{where_sql} ORDER BY parameter, name", params)
+
+def get_visible_test_kit_by_id(db: "DBConnection", user: Optional[Dict[str, Any]], test_kit_id: int, active_only: bool = False) -> Optional[Dict[str, Any]]:
+    where_sql, params = build_test_kits_where(db, user, active_only=active_only, extra_clause="id=?", extra_params=(test_kit_id,))
+    return one(db, f"SELECT * FROM test_kits{where_sql}", params)
+
 def group_additives_by_parameter(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     grouped = []
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -1254,6 +1312,16 @@ def group_additives_by_parameter(rows: List[Dict[str, Any]]) -> List[Dict[str, A
             key = group_name
         else:
             key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
+        groups.setdefault(key, []).append(r)
+    for key in sorted(groups.keys(), key=lambda s: s.lower()):
+        grouped.append({"parameter": key, "items": groups[key]})
+    return grouped
+
+def group_test_kits_by_parameter(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped = []
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        key = (r["parameter"] or "Uncategorized").strip() or "Uncategorized"
         groups.setdefault(key, []).append(r)
     for key in sorted(groups.keys(), key=lambda s: s.lower()):
         grouped.append({"parameter": key, "items": groups[key]})
@@ -1296,9 +1364,12 @@ def require_admin(user: Optional[Dict[str, Any]]) -> None:
     if not user or (row_get(user, "admin") not in (1, True) and row_get(user, "role") != "admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-def create_session(db: Connection, user_id: int) -> str:
+def create_session(db: Connection, user_id: int, rotate_existing: Optional[bool] = None) -> str:
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.utcnow() + timedelta(days=30)).isoformat()
+    rotate = SESSION_ROTATE_ON_LOGIN if rotate_existing is None else rotate_existing
+    if rotate:
+        db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     db.execute(
         "INSERT INTO sessions (user_id, session_token, created_at, expires_at) VALUES (?, ?, ?, ?)",
         (user_id, token, datetime.utcnow().isoformat(), expires_at),
@@ -2636,10 +2707,15 @@ def log_audit(db: Connection, user: Optional[Dict[str, Any]], action: str, detai
     try:
         insert_audit_log(db, user["id"], action, str(details), datetime.utcnow().isoformat())
         db.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "Audit log write failed",
+            extra={"audit_action": action, "audit_user_id": user.get("id") if user else None, "error": str(exc)},
+        )
 
 def ensure_column(db: DBConnection, table: str, col: str, ddl: str) -> None:
+    if not ALLOW_RUNTIME_SCHEMA_CHANGES:
+        raise RuntimeError(f"Runtime schema changes are disabled; missing {table}.{col}")
     inspector = inspect(db._conn)
     cols = {column["name"] for column in inspector.get_columns(table)}
     if col not in cols:
@@ -3366,6 +3442,23 @@ init_db()
 
 @app.on_event("startup")
 def start_background_jobs() -> None:
+    logger.info(
+        "Security settings: PASSWORD_HASH_ITERATIONS=%s SESSION_ROTATE_ON_LOGIN=%s",
+        PASSWORD_HASH_ITERATIONS,
+        SESSION_ROTATE_ON_LOGIN,
+    )
+    if not RUN_BACKGROUND_JOBS:
+        logger.info("Background jobs disabled by RUN_BACKGROUND_JOBS setting.")
+        return
+    if BACKGROUND_JOB_LOCK_PATH:
+        lock_handle = open(BACKGROUND_JOB_LOCK_PATH, "a+")
+        try:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            logger.info("Background job lock is held; skipping scheduler startup.")
+            lock_handle.close()
+            return
+        app.state.background_job_lock = lock_handle
     start_daily_summary_scheduler()
     start_push_notification_scheduler()
     start_apex_polling()
@@ -3377,15 +3470,17 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     csrf_token = ensure_csrf_token(request.cookies.get("csrf_token"))
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not path.startswith("/static"):
-        if request.headers.get("Authorization", "").startswith("Bearer "):
-            pass
-        else:
-            request_token = await extract_csrf_token(request)
-            if not request_token or request_token != csrf_token:
-                response = JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
-                response.headers["X-Request-Id"] = request_id
-                response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
-                return response
+        csrf_exempt = is_csrf_exempt(path)
+        if not csrf_exempt:
+            if request.headers.get("Authorization", "").startswith("Bearer "):
+                pass
+            else:
+                request_token = await extract_csrf_token(request)
+                if not request_token or request_token != csrf_token:
+                    response = JSONResponse({"detail": "Invalid CSRF token"}, status_code=403)
+                    response.headers["X-Request-Id"] = request_id
+                    response.set_cookie("csrf_token", csrf_token, httponly=False, samesite="lax")
+                    return response
     if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
         start_time = time_module.time()
         response = await call_next(request)
@@ -3768,6 +3863,8 @@ async def login_submit(request: Request):
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
     password = form.get("password") or ""
+    rotate_requested = "rotate_sessions" in form
+    rotate_sessions = (form.get("rotate_sessions") or "").lower() in {"1", "true", "on", "yes"}
     db = get_db()
     user = one(db, "SELECT * FROM users WHERE email=?", (email,))
     if not user or not user["password_hash"]:
@@ -3776,7 +3873,8 @@ async def login_submit(request: Request):
     if not verify_password(password, user["password_hash"], user["password_salt"]):
         db.close()
         return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid email or password."})
-    token = create_session(db, user["id"])
+    rotate_existing = rotate_sessions if rotate_requested else None
+    token = create_session(db, user["id"], rotate_existing=rotate_existing)
     db.close()
     response = redirect("/")
     response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
@@ -4121,7 +4219,7 @@ def multi_add_form(request: Request):
     user = get_current_user(db, request)
     tanks = get_visible_tanks(db, request)
     params_rows = get_active_param_defs(db, user_id=user["id"] if user else None)
-    kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
+    kits = get_visible_test_kits(db, user, active_only=True)
     kits_by_param = {}
     for k in kits:
         kits_by_param.setdefault(k["parameter"], []).append(k)
@@ -6248,7 +6346,7 @@ def add_sample_form(request: Request, tank_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="Tank not found")
     params_rows = filter_trace_parameters(get_active_param_defs(db, user_id=user["id"] if user else None))
-    kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
+    kits = get_visible_test_kits(db, user, active_only=True)
     kits_by_param = {}
     for k in kits:
         if is_trace_element(row_get(k, "parameter") or ""):
@@ -6347,7 +6445,7 @@ def sample_edit(request: Request, tank_id: int, sample_id: int):
         raise HTTPException(status_code=404, detail="Sample not found")
     pdefs = get_active_param_defs(db, user_id=user["id"] if user else None)
     readings = {r["name"]: r["value"] for r in get_sample_readings(db, sample_id)}
-    kits = q(db, "SELECT * FROM test_kits WHERE active=1 ORDER BY parameter, name")
+    kits = get_visible_test_kits(db, user, active_only=True)
     kits_by_param = {}
     for k in kits:
         kits_by_param.setdefault(k["parameter"], []).append(k)
@@ -6990,9 +7088,35 @@ async def parameter_bulk_add(request: Request):
 @app.get("/settings/test-kits/", response_class=HTMLResponse, include_in_schema=False)
 def test_kits(request: Request):
     db = get_db()
-    rows = q(db, "SELECT * FROM test_kits ORDER BY parameter, name")
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_test_kits_owner_column(db)
+    is_admin = is_admin_user(user)
+    where_sql, params = build_test_kits_where(db, user, active_only=False)
+    if is_admin:
+        rows = q(
+            db,
+            f"SELECT tk.*, u.email AS owner_email FROM test_kits tk LEFT JOIN users u ON u.id = tk.owner_user_id{where_sql} ORDER BY tk.parameter, tk.name",
+            params,
+        )
+    else:
+        rows = q(db, f"SELECT * FROM test_kits{where_sql} ORDER BY parameter, name", params)
+    standard_rows = [row for row in rows if row_get(row, "owner_user_id") is None]
+    personal_rows = [row for row in rows if row_get(row, "owner_user_id") is not None]
     db.close()
-    return templates.TemplateResponse("test_kits.html", {"request": request, "kits": rows})
+    return templates.TemplateResponse(
+        "test_kits.html",
+        {
+            "request": request,
+            "standard_groups": group_test_kits_by_parameter(standard_rows),
+            "personal_groups": group_test_kits_by_parameter(personal_rows),
+            "is_admin": is_admin,
+            "error": request.query_params.get("error"),
+            "success": request.query_params.get("success"),
+        },
+    )
 
 @app.get("/settings/system", response_class=HTMLResponse)
 def system_settings(request: Request):
@@ -7412,14 +7536,43 @@ async def apex_settings_preview(request: Request):
 @app.get("/settings/test-kits/new/", response_class=HTMLResponse, include_in_schema=False)
 def test_kit_new(request: Request):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_test_kits_owner_column(db)
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
-    return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": None, "parameters": parameters})
+    return templates.TemplateResponse(
+        "test_kit_edit.html",
+        {
+            "request": request,
+            "kit": None,
+            "parameters": parameters,
+            "is_admin": is_admin_user(user),
+        },
+    )
 
 @app.get("/settings/test-kits/{kit_id}/edit", response_class=HTMLResponse)
 def test_kit_edit(request: Request, kit_id: int):
     db = get_db()
-    kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_test_kits_owner_column(db)
+    kit = get_visible_test_kit_by_id(db, user, kit_id, active_only=False)
+    if not kit:
+        db.close()
+        return redirect("/settings/test-kits?error=Test%20kit%20not%20found")
+    is_admin = is_admin_user(user)
+    owner_id = row_get(kit, "owner_user_id")
+    if owner_id is None and not is_admin:
+        db.close()
+        return redirect("/settings/test-kits?error=Only%20admins%20can%20edit%20standard%20test%20kits")
+    if owner_id is not None and not is_admin and owner_id != user["id"]:
+        db.close()
+        return redirect("/settings/test-kits?error=You%20can%20only%20edit%20your%20own%20test%20kits")
     parameters = q(db, "SELECT * FROM parameter_defs WHERE active=1 ORDER BY sort_order, name")
     db.close()
     if kit:
@@ -7440,19 +7593,33 @@ def test_kit_edit(request: Request, kit_id: int):
             except Exception:
                 workflow_rows = []
             kit["workflow_steps"] = format_workflow_steps(workflow_rows)
-    return templates.TemplateResponse("test_kit_edit.html", {"request": request, "kit": kit, "parameters": parameters})
+    return templates.TemplateResponse(
+        "test_kit_edit.html",
+        {
+            "request": request,
+            "kit": kit,
+            "parameters": parameters,
+            "is_admin": is_admin,
+        },
+    )
 
 @app.post("/settings/test-kits/save")
-def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), manufacturer_accuracy: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), workflow_steps: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None)):
+def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), parameter: Optional[str] = Form(None), parameter_id: Optional[str] = Form(None), name: str = Form(...), unit: Optional[str] = Form(None), resolution: Optional[str] = Form(None), manufacturer_accuracy: Optional[str] = Form(None), min_value: Optional[str] = Form(None), max_value: Optional[str] = Form(None), notes: Optional[str] = Form(None), workflow_steps: Optional[str] = Form(None), conversion_type: Optional[str] = Form(None), conversion_table: Optional[str] = Form(None), active: Optional[str] = Form(None), is_global: Optional[str] = Form(None)):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_test_kits_owner_column(db)
     cur = cursor(db)
+    is_admin = is_admin_user(user)
     is_active = 1 if (active in ("1", "on", "true", "True")) else 0
     conv_type = (conversion_type or "").strip() or None
     conversion_rows = parse_conversion_table(conversion_table or "") if conv_type else []
     conversion_json = json.dumps(conversion_rows) if conversion_rows else None
     workflow_rows = parse_workflow_steps(workflow_steps or "")
     workflow_json = json.dumps(workflow_rows) if workflow_rows else None
-    data = (
+    data_base = (
         parameter.strip(),
         name.strip(),
         (unit or "").strip() or None,
@@ -7467,14 +7634,42 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
         is_active,
     )
     if kit_id and str(kit_id).strip().isdigit():
+        existing = one(db, "SELECT * FROM test_kits WHERE id=?", (int(kit_id),))
+        if not existing:
+            db.close()
+            return redirect("/settings/test-kits")
+        existing_owner = row_get(existing, "owner_user_id")
+        if existing_owner is None and not is_admin:
+            db.close()
+            return redirect("/settings/test-kits?error=Only%20admins%20can%20edit%20standard%20test%20kits")
+        if existing_owner is not None and not is_admin and existing_owner != user["id"]:
+            db.close()
+            return redirect("/settings/test-kits?error=You%20can%20only%20edit%20your%20own%20test%20kits")
+        owner_user_id = None if (is_admin and is_global in ("1", "on", "true", "True")) else (existing_owner or user["id"])
+        data = (*data_base, owner_user_id)
         cur.execute(
-            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, manufacturer_accuracy=?, min_value=?, max_value=?, notes=?, workflow_data=?, conversion_type=?, conversion_data=?, active=? WHERE id=?",
+            "UPDATE test_kits SET parameter=?, name=?, unit=?, resolution=?, manufacturer_accuracy=?, min_value=?, max_value=?, notes=?, workflow_data=?, conversion_type=?, conversion_data=?, active=?, owner_user_id=? WHERE id=?",
             (*data, int(kit_id)),
         )
+        log_audit(
+            db,
+            user,
+            "test-kit-update",
+            {"kit_id": int(kit_id), "name": name.strip(), "parameter": parameter.strip()},
+        )
     else:
+        owner_user_id = None if (is_admin and is_global in ("1", "on", "true", "True")) else user["id"]
+        data = (*data_base, owner_user_id)
         cur.execute(
-            "INSERT INTO test_kits (parameter, name, unit, resolution, manufacturer_accuracy, min_value, max_value, notes, workflow_data, conversion_type, conversion_data, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO test_kits (parameter, name, unit, resolution, manufacturer_accuracy, min_value, max_value, notes, workflow_data, conversion_type, conversion_data, active, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             data,
+        )
+        new_id = cur.lastrowid
+        log_audit(
+            db,
+            user,
+            "test-kit-create",
+            {"kit_id": new_id, "name": name.strip(), "parameter": parameter.strip()},
         )
     db.commit()
     db.close()
@@ -7483,10 +7678,52 @@ def test_kit_save(request: Request, kit_id: Optional[str] = Form(None), paramete
 @app.post("/settings/test-kits/{kit_id}/delete")
 def test_kit_delete(request: Request, kit_id: int):
     db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    ensure_test_kits_owner_column(db)
+    kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
+    if not kit:
+        db.close()
+        return redirect("/settings/test-kits")
+    is_admin = is_admin_user(user)
+    owner_id = row_get(kit, "owner_user_id")
+    if owner_id is None and not is_admin:
+        db.close()
+        return redirect("/settings/test-kits?error=Only%20admins%20can%20delete%20standard%20test%20kits")
+    if owner_id is not None and not is_admin and owner_id != user["id"]:
+        db.close()
+        return redirect("/settings/test-kits?error=You%20can%20only%20delete%20your%20own%20test%20kits")
+    log_audit(db, user, "test-kit-delete", {"kit_id": kit_id, "name": row_get(kit, "name")})
     db.execute("DELETE FROM test_kits WHERE id=?", (kit_id,))
     db.commit()
     db.close()
     return redirect("/settings/test-kits")
+
+@app.post("/settings/test-kits/{kit_id}/make-standard")
+def test_kit_make_standard(request: Request, kit_id: int):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        return redirect("/auth/login")
+    if not is_admin_user(user):
+        db.close()
+        return redirect("/settings/test-kits?error=Only%20admins%20can%20modify%20standard%20test%20kits")
+    ensure_test_kits_owner_column(db)
+    kit = one(db, "SELECT * FROM test_kits WHERE id=?", (kit_id,))
+    if not kit:
+        db.close()
+        return redirect("/settings/test-kits?error=Test%20kit%20not%20found")
+    if row_get(kit, "owner_user_id") is None:
+        db.close()
+        return redirect("/settings/test-kits")
+    db.execute("UPDATE test_kits SET owner_user_id=NULL WHERE id=?", (kit_id,))
+    log_audit(db, user, "test-kit-make-standard", {"kit_id": kit_id, "name": row_get(kit, "name")})
+    db.commit()
+    db.close()
+    return redirect("/settings/test-kits?success=Test%20kit%20is%20now%20standard")
 
 @app.get("/additives", response_class=HTMLResponse)
 @app.get("/additives/", response_class=HTMLResponse, include_in_schema=False)
@@ -8855,6 +9092,7 @@ async def admin_user_delete(request: Request, user_id: int):
             db.close()
             return redirect("/admin/users?error=Cannot delete the last admin")
     ensure_additives_owner_column(db)
+    ensure_test_kits_owner_column(db)
     db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     db.execute("DELETE FROM api_tokens WHERE user_id=?", (user_id,))
     db.execute("DELETE FROM push_subscriptions WHERE user_id=?", (user_id,))
@@ -8863,6 +9101,7 @@ async def admin_user_delete(request: Request, user_id: int):
     db.execute("DELETE FROM user_tanks WHERE user_id=?", (user_id,))
     db.execute("UPDATE tanks SET owner_user_id=NULL WHERE owner_user_id=?", (user_id,))
     db.execute("UPDATE additives SET owner_user_id=NULL WHERE owner_user_id=?", (user_id,))
+    db.execute("UPDATE test_kits SET owner_user_id=NULL WHERE owner_user_id=?", (user_id,))
     db.execute("DELETE FROM audit_logs WHERE actor_user_id=?", (user_id,))
     db.execute("DELETE FROM users WHERE id=?", (user_id,))
     log_audit(db, current_user, "user-delete", {"user_id": user_id})
