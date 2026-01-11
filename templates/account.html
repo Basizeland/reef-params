@@ -108,9 +108,14 @@
         <h5 class="mb-1">Push Notifications</h5>
         <div class="text-muted small">Enable browser notifications for alerts.</div>
       </div>
-      <button class="btn btn-outline-primary js-enable-browser-alerts" type="button" data-status-target="account-alerts-status">
-        <span id="account-alerts-status">Off</span>
-      </button>
+      <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-primary js-enable-browser-alerts" type="button" data-status-target="account-alerts-status">
+          <span id="account-alerts-status">Off</span>
+        </button>
+        <button class="btn btn-outline-secondary js-send-test-push" type="button">
+          Send test
+        </button>
+      </div>
     </div>
   </div>
 </div>
