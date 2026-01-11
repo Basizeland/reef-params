@@ -666,52 +666,69 @@
 
         document.addEventListener("DOMContentLoaded", () => {
             const testButtons = Array.from(document.querySelectorAll(".js-send-test-push"));
+            console.log("[DEBUG] Test buttons found:", testButtons.length);
             if (!testButtons.length) return;
             testButtons.forEach((button) => {
                 button.addEventListener("click", async () => {
+                    console.log("[DEBUG] Test button clicked!");
                     if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+                        console.log("[DEBUG] Browser notifications not supported");
                         alert("Browser notifications are not supported on this device.");
                         return;
                     }
+                    console.log("[DEBUG] Requesting notification permission...");
                     const permission = await Notification.requestPermission();
+                    console.log("[DEBUG] Permission result:", permission);
                     if (permission !== "granted") {
                         alert("Notifications are blocked for this device.");
                         return;
                     }
                     let subscription = null;
                     try {
+                        console.log("[DEBUG] Getting service worker registrations...");
                         // Get existing registrations instead of waiting for ready
                         const registrations = await navigator.serviceWorker.getRegistrations();
+                        console.log("[DEBUG] Found registrations:", registrations.length);
                         let registration = registrations.find(reg => reg.active);
+                        console.log("[DEBUG] Active registration:", registration);
 
                         if (registration) {
                             subscription = await registration.pushManager.getSubscription();
+                            console.log("[DEBUG] Existing subscription:", subscription);
                         }
 
                         if (!subscription) {
+                            console.log("[DEBUG] No subscription found, creating new one...");
                             const response = await fetch("/api/push/public-key");
                             if (!response.ok) {
+                                console.log("[DEBUG] Failed to get public key");
                                 alert("Push notifications are not configured on the server.");
                                 return;
                             }
                             const data = await response.json();
+                            console.log("[DEBUG] Got public key:", data?.public_key);
                             if (!data?.public_key) {
                                 alert("Push notifications are not configured on the server.");
                                 return;
                             }
 
                             if (!registration) {
+                                console.log("[DEBUG] No registration, registering service worker...");
                                 registration = await navigator.serviceWorker.register("/static/service-worker.js");
+                                console.log("[DEBUG] Service worker registered:", registration);
                                 // Wait for it to become active
                                 if (registration.installing) {
+                                    console.log("[DEBUG] Waiting for service worker to activate...");
                                     await new Promise((resolve) => {
                                         registration.installing.addEventListener('statechange', function() {
+                                            console.log("[DEBUG] Service worker state:", this.state);
                                             if (this.state === 'activated') resolve();
                                         });
                                     });
                                 }
                             }
 
+                            console.log("[DEBUG] Subscribing to push...");
                             const padding = "=".repeat((4 - (data.public_key.length % 4)) % 4);
                             const base64 = (data.public_key + padding).replace(/-/g, "+").replace(/_/g, "/");
                             const rawData = atob(base64);
@@ -723,6 +740,8 @@
                                 userVisibleOnly: true,
                                 applicationServerKey: outputArray,
                             });
+                            console.log("[DEBUG] Created subscription:", subscription);
+                            console.log("[DEBUG] Saving subscription to backend...");
                             await fetch("/api/push/subscribe", {
                                 method: "POST",
                                 credentials: "same-origin",
@@ -732,13 +751,15 @@
                                 },
                                 body: JSON.stringify(subscription),
                             });
+                            console.log("[DEBUG] Subscription saved");
                         }
                     } catch (err) {
-                        console.error("Error preparing push subscription:", err);
+                        console.error("[ERROR] Error preparing push subscription:", err);
                         alert("Unable to prepare a push subscription.");
                         return;
                     }
                     try {
+                        console.log("[DEBUG] Sending test notification request...");
                         const response = await fetch("/api/push/test", {
                             method: "POST",
                             credentials: "same-origin",
@@ -750,14 +771,17 @@
                                 subscription,
                             }),
                         });
+                        console.log("[DEBUG] Test notification response status:", response.status);
                         if (!response.ok) {
                             const data = await response.json().catch(() => ({}));
+                            console.log("[DEBUG] Error response:", data);
                             alert(data?.detail || "Unable to send test notification.");
                             return;
                         }
+                        console.log("[DEBUG] Test notification sent successfully!");
                         alert("Test notification sent!");
                     } catch (err) {
-                        console.error("Error sending test notification:", err);
+                        console.error("[ERROR] Error sending test notification:", err);
                         alert("Unable to send test notification.");
                     }
                 });
