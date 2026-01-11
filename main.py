@@ -382,6 +382,13 @@ os.makedirs(templates_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
 
+# Serve service worker from root for proper scope
+@app.get("/service-worker.js")
+async def service_worker():
+    from fastapi.responses import FileResponse
+    sw_path = os.path.join(static_dir, "service-worker.js")
+    return FileResponse(sw_path, media_type="application/javascript")
+
 # --- Jinja Helpers ---
 def fmt2(v: Any) -> str:
     if v is None: return ""

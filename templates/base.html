@@ -367,7 +367,7 @@
             });
         });
         if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("/static/service-worker.js")
+            navigator.serviceWorker.register("/service-worker.js")
                 .catch(err => console.error("Service worker registration failed:", err));
         }
         document.addEventListener("DOMContentLoaded", () => {
@@ -581,7 +581,7 @@
                     let registration = registrations.find(reg => reg.active);
 
                     if (!registration) {
-                        registration = await navigator.serviceWorker.register("/static/service-worker.js");
+                        registration = await navigator.serviceWorker.register("/service-worker.js");
                         // Wait for it to become active
                         if (registration.installing) {
                             await new Promise((resolve) => {
@@ -701,7 +701,7 @@
                             }
 
                             if (!registration) {
-                                registration = await navigator.serviceWorker.register("/static/service-worker.js");
+                                registration = await navigator.serviceWorker.register("/service-worker.js");
                                 // Wait for it to become active
                                 if (registration.installing) {
                                     await new Promise((resolve) => {
