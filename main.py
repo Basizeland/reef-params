@@ -9490,8 +9490,10 @@ def admin_audit(request: Request):
     where = []
     params: List[Any] = []
     if action:
-        where.append("a.action LIKE ?")
-        params.append(f"%{action}%")
+        # Escape special LIKE characters to prevent pattern injection
+        escaped_action = action.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("a.action LIKE ? ESCAPE '\\'")
+        params.append(f"%{escaped_action}%")
     if user_id:
         where.append("a.actor_user_id=?")
         params.append(int(user_id))
@@ -9502,8 +9504,10 @@ def admin_audit(request: Request):
         where.append("a.created_at <= ?")
         params.append(date_to)
     if search:
-        where.append("(a.details LIKE ? OR u.email LIKE ?)")
-        params.extend([f"%{search}%", f"%{search}%"])
+        # Escape special LIKE characters to prevent pattern injection
+        escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("(a.details LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\')")
+        params.extend([f"%{escaped_search}%", f"%{escaped_search}%"])
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     logs = q(
         db,
