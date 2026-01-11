@@ -244,7 +244,7 @@ def send_email(recipient: str, subject: str, text_body: str, html_body: str | No
     sender = sender or get_email_sender(sender_kind)
     if not recipient:
         msg = "missing recipient"
-        print(f"Email skipped: {msg}")
+        logger.warning(f"Email skipped: {msg}")
         return False, msg
     mailjet_key = os.environ.get("MAILJET_API_KEY") or ""
     mailjet_secret = os.environ.get("MAILJET_API_SECRET") or ""
@@ -276,12 +276,12 @@ def send_email(recipient: str, subject: str, text_body: str, html_body: str | No
             return True, ""
         except Exception as exc:
             msg = str(exc)
-            print(f"Email failed: {msg}")
+            logger.error(f"Email failed: {msg}")
             return False, msg
     host = os.environ.get("SMTP_HOST")
     if not host:
         msg = "missing SMTP_HOST"
-        print(f"Email skipped: {msg}")
+        logger.warning(f"Email skipped: {msg}")
         return False, msg
     port = int(os.environ.get("SMTP_PORT", "587"))
     timeout = float(os.environ.get("SMTP_TIMEOUT", "10"))
@@ -3146,7 +3146,7 @@ def apex_polling_loop() -> None:
                 try:
                     import_apex_sample(db, settings, None)
                 except Exception as exc:
-                    print(f"Apex polling error: {exc}")
+                    logger.error(f"Apex polling error: {exc}", exc_info=True)
         db.close()
         sleep_minutes = min(intervals) if intervals else 15
         time_module.sleep(sleep_minutes * 60)
@@ -6250,7 +6250,7 @@ async def push_test(request: Request):
                 )
                 db.commit()
             except Exception as e:
-                print(f"Error saving subscription: {e}")
+                logger.error(f"Error saving subscription: {e}", exc_info=True)
                 db.rollback()
     public_key, private_key, subject = get_vapid_settings()
     if not public_key or not private_key or not subject:
@@ -6279,11 +6279,11 @@ async def push_test(request: Request):
                 vapid_claims={"sub": subject},
             )
         except webpush_module.WebPushException as e:
-            print(f"WebPushException: {e}")
+            logger.error(f"WebPushException: {e}", exc_info=True)
             db.close()
             raise HTTPException(status_code=400, detail=f"Unable to send test notification: {str(e)}")
         except Exception as e:
-            print(f"Unexpected error in webpush: {type(e).__name__}: {e}")
+            logger.error(f"Unexpected error in webpush: {type(e).__name__}: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             db.close()
@@ -8743,18 +8743,36 @@ async def icp_preview(request: Request):
             results = parse_triton_html(content)
             recommendations = {"help": [], "dose": []}
         elif upload and getattr(upload, "filename", ""):
-            data = await upload.read()
+            # File size limit: 10MB for security (prevent DoS via large files)
+            MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+            # Check content type (belt and suspenders with extension check)
+            content_type = getattr(upload, "content_type", "").lower()
             filename = upload.filename.lower()
+
+            # Validate file type before reading
+            if not (filename.endswith((".csv", ".pdf"))):
+                raise ValueError("Unsupported file type. Upload CSV or PDF.")
+
+            # Read file with size limit
+            data = await upload.read(MAX_FILE_SIZE + 1)
+            if len(data) > MAX_FILE_SIZE:
+                raise ValueError(f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024)}MB.")
+
             if filename.endswith(".csv"):
+                # Additional MIME type check for CSV
+                if content_type and not content_type.startswith(("text/", "application/csv")):
+                    raise ValueError("Invalid file type. Expected CSV file.")
                 results = parse_triton_csv(data)
                 recommendations = {"help": [], "dose": []}
             elif filename.endswith(".pdf"):
+                # Additional MIME type check for PDF
+                if content_type and not content_type.startswith("application/pdf"):
+                    raise ValueError("Invalid file type. Expected PDF file.")
                 if not pdf_available:
                     raise ValueError("PDF parsing requires PyPDF2. Install it and rebuild the container.")
                 results = parse_triton_pdf(data)
                 recommendations = {"help": [], "dose": []}
-            else:
-                raise ValueError("Unsupported file type. Upload CSV or PDF.")
             if r2_enabled():
                 safe_name = re.sub(r"[^a-z0-9_.-]+", "_", os.path.basename(upload.filename).lower())
                 timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -9101,8 +9119,10 @@ def admin_icp_uploads(request: Request):
         where.append("iu.created_at <= ?")
         params.append(date_to)
     if search:
-        where.append("(iu.filename LIKE ? OR iu.r2_key LIKE ?)")
-        params.extend([f"%{search}%", f"%{search}%"])
+        # Escape special LIKE characters to prevent pattern injection
+        escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("(iu.filename LIKE ? ESCAPE '\\' OR iu.r2_key LIKE ? ESCAPE '\\')")
+        params.extend([f"%{escaped_search}%", f"%{escaped_search}%"])
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     rows = q(
         db,
