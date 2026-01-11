@@ -42,11 +42,22 @@ self.addEventListener("push", (event) => {
     payload = { title: "Reef Metrics", body: event.data.text() };
   }
   const title = payload.title || "Reef Metrics";
+  const userAgent = self.navigator?.userAgent || "";
+  const isAndroid = /Android/i.test(userAgent);
   const options = {
     body: payload.body || "",
     data: { url: payload.url || "/" },
-    tag: payload.tag || undefined
+    tag: payload.tag || undefined,
+    icon: payload.icon || "/static/logo.png",
+    badge: payload.badge || "/static/logo.png",
+    requireInteraction: Boolean(payload.require_interaction),
+    renotify: Boolean(payload.renotify)
   };
+  if (payload.vibrate) {
+    options.vibrate = payload.vibrate;
+  } else if (isAndroid) {
+    options.vibrate = [200, 100, 200];
+  }
   event.waitUntil(self.registration.showNotification(title, options));
 });
 

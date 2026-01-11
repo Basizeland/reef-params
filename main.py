@@ -6221,6 +6221,83 @@ async def push_unsubscribe(request: Request):
         db.close()
     return JSONResponse({"ok": True})
 
+@app.post("/api/push/test")
+async def push_test(request: Request):
+    db = get_db()
+    user = get_current_user(db, request)
+    if not user:
+        db.close()
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = await request.json()
+    subscription = payload.get("subscription") if isinstance(payload, dict) else None
+    if subscription and isinstance(subscription, dict):
+        endpoint = subscription.get("endpoint")
+        if endpoint:
+            try:
+                execute_with_retry(
+                    db,
+                    "INSERT INTO push_subscriptions (user_id, endpoint, subscription_json, created_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (user_id, endpoint) DO UPDATE "
+                    "SET subscription_json=excluded.subscription_json, created_at=excluded.created_at",
+                    (user["id"], endpoint, json.dumps(subscription), datetime.utcnow().isoformat()),
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+    public_key, private_key, subject = get_vapid_settings()
+    if not public_key or not private_key or not subject:
+        db.close()
+        raise HTTPException(status_code=404, detail="Push notifications not configured.")
+    if subscription and isinstance(subscription, dict):
+        webpush_module = get_webpush()
+        if webpush_module is None:
+            db.close()
+            raise HTTPException(status_code=503, detail="Push notifications are unavailable.")
+        try:
+            webpush_module.webpush(
+                subscription_info=subscription,
+                data=json.dumps(
+                    {
+                        "title": "Reef Metrics",
+                        "body": "Test notification sent successfully.",
+                        "url": "/account",
+                        "tag": f"test-{user['id']}",
+                        "require_interaction": True,
+                        "renotify": True,
+                        "vibrate": [200, 100, 200],
+                    }
+                ),
+                vapid_private_key=private_key,
+                vapid_claims={"sub": subject},
+            )
+        except webpush_module.WebPushException:
+            db.close()
+            raise HTTPException(status_code=400, detail="Unable to send test notification.")
+        db.close()
+        return JSONResponse({"ok": True})
+    has_subscription = one(
+        db,
+        "SELECT 1 FROM push_subscriptions WHERE user_id=?",
+        (user["id"],),
+    )
+    if not has_subscription:
+        db.close()
+        raise HTTPException(status_code=400, detail="No push subscription found.")
+    payload = {
+        "title": "Reef Metrics",
+        "body": "Test notification sent successfully.",
+        "url": "/account",
+        "tag": f"test-{user['id']}",
+        "require_interaction": True,
+        "renotify": True,
+        "vibrate": [200, 100, 200],
+    }
+    try:
+        send_web_push(db, [user["id"]], payload)
+    finally:
+        db.close()
+    return JSONResponse({"ok": True})
+
 @app.get("/api/tanks/{tank_id}/summary")
 def tank_summary(request: Request, tank_id: int):
     db = get_db()
