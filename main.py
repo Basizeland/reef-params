@@ -3759,10 +3759,39 @@ def dashboard(request: Request):
         for name, pdef in pdefs.items()
     ]
     available_params.sort(key=lambda item: item["name"].lower())
+
+    # Bulk-fetch data for all tanks to avoid N+1 queries
+    tank_ids = [t["id"] for t in tanks]
+    if tank_ids:
+        placeholders = ",".join("?" for _ in tank_ids)
+        # Fetch all targets for all tanks
+        all_targets = q(db, f"SELECT * FROM targets WHERE tank_id IN ({placeholders}) AND enabled=1", tuple(tank_ids))
+        targets_by_tank = {}
+        for tr in all_targets:
+            tank_id = tr["tank_id"]
+            if tank_id not in targets_by_tank:
+                targets_by_tank[tank_id] = {}
+            targets_by_tank[tank_id][tr["parameter"]] = tr
+
+        # Fetch latest samples for all tanks
+        latest_samples = q(db, f"""
+            SELECT s.* FROM samples s
+            INNER JOIN (
+                SELECT tank_id, MAX(taken_at) as max_taken
+                FROM samples
+                WHERE tank_id IN ({placeholders})
+                GROUP BY tank_id
+            ) latest ON s.tank_id = latest.tank_id AND s.taken_at = latest.max_taken
+        """, tuple(tank_ids))
+        latest_by_tank = {s["tank_id"]: s for s in latest_samples}
+    else:
+        targets_by_tank = {}
+        latest_by_tank = {}
+
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
-        targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
-        latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
+        targets = targets_by_tank.get(t["id"], {})
+        latest = latest_by_tank.get(t["id"])
         history_map = get_recent_param_values(db, t["id"], list(pdefs.keys()))
         
         readings = []
