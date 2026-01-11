@@ -30,7 +30,7 @@ from functools import lru_cache
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from integrations.apex import ApexClient, readings_from_payload
 from database import engine, DB_PATH
@@ -2524,6 +2524,15 @@ class DBConnection:
         for params in seq_of_params:
             self.execute(sql, params)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.rollback()
+        self.close()
+        return False
+
     def __getattr__(self, name: str):
         return getattr(self._conn, name)
 
@@ -2585,12 +2594,16 @@ def execute_insert_returning_id(db: DBConnection, sql: str, params: Tuple[Any, .
     result = db.execute(sql, params)
     return result.lastrowid
 
-def get_db() -> DBConnection:
+def get_db() -> Generator[DBConnection, None, None]:
     conn = engine.connect()
     if engine.dialect.name == "sqlite":
         conn.execute(text("PRAGMA journal_mode=WAL"))
         conn.execute(text("PRAGMA busy_timeout=30000"))
-    return DBConnection(conn)
+    db = DBConnection(conn)
+    try:
+        yield db
+    finally:
+        db.close()
 
 def q(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     result = db.execute(sql, params)
