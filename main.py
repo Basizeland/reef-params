@@ -20,6 +20,8 @@ import importlib
 import importlib.util
 import smtplib
 import threading
+import logging
+import uuid
 from email.message import EmailMessage
 from io import BytesIO
 from datetime import datetime, date, time as datetime_time, timedelta, timezone
@@ -40,6 +42,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
 
 app = FastAPI(title="Reef Tank Parameters")
+logger = logging.getLogger("reef")
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+
+sentry_dsn = os.environ.get("SENTRY_DSN")
+if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        integrations=[FastApiIntegration()],
+        traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+    )
 
 def get_pandas():
     if importlib.util.find_spec("pandas") is None:
@@ -3035,16 +3050,46 @@ def start_background_jobs() -> None:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
     path = request.url.path
     if path.startswith(("/static", "/auth")) or path.startswith("/favicon"):
-        return await call_next(request)
+        start_time = time_module.time()
+        response = await call_next(request)
+        log_payload = {
+            "event": "request",
+            "method": request.method,
+            "path": path,
+            "status": response.status_code,
+            "duration_ms": round((time_module.time() - start_time) * 1000, 2),
+            "request_id": request_id,
+            "user_id": None,
+            "tank_id": request.query_params.get("tank_id"),
+        }
+        logger.info(json.dumps(log_payload))
+        response.headers["X-Request-Id"] = request_id
+        return response
     db = get_db()
     user = None
+    start_time = time_module.time()
     try:
         user = get_current_user(db, request)
         request.state.user = user
         if users_exist(db) and user is None:
-            return redirect("/auth/login")
+            response = redirect("/auth/login")
+            log_payload = {
+                "event": "request",
+                "method": request.method,
+                "path": path,
+                "status": response.status_code,
+                "duration_ms": round((time_module.time() - start_time) * 1000, 2),
+                "request_id": request_id,
+                "user_id": None,
+                "tank_id": request.path_params.get("tank_id") or request.query_params.get("tank_id"),
+            }
+            logger.info(json.dumps(log_payload))
+            response.headers["X-Request-Id"] = request_id
+            return response
         response = await call_next(request)
         if user:
             log_audit(
@@ -3053,6 +3098,19 @@ async def auth_middleware(request: Request, call_next):
                 f"{request.method} {path}",
                 {"status": response.status_code},
             )
+        tank_id = request.path_params.get("tank_id") or request.query_params.get("tank_id")
+        log_payload = {
+            "event": "request",
+            "method": request.method,
+            "path": path,
+            "status": response.status_code,
+            "duration_ms": round((time_module.time() - start_time) * 1000, 2),
+            "request_id": request_id,
+            "user_id": user["id"] if user else None,
+            "tank_id": tank_id,
+        }
+        logger.info(json.dumps(log_payload))
+        response.headers["X-Request-Id"] = request_id
         return response
     finally:
         db.close()
@@ -3063,9 +3121,18 @@ def dashboard(request: Request):
     tanks = get_visible_tanks(db, request)
     tank_cards = []
     reminders: List[Dict[str, Any]] = []
+    pdefs = {p["name"]: p for p in get_active_param_defs(db)}
+    available_params = [
+        {
+            "name": name,
+            "unit": (row_get(pdef, "unit") or ""),
+            "key": slug_key(name),
+        }
+        for name, pdef in pdefs.items()
+    ]
+    available_params.sort(key=lambda item: item["name"].lower())
     for t in tanks:
         latest_map = get_latest_and_previous_per_parameter(db, t["id"])
-        pdefs = {p["name"]: p for p in get_active_param_defs(db)}
         targets = {tr["parameter"]: tr for tr in q(db, "SELECT * FROM targets WHERE tank_id=? AND enabled=1", (t["id"],))}
         latest = one(db, "SELECT * FROM samples WHERE tank_id=? ORDER BY taken_at DESC LIMIT 1", (t["id"],))
         history_map = get_recent_param_values(db, t["id"], list(pdefs.keys()))
@@ -3134,6 +3201,7 @@ def dashboard(request: Request):
             sparkline_values = history_map.get(pname, [])
             readings.append({
                 "name": pname,
+                "key": slug_key(pname),
                 "value": latest_val,
                 "unit": (row_get(p, "unit") or ""),
                 "taken_at": latest_taken,
@@ -3167,9 +3235,27 @@ def dashboard(request: Request):
             "request": request,
             "tank_cards": tank_cards,
             "reminders": reminders,
+            "available_params": available_params,
             "extra_css": ["/static/dashboard.css"],
         },
     )
+
+@app.get("/health")
+def health_check() -> JSONResponse:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return JSONResponse({"status": "ok"})
+    except Exception as exc:
+        logger.error(json.dumps({"event": "health_check_failed", "error": str(exc)}))
+        return JSONResponse({"status": "error", "detail": "database unavailable"}, status_code=503)
+
+@app.get("/debug/sentry")
+def sentry_test() -> JSONResponse:
+    allow_test = os.environ.get("ALLOW_SENTRY_TEST", "").lower() in {"1", "true", "yes", "on"}
+    if not allow_test:
+        raise HTTPException(status_code=404, detail="Not found")
+    raise RuntimeError("Sentry test endpoint triggered")
 
 @app.get("/insights", response_class=HTMLResponse)
 def insights(request: Request):
@@ -3983,9 +4069,13 @@ async def sample_delete(sample_id: int):
         tank_id = sample["tank_id"]
 
         # 2. Perform the deletion
+        if table_exists(db, "sample_value_kits"):
+            db.execute("DELETE FROM sample_value_kits WHERE sample_id = ?", (sample_id,))
+        if table_exists(db, "sample_values"):
+            db.execute("DELETE FROM sample_values WHERE sample_id = ?", (sample_id,))
+        if table_exists(db, "parameters"):
+            db.execute("DELETE FROM parameters WHERE sample_id = ?", (sample_id,))
         db.execute("DELETE FROM samples WHERE id = ?", (sample_id,))
-        db.execute("DELETE FROM sample_values WHERE sample_id = ?", (sample_id,))
-        db.execute("DELETE FROM sample_value_kits WHERE sample_id = ?", (sample_id,))
         db.commit()
 
         # 3. Redirect back to the tank detail page we just came from
@@ -7891,12 +7981,23 @@ async def icp_dose_check(request: Request):
 
 # --- NEW: ADVANCED EXCEL IMPORT CENTER ---
 
+def render_import_manager(request: Request, **context: Any) -> HTMLResponse:
+    backup_supported = engine.dialect.name == "sqlite"
+    return templates.TemplateResponse(
+        "import_manager.html",
+        {
+            "request": request,
+            "backup_supported": backup_supported,
+            **context,
+        },
+    )
+
 @app.get("/admin/import", response_class=HTMLResponse)
 def import_page(request: Request):
     db = get_db()
     require_admin(get_current_user(db, request))
     db.close()
-    return templates.TemplateResponse("import_manager.html", {"request": request})
+    return render_import_manager(request)
 
 @app.get("/admin/users", response_class=HTMLResponse)
 def admin_users(request: Request):
@@ -8179,6 +8280,11 @@ def backup_download(request: Request):
     db = get_db()
     require_admin(get_current_user(db, request))
     db.close()
+    if engine.dialect.name != "sqlite":
+        return render_import_manager(
+            request,
+            error="SQLite backup downloads are disabled for Postgres deployments. Use Neon backups instead.",
+        )
     return FileResponse(DB_PATH, filename="reef_backup.sqlite")
 
 @app.post("/admin/backup-restore")
@@ -8186,10 +8292,15 @@ async def backup_restore(request: Request, file: UploadFile = File(...)):
     db = get_db()
     require_admin(get_current_user(db, request))
     db.close()
+    if engine.dialect.name != "sqlite":
+        return render_import_manager(
+            request,
+            error="SQLite backup restores are disabled for Postgres deployments. Use Neon backups instead.",
+        )
     if not file.filename or not file.filename.endswith((".db", ".sqlite")):
-        return templates.TemplateResponse(
-            "import_manager.html",
-            {"request": request, "error": "Invalid backup file. Please upload a .db or .sqlite file."},
+        return render_import_manager(
+            request,
+            error="Invalid backup file. Please upload a .db or .sqlite file.",
         )
     backup_path = f"{DB_PATH}.bak-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
     temp_path = f"{DB_PATH}.restore"
@@ -8202,13 +8313,13 @@ async def backup_restore(request: Request, file: UploadFile = File(...)):
     except Exception as exc:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        return templates.TemplateResponse(
-            "import_manager.html",
-            {"request": request, "error": f"Restore failed: {exc}"},
+        return render_import_manager(
+            request,
+            error=f"Restore failed: {exc}",
         )
-    return templates.TemplateResponse(
-        "import_manager.html",
-        {"request": request, "success": "Backup restored. Please refresh the app to load the new data."},
+    return render_import_manager(
+        request,
+        success="Backup restored. Please refresh the app to load the new data.",
     )
 
 @app.get("/api/tanks")
@@ -8262,15 +8373,15 @@ def api_samples(request: Request, tank_id: int, limit: int = 50):
 async def upload_excel(request: Request, file: UploadFile = File(...)):
     pd = get_pandas()
     if pd is None:
-        return templates.TemplateResponse(
-            "import_manager.html",
-            {
-                "request": request,
-                "error": "Excel import requires pandas. Install pandas and restart the app.",
-            },
+        return render_import_manager(
+            request,
+            error="Excel import requires pandas. Install pandas and restart the app.",
         )
     if not file.filename.endswith(('.xlsx', '.xls')):
-        return templates.TemplateResponse("import_manager.html", {"request": request, "error": "Invalid format. Please upload an Excel file."})
+        return render_import_manager(
+            request,
+            error="Invalid format. Please upload an Excel file.",
+        )
     
     db = get_db()
     require_admin(get_current_user(db, request))
@@ -8334,9 +8445,12 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
                     insert_sample_reading(db, sid, p["name"], val)
         
         db.commit()
-        return templates.TemplateResponse("import_manager.html", {"request": request, "success": f"Imported {stats['samples']} samples across {stats['tanks']} new tanks."})
+        return render_import_manager(
+            request,
+            success=f"Imported {stats['samples']} samples across {stats['tanks']} new tanks.",
+        )
     except Exception as e:
-        return templates.TemplateResponse("import_manager.html", {"request": request, "error": str(e)})
+        return render_import_manager(request, error=str(e))
     finally:
         db.close()
 

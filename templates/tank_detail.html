@@ -636,25 +636,31 @@
       </a>
     </div>
     <div class="d-flex align-items-center gap-2 flex-wrap">
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        {% for p in params %}
-          {% set param_key = p.key %}
-          <div class="form-check form-check-inline mb-0">
-            <input class="form-check-input" type="checkbox" name="trend-param" data-param-toggle data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
-            <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
-          </div>
-        {% endfor %}
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-graph-up"></i> Choose parameters
+        </button>
+        <div class="dropdown-menu p-3" style="min-width: 240px; max-height: 320px; overflow-y: auto;">
+          <div class="small text-muted mb-2">Select up to 3 parameters</div>
+          {% for p in params %}
+            {% set param_key = p.key %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="trend-param" data-param-toggle data-label="{{ p.name }}" value="{{ param_key }}" id="param-{{ param_key }}" {% if selected_parameter_id == p.name %}checked{% endif %}>
+              <label class="form-check-label small" for="param-{{ param_key }}">{{ p.name }}</label>
+            </div>
+          {% endfor %}
+        </div>
       </div>
       <div class="form-check form-switch mb-0">
         <input class="form-check-input" type="checkbox" id="toggle-dose-events" checked>
         <label class="form-check-label small" for="toggle-dose-events">Show dosing events</label>
       </div>
-      <div class="text-muted small">Compare up to 3 parameters at once.</div>
+      <div class="text-muted small" id="trendParamSummary">Compare up to 3 parameters at once.</div>
     </div>
   </div>
   <div class="card-body">
     <div style="height: 350px;">
-      <canvas id="historyChart"></canvas>
+      <canvas id="historyChart" data-tank-id="{{ tank.id }}"></canvas>
     </div>
     <div class="d-flex flex-column gap-2 text-muted small mt-3" id="historyStats" aria-live="polite"></div>
   </div>
@@ -758,6 +764,8 @@
           const ctx = document.getElementById('historyChart');
           const paramToggles = Array.from(document.querySelectorAll('[data-param-toggle]'));
           const showDoseToggle = document.getElementById('toggle-dose-events');
+          const tankId = ctx?.dataset?.tankId;
+          const storageKey = tankId ? `reef-trend-params-${tankId}` : 'reef-trend-params';
           
           if (!ctx) return;
 
@@ -999,6 +1007,45 @@
             return checked.slice(0, 3);
           }
 
+          function updateParamSummary(selected) {
+            const summaryEl = document.getElementById('trendParamSummary');
+            if (!summaryEl) return;
+            if (!selected.length) {
+              summaryEl.textContent = 'Compare up to 3 parameters at once.';
+              return;
+            }
+            const labels = paramToggles
+              .filter((box) => selected.includes(box.value))
+              .map((box) => box.dataset.label || box.value);
+            summaryEl.textContent = `Showing ${labels.join(', ')} (${selected.length}/3).`;
+          }
+
+          function restoreSelection() {
+            if (!paramToggles.length) return;
+            let stored = [];
+            try {
+              const raw = window.localStorage.getItem(storageKey);
+              stored = raw ? JSON.parse(raw) : [];
+            } catch (err) {
+              stored = [];
+            }
+            if (!Array.isArray(stored) || stored.length === 0) return;
+            const valid = new Set(paramToggles.map((box) => box.value));
+            const filtered = stored.filter((key) => valid.has(key));
+            if (!filtered.length) return;
+            paramToggles.forEach((box) => {
+              box.checked = filtered.includes(box.value);
+            });
+          }
+
+          function persistSelection() {
+            try {
+              window.localStorage.setItem(storageKey, JSON.stringify(selectedParams()));
+            } catch (err) {
+              // ignore
+            }
+          }
+
           function formatNumber(value) {
             if (value === null || typeof value === 'undefined') return '—';
             if (typeof value !== 'number') return value;
@@ -1007,6 +1054,7 @@
 
           function renderChart() {
             const selected = selectedParams();
+            updateParamSummary(selected);
             const labels = buildLabels(selected);
             const { unitToAxis, axisOrder } = axisAssignments(selected);
             const datasets = buildDatasets(selected, labels, unitToAxis);
@@ -1090,6 +1138,7 @@
               if (checked.length > 3 && event && event.target) {
                 event.target.checked = false;
               }
+              persistSelection();
               renderChart();
             });
           });
@@ -1097,6 +1146,8 @@
             showDoseToggle.addEventListener('change', renderChart);
           }
 
+          restoreSelection();
+          persistSelection();
           renderChart();
       } catch (err) {
           console.error("Chart Error:", err);

@@ -105,6 +105,11 @@ def visible_tank_ids(request: Request) -> List[int]:
 def dashboard(request: Request, db: Session = Depends(get_db)):
     tank_ids = visible_tank_ids(request)
     tanks = db.query(Tank).filter(Tank.id.in_(tank_ids)).all() if tank_ids else []
+    params = db.query(ParameterDef).filter(ParameterDef.active == 1).order_by(ParameterDef.sort_order).all()
+    available_params = [
+        {"name": p.name, "unit": p.unit or "", "key": slug_key(p.name)}
+        for p in params
+    ]
     tank_cards = []
     for t in tanks:
         latest = db.query(Sample).filter(Sample.tank_id == t.id).order_by(Sample.taken_at.desc()).first()
@@ -114,10 +119,23 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
                      .filter(SampleValue.sample_id == latest.id).all()
             vals.sort(key=lambda x: x.parameter_def.sort_order)
             for v in vals:
-                readings.append({"name": v.parameter_def.name, "value": v.value, "unit": v.parameter_def.unit})
+                readings.append({
+                    "name": v.parameter_def.name,
+                    "key": slug_key(v.parameter_def.name),
+                    "value": v.value,
+                    "unit": v.parameter_def.unit,
+                })
         vol = t.profile.volume_l if t.profile else t.volume_l
         tank_cards.append({"tank": t, "latest": latest, "readings": readings, "volume": vol})
-    return templates.TemplateResponse("dashboard.html", {"request": request, "tank_cards": tank_cards, "extra_css": ["/static/dashboard.css"]})
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "tank_cards": tank_cards,
+            "available_params": available_params,
+            "extra_css": ["/static/dashboard.css"],
+        },
+    )
 
 @router.get("/tanks/new", response_class=HTMLResponse)
 def tank_new_form(request: Request):

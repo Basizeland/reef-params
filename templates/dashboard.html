@@ -75,9 +75,25 @@
     <h2 class="h5 mb-1">Tank overview</h2>
     <div class="text-muted small">Latest readings per tank</div>
   </div>
-  <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
-    <i class="bi bi-arrow-down-up"></i> Reorder Tanks
-  </a>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <div class="dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-sliders"></i> Customize cards
+      </button>
+      <div class="dropdown-menu p-3" style="min-width: 240px; max-height: 320px; overflow-y: auto;">
+        <div class="small text-muted mb-2">Select up to 6 parameters</div>
+        {% for p in available_params %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" data-dashboard-param-toggle value="{{ p.key }}" id="dash-param-{{ p.key }}">
+            <label class="form-check-label small" for="dash-param-{{ p.key }}">{{ p.name }}</label>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
+      <i class="bi bi-arrow-down-up"></i> Reorder Tanks
+    </a>
+  </div>
 </div>
 
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">
@@ -89,7 +105,7 @@
     {% set summary = c.summary if c.summary is defined else {} %}
 
     <div class="col">
-      <div class="card h-100 shadow-sm border-0 position-relative card-hover">
+      <div class="card h-100 shadow-sm border-0 position-relative card-hover" data-dashboard-card>
         <div class="card-body">
           <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
             <div class="min-w-0">
@@ -129,7 +145,7 @@
 
           <div class="mt-3">
             {% if readings and readings|length > 0 %}
-              <div class="d-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem;">
+              <div class="d-grid" data-dashboard-param-grid style="grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem;">
                 {% for r in readings %}
                   {% set status_class = "border-secondary-subtle" %}
                   {% if r.status == "danger" %}
@@ -139,7 +155,7 @@
                   {% elif r.status == "ok" %}
                     {% set status_class = "border-success bg-success-subtle" %}
                   {% endif %}
-                  <div class="border rounded-2 p-2 {{ status_class }}">
+                  <div class="border rounded-2 p-2 {{ status_class }}" data-dashboard-param="{{ r.key }}">
                     <div class="d-flex justify-content-between align-items-start mb-1">
                         <div class="small text-muted text-truncate" style="max-width: 65%;">
                             {{ r.name if r.name is defined else r['name'] }}
@@ -179,6 +195,9 @@
                   </div>
                 {% endfor %}
               </div>
+              <div class="text-muted small py-3 text-center fst-italic d-none" data-dashboard-empty>
+                Select parameters above to display on cards.
+              </div>
             {% else %}
               <div class="text-muted small py-4 text-center fst-italic">No recent tests recorded.</div>
             {% endif %}
@@ -204,4 +223,74 @@
     </a>
   </div>
 </div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const storageKey = 'reef-dashboard-params';
+    const maxSelected = 6;
+    const toggles = Array.from(document.querySelectorAll('[data-dashboard-param-toggle]'));
+    const tiles = Array.from(document.querySelectorAll('[data-dashboard-param]'));
+    const cards = Array.from(document.querySelectorAll('[data-dashboard-card]'));
+
+    if (!toggles.length || !tiles.length) {
+      return;
+    }
+
+    const readStored = () => {
+      try {
+        const raw = window.localStorage.getItem(storageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (err) {
+        return [];
+      }
+    };
+
+    const setSelection = (selected) => {
+      const selectedSet = new Set(selected);
+      toggles.forEach((toggle) => {
+        toggle.checked = selectedSet.has(toggle.value);
+      });
+      tiles.forEach((tile) => {
+        tile.classList.toggle('d-none', !selectedSet.has(tile.dataset.dashboardParam));
+      });
+      cards.forEach((card) => {
+        const visibleTiles = card.querySelectorAll('[data-dashboard-param]:not(.d-none)');
+        const emptyState = card.querySelector('[data-dashboard-empty]');
+        if (emptyState) {
+          emptyState.classList.toggle('d-none', visibleTiles.length > 0);
+        }
+      });
+    };
+
+    const saveSelection = (selected) => {
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(selected));
+      } catch (err) {
+        // ignore
+      }
+    };
+
+    let selected = readStored();
+    const validKeys = new Set(toggles.map((toggle) => toggle.value));
+    selected = selected.filter((key) => validKeys.has(key));
+    if (!selected.length) {
+      selected = toggles.slice(0, maxSelected).map((toggle) => toggle.value);
+    }
+    setSelection(selected);
+    saveSelection(selected);
+
+    toggles.forEach((toggle) => {
+      toggle.addEventListener('change', (event) => {
+        const checked = toggles.filter((item) => item.checked);
+        if (checked.length > maxSelected) {
+          event.target.checked = false;
+        }
+        const next = toggles.filter((item) => item.checked).map((item) => item.value);
+        setSelection(next);
+        saveSelection(next);
+      });
+    });
+  });
+</script>
 {% endblock %}
