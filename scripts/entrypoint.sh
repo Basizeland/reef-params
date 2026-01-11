@@ -64,26 +64,33 @@ print('Migrations completed successfully')
 
 # Verify critical columns exist and add them if missing
 print('Verifying critical schema elements...')
-with engine.connect() as conn:
-    inspector = inspect(conn)
+inspector = inspect(engine)
+tables = inspector.get_table_names()
+print(f'Database has {len(tables)} tables')
 
-    # Check additives.owner_user_id
-    if 'additives' in inspector.get_table_names():
-        additives_cols = [c['name'] for c in inspector.get_columns('additives')]
-        if 'owner_user_id' not in additives_cols:
-            print('WARNING: additives.owner_user_id missing, adding now...')
-            with conn.begin():
-                conn.execute(text('ALTER TABLE additives ADD COLUMN owner_user_id INTEGER'))
-            print('Added additives.owner_user_id')
+# Check additives.owner_user_id
+if 'additives' in tables:
+    additives_cols = [c['name'] for c in inspector.get_columns('additives')]
+    print(f'additives table columns: {additives_cols}')
+    if 'owner_user_id' not in additives_cols:
+        print('WARNING: additives.owner_user_id missing, adding now...')
+        with engine.begin() as conn:
+            conn.execute(text('ALTER TABLE additives ADD COLUMN owner_user_id INTEGER'))
+        print('Added additives.owner_user_id')
+    else:
+        print('✓ additives.owner_user_id exists')
 
-    # Check test_kits.owner_user_id
-    if 'test_kits' in inspector.get_table_names():
-        test_kits_cols = [c['name'] for c in inspector.get_columns('test_kits')]
-        if 'owner_user_id' not in test_kits_cols:
-            print('WARNING: test_kits.owner_user_id missing, adding now...')
-            with conn.begin():
-                conn.execute(text('ALTER TABLE test_kits ADD COLUMN owner_user_id INTEGER'))
-            print('Added test_kits.owner_user_id')
+# Check test_kits.owner_user_id
+if 'test_kits' in tables:
+    test_kits_cols = [c['name'] for c in inspector.get_columns('test_kits')]
+    print(f'test_kits table columns: {test_kits_cols}')
+    if 'owner_user_id' not in test_kits_cols:
+        print('WARNING: test_kits.owner_user_id missing, adding now...')
+        with engine.begin() as conn:
+            conn.execute(text('ALTER TABLE test_kits ADD COLUMN owner_user_id INTEGER'))
+        print('Added test_kits.owner_user_id')
+    else:
+        print('✓ test_kits.owner_user_id exists')
 
 print('Schema verification complete')
 "
