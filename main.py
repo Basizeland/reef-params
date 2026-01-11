@@ -48,7 +48,7 @@ from slowapi.errors import RateLimitExceeded
 from cachetools import TTLCache, cached
 from apscheduler.schedulers.background import BackgroundScheduler
 from pythonjsonlogger import jsonlogger
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, Field, validator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://reefmetrics.app")
@@ -474,15 +474,29 @@ INITIAL_DEFAULTS = {
 
 # Pydantic Models for Request Validation
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3)
     password: str = Field(min_length=1)
     rotate_sessions: bool = False
 
+    @validator('email')
+    def validate_email(cls, v):
+        v = v.strip().lower()
+        if '@' not in v or '.' not in v.split('@')[-1]:
+            raise ValueError('Invalid email format')
+        return v
+
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3)
     username: Optional[str] = None
     password: str = Field(min_length=MIN_PASSWORD_LENGTH)
     confirm_password: str
+
+    @validator('email')
+    def validate_email(cls, v):
+        v = v.strip().lower()
+        if '@' not in v or '.' not in v.split('@')[-1]:
+            raise ValueError('Invalid email format')
+        return v
 
     @validator('confirm_password')
     def passwords_match(cls, v, values):
