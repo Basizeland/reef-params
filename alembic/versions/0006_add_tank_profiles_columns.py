@@ -1,7 +1,7 @@
 """Add all tank_profiles columns for dosing and volume tracking.
 
-Revision ID: 0006
-Revises: 0005
+Revision ID: 0006_add_tank_profiles_columns
+Revises: 0005_add_performance_indexes
 Create Date: 2026-01-11
 
 """
@@ -11,8 +11,8 @@ from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
-revision = '0006'
-down_revision = '0005'
+revision = '0006_add_tank_profiles_columns'
+down_revision = '0005_add_performance_indexes'
 branch_labels = None
 depends_on = None
 

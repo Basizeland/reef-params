@@ -1,15 +1,15 @@
 """add performance indexes on foreign keys
 
-Revision ID: 0005
-Revises: 0004
+Revision ID: 0005_add_performance_indexes
+Revises: 0004_add_additives_owner_user_id
 Create Date: 2026-01-11
 
 """
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = '0005'
-down_revision = '0004'
+revision = '0005_add_performance_indexes'
+down_revision = '0004_add_additives_owner_user_id'
 branch_labels = None
 depends_on = None
 
