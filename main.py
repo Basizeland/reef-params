@@ -180,15 +180,21 @@ if sentry_dsn and importlib.util.find_spec("sentry_sdk"):
     )
 
 @lru_cache(maxsize=None)
-def optional_module(module_name: str):
+def optional_module(module_name: str) -> Optional[Any]:
+    """
+    Try to import an optional module.
+    Returns module if available, None if not installed.
+    """
     if importlib.util.find_spec(module_name) is None:
         return None
     return importlib.import_module(module_name)
 
-def get_pandas():
+def get_pandas() -> Optional[Any]:
+    """Get pandas module if available"""
     return optional_module("pandas")
 
-def get_webpush():
+def get_webpush() -> Optional[Any]:
+    """Get pywebpush module if available"""
     return optional_module("pywebpush")
 
 def is_csrf_exempt(path: str) -> bool:
@@ -614,7 +620,11 @@ def fmt2(v: Any) -> str:
         s = s.rstrip("0").rstrip(".")
     return s
 
-def _tzinfo():
+def _tzinfo() -> Optional[Any]:
+    """
+    Get timezone info from environment.
+    Returns ZoneInfo if available, None otherwise.
+    """
     tz_name = os.environ.get("APP_TIMEZONE") or os.environ.get("TZ") or "UTC"
     try:
         from zoneinfo import ZoneInfo
@@ -623,6 +633,7 @@ def _tzinfo():
         return None
 
 def _to_local(dt: datetime) -> datetime:
+    """Convert datetime to local timezone"""
     tz = _tzinfo()
     if tz is None:
         return dt
@@ -631,6 +642,7 @@ def _to_local(dt: datetime) -> datetime:
     return dt.astimezone(tz)
 
 def oauth_cookie_settings(request: Request) -> Dict[str, Any]:
+    """Get OAuth cookie settings based on request and configuration"""
     base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
     parsed = urllib.parse.urlparse(base)
     hostname = parsed.hostname or ""
@@ -2732,14 +2744,47 @@ def get_db() -> DBConnection:
     return DBConnection(conn)
 
 def q(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    """
+    Execute SQL query and return all rows as list of dicts.
+
+    Args:
+        db: Database connection
+        sql: SQL query string
+        params: Query parameters (tuple or dict)
+
+    Returns:
+        List of row dictionaries
+    """
     result = db.execute(sql, params)
     return list(result.mappings().all())
 
 def one(db: DBConnection, sql: str, params: Tuple[Any, ...] | Dict[str, Any] | None = None) -> Optional[Dict[str, Any]]:
+    """
+    Execute SQL query and return first row as dict or None.
+
+    Args:
+        db: Database connection
+        sql: SQL query string
+        params: Query parameters (tuple or dict)
+
+    Returns:
+        First row as dict or None if no results
+    """
     result = db.execute(sql, params)
     return result.mappings().first()
 
 def row_get(row: Any, key: str, default: Any = None) -> Any:
+    """
+    Safely get value from database row (dict or Row object).
+
+    Args:
+        row: Database row (dict, Row object, or None)
+        key: Column/key name to retrieve
+        default: Default value if key not found
+
+    Returns:
+        Value from row or default
+    """
     try:
         if row is None: return default
         if isinstance(row, dict): return row.get(key, default)
@@ -2748,6 +2793,7 @@ def row_get(row: Any, key: str, default: Any = None) -> Any:
     return default
 
 def table_exists(db: DBConnection, name: str) -> bool:
+    """Check if a database table exists"""
     inspector = inspect(db._conn)
     return inspector.has_table(name)
 
