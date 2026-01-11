@@ -61,6 +61,31 @@ with engine.connect() as conn:
 print('Applying any pending migrations...')
 command.upgrade(cfg, 'head')
 print('Migrations completed successfully')
+
+# Verify critical columns exist and add them if missing
+print('Verifying critical schema elements...')
+with engine.connect() as conn:
+    inspector = inspect(conn)
+
+    # Check additives.owner_user_id
+    if 'additives' in inspector.get_table_names():
+        additives_cols = [c['name'] for c in inspector.get_columns('additives')]
+        if 'owner_user_id' not in additives_cols:
+            print('WARNING: additives.owner_user_id missing, adding now...')
+            with conn.begin():
+                conn.execute(text('ALTER TABLE additives ADD COLUMN owner_user_id INTEGER'))
+            print('Added additives.owner_user_id')
+
+    # Check test_kits.owner_user_id
+    if 'test_kits' in inspector.get_table_names():
+        test_kits_cols = [c['name'] for c in inspector.get_columns('test_kits')]
+        if 'owner_user_id' not in test_kits_cols:
+            print('WARNING: test_kits.owner_user_id missing, adding now...')
+            with conn.begin():
+                conn.execute(text('ALTER TABLE test_kits ADD COLUMN owner_user_id INTEGER'))
+            print('Added test_kits.owner_user_id')
+
+print('Schema verification complete')
 "
 
 exec uvicorn main:app --host 0.0.0.0 --port 8000
