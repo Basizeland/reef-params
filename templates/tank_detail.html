@@ -1159,6 +1159,11 @@
   });
 </script>
 {% endblock %}
+
+{% block chart_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+{% endblock %}
         {% if tank.use_calcium_reactor or tank.calcium_reactor_daily_ml is not none or tank.calcium_reactor_effluent_dkh is not none %}
           <div class="col">
             <div class="card h-100 shadow-sm border-0">
