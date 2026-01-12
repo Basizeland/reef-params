@@ -4074,10 +4074,10 @@ def health_check() -> JSONResponse:
         return JSONResponse({"status": "error", "detail": "database unavailable"}, status_code=503)
 
 @app.get("/metrics")
-def metrics_endpoint(request: Request) -> JSONResponse:
+def metrics_endpoint(request: Request):
     """
     Expose application metrics for monitoring.
-    Returns request counts, average durations, slow queries, and background job status.
+    Returns a dashboard view with request counts, average durations, slow queries, and background job status.
     """
     db = get_db()
     try:
@@ -4087,7 +4087,17 @@ def metrics_endpoint(request: Request) -> JSONResponse:
             raise HTTPException(status_code=403, detail="Admin access required")
 
         stats = metrics.get_stats()
-        return JSONResponse(stats)
+        # Convert stats to JSON for JavaScript consumption
+        metrics_json = json.dumps(stats)
+
+        return templates.TemplateResponse(
+            "metrics.html",
+            {
+                "request": request,
+                "metrics_json": metrics_json,
+                "user": user
+            }
+        )
     finally:
         db.close()
 

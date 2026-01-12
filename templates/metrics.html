@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/metrics.css">
+<div class="metrics-dashboard">
+  <!-- Header Section -->
+  <section class="metrics-hero mb-5">
+    <div class="hero-background-effect"></div>
+    <div class="row align-items-center position-relative">
+      <div class="col-lg-8">
+        <div class="hero-content">
+          <div class="metrics-eyebrow animate-fade-in">
+            <i class="bi bi-speedometer2"></i> System Metrics
+          </div>
+          <h1 class="metrics-heading animate-slide-up">
+            Application Performance Dashboard
+          </h1>
+          <p class="metrics-subtitle animate-slide-up" style="animation-delay: 0.1s;">
+            Real-time monitoring of application requests, performance, and background jobs.
+          </p>
+        </div>
+      </div>
+      <div class="col-lg-4">
+        <div class="metrics-stat-grid">
+          <div class="metrics-stat animate-scale" style="animation-delay: 0.1s;">
+            <div class="stat-icon">
+              <i class="bi bi-activity"></i>
+            </div>
+            <div class="stat-content">
+              <div class="label">Total Requests</div>
+              <div class="value" id="total-requests">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Request Metrics -->
+  <div class="row g-4 mb-4">
+    <div class="col-12">
+      <div class="card metrics-card shadow-sm border-0">
+        <div class="card-body p-4">
+          <h2 class="h5 mb-4 d-flex align-items-center gap-2">
+            <i class="bi bi-bar-chart-fill text-primary"></i>
+            Request Statistics
+          </h2>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>Endpoint</th>
+                  <th class="text-end">Request Count</th>
+                  <th class="text-end">Avg Duration (ms)</th>
+                </tr>
+              </thead>
+              <tbody id="request-stats-body">
+                <!-- Populated by JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Performance Metrics -->
+  <div class="row g-4 mb-4">
+    <!-- Slow Queries Card -->
+    <div class="col-lg-6">
+      <div class="card metrics-card shadow-sm border-0 h-100">
+        <div class="card-body p-4">
+          <div class="d-flex align-items-center justify-content-between mb-4">
+            <h2 class="h5 mb-0 d-flex align-items-center gap-2">
+              <i class="bi bi-hourglass-split text-warning"></i>
+              Slow Queries
+            </h2>
+            <span class="badge badge-warning" id="slow-queries-badge">0</span>
+          </div>
+          <div id="slow-queries-container">
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Background Jobs Card -->
+    <div class="col-lg-6">
+      <div class="card metrics-card shadow-sm border-0 h-100">
+        <div class="card-body p-4">
+          <h2 class="h5 mb-4 d-flex align-items-center gap-2">
+            <i class="bi bi-gear-fill text-info"></i>
+            Background Jobs
+          </h2>
+          <div id="background-jobs-container">
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request Duration Chart -->
+  <div class="row g-4 mb-4">
+    <div class="col-12">
+      <div class="card metrics-card shadow-sm border-0">
+        <div class="card-body p-4">
+          <h2 class="h5 mb-4 d-flex align-items-center gap-2">
+            <i class="bi bi-graph-up text-success"></i>
+            Average Response Time
+          </h2>
+          <div id="duration-chart" style="height: 300px;">
+            <canvas id="durationCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Metrics data from backend
+const metricsData = {{ metrics_json|safe }};
+
+// Calculate total requests
+function calculateTotalRequests(requests) {
+  return Object.values(requests).reduce((sum, count) => sum + count, 0);
+}
+
+// Format duration to 2 decimal places
+function formatDuration(ms) {
+  return ms.toFixed(2);
+}
+
+// Populate request statistics table
+function populateRequestStats() {
+  const tbody = document.getElementById('request-stats-body');
+  const requests = metricsData.requests || {};
+  const avgDuration = metricsData.avg_duration || {};
+
+  // Sort endpoints by request count (descending)
+  const endpoints = Object.keys(requests).sort((a, b) => requests[b] - requests[a]);
+
+  tbody.innerHTML = '';
+
+  if (endpoints.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No request data available</td></tr>';
+    return;
+  }
+
+  endpoints.forEach(endpoint => {
+    const row = document.createElement('tr');
+    const duration = avgDuration[endpoint] || 0;
+    const durationClass = duration > 1000 ? 'text-danger' : duration > 500 ? 'text-warning' : 'text-success';
+
+    row.innerHTML = `
+      <td><code class="endpoint-code">${endpoint}</code></td>
+      <td class="text-end"><span class="badge bg-primary">${requests[endpoint]}</span></td>
+      <td class="text-end"><span class="badge ${durationClass}">${formatDuration(duration)}</span></td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+// Populate slow queries
+function populateSlowQueries() {
+  const container = document.getElementById('slow-queries-container');
+  const badge = document.getElementById('slow-queries-badge');
+  const slowQueries = metricsData.recent_slow_queries || [];
+  const slowQueriesCount = metricsData.slow_queries_count || 0;
+
+  badge.textContent = slowQueriesCount;
+
+  if (slowQueries.length === 0) {
+    container.innerHTML = '<div class="text-center text-muted py-3"><i class="bi bi-check-circle me-2"></i>No slow queries detected</div>';
+    return;
+  }
+
+  container.innerHTML = '<div class="slow-queries-list">' +
+    slowQueries.map((query, index) => `
+      <div class="slow-query-item">
+        <div class="d-flex align-items-start gap-2">
+          <span class="badge bg-warning">${index + 1}</span>
+          <div class="flex-grow-1">
+            <div class="small mb-1"><strong>Query:</strong> <code class="query-code">${query.query || 'N/A'}</code></div>
+            <div class="small text-muted">
+              <i class="bi bi-clock"></i> Duration: <strong>${formatDuration(query.duration || 0)} ms</strong>
+              ${query.timestamp ? ` | Time: ${new Date(query.timestamp).toLocaleString()}` : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+    `).join('') + '</div>';
+}
+
+// Populate background jobs
+function populateBackgroundJobs() {
+  const container = document.getElementById('background-jobs-container');
+  const jobs = metricsData.background_jobs || {};
+
+  if (Object.keys(jobs).length === 0) {
+    container.innerHTML = '<div class="text-center text-muted py-3"><i class="bi bi-info-circle me-2"></i>No background jobs running</div>';
+    return;
+  }
+
+  container.innerHTML = '<div class="background-jobs-list">' +
+    Object.entries(jobs).map(([jobName, status]) => {
+      const statusClass = status === 'running' ? 'bg-success' :
+                          status === 'failed' ? 'bg-danger' :
+                          status === 'pending' ? 'bg-warning' : 'bg-secondary';
+      const statusIcon = status === 'running' ? 'bi-play-circle-fill' :
+                         status === 'failed' ? 'bi-x-circle-fill' :
+                         status === 'pending' ? 'bi-clock-fill' : 'bi-check-circle-fill';
+
+      return `
+        <div class="background-job-item">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <i class="bi ${statusIcon} me-2"></i>
+              <strong>${jobName}</strong>
+            </div>
+            <span class="badge ${statusClass}">${status}</span>
+          </div>
+        </div>
+      `;
+    }).join('') + '</div>';
+}
+
+// Create duration chart
+function createDurationChart() {
+  const canvas = document.getElementById('durationCanvas');
+  const ctx = canvas.getContext('2d');
+  const avgDuration = metricsData.avg_duration || {};
+
+  const endpoints = Object.keys(avgDuration);
+  const durations = Object.values(avgDuration);
+
+  if (endpoints.length === 0) {
+    canvas.parentElement.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-info-circle me-2"></i>No duration data available</div>';
+    return;
+  }
+
+  // Simple bar chart implementation
+  const maxDuration = Math.max(...durations);
+  const chartHeight = 250;
+  const chartWidth = canvas.parentElement.offsetWidth - 40;
+  const barWidth = Math.min(60, chartWidth / endpoints.length - 20);
+  const spacing = (chartWidth - (barWidth * endpoints.length)) / (endpoints.length + 1);
+
+  canvas.width = chartWidth;
+  canvas.height = chartHeight;
+
+  // Draw bars
+  endpoints.forEach((endpoint, index) => {
+    const duration = avgDuration[endpoint];
+    const barHeight = (duration / maxDuration) * (chartHeight - 60);
+    const x = spacing + (index * (barWidth + spacing));
+    const y = chartHeight - barHeight - 40;
+
+    // Color based on duration
+    if (duration > 1000) {
+      ctx.fillStyle = '#dc3545'; // danger
+    } else if (duration > 500) {
+      ctx.fillStyle = '#ffc107'; // warning
+    } else {
+      ctx.fillStyle = '#1bb6ad'; // success/teal
+    }
+
+    // Draw bar
+    ctx.fillRect(x, y, barWidth, barHeight);
+
+    // Draw value on top
+    ctx.fillStyle = '#0c2840';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(formatDuration(duration), x + barWidth / 2, y - 5);
+
+    // Draw endpoint label (truncated)
+    ctx.fillStyle = '#5a7a93';
+    ctx.font = '10px sans-serif';
+    ctx.save();
+    ctx.translate(x + barWidth / 2, chartHeight - 10);
+    ctx.rotate(-Math.PI / 4);
+    const label = endpoint.length > 20 ? endpoint.substring(0, 17) + '...' : endpoint;
+    ctx.fillText(label, 0, 0);
+    ctx.restore();
+  });
+
+  // Draw Y-axis label
+  ctx.fillStyle = '#5a7a93';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('ms', 20, 20);
+}
+
+// Initialize dashboard
+document.addEventListener('DOMContentLoaded', function() {
+  // Update total requests
+  const totalRequests = calculateTotalRequests(metricsData.requests || {});
+  document.getElementById('total-requests').textContent = totalRequests.toLocaleString();
+
+  // Populate all sections
+  populateRequestStats();
+  populateSlowQueries();
+  populateBackgroundJobs();
+  createDurationChart();
+
+  // Auto-refresh every 30 seconds
+  setInterval(() => {
+    location.reload();
+  }, 30000);
+});
+</script>
+
+<style>
+/* Additional metrics-specific styles */
+.endpoint-code {
+  background: rgba(27, 182, 173, 0.1);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--reef-navy);
+}
+
+.query-code {
+  background: rgba(255, 156, 42, 0.1);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.slow-query-item {
+  padding: 0.75rem;
+  background: rgba(255, 156, 42, 0.05);
+  border-left: 3px solid var(--reef-coral);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.slow-queries-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.background-job-item {
+  padding: 0.75rem;
+  background: rgba(27, 182, 173, 0.05);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.background-jobs-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.badge-warning {
+  background: linear-gradient(135deg, rgba(255, 156, 42, 0.9), rgba(255, 156, 42, 1)) !important;
+  color: white;
+  font-weight: 600;
+}
+
+#durationCanvas {
+  max-width: 100%;
+}
+</style>
+{% endblock %}
