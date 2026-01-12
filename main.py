@@ -4083,7 +4083,7 @@ def metrics_endpoint(request: Request) -> JSONResponse:
     try:
         user = get_current_user(db, request)
         # Only allow admin users to view metrics
-        if not is_admin(user):
+        if not is_admin_user(user):
             raise HTTPException(status_code=403, detail="Admin access required")
 
         stats = metrics.get_stats()
