@@ -12,32 +12,58 @@
   {% endif %}
 {% endfor %}
 
-<section class="reef-hero mb-4">
+<section class="reef-hero-enhanced mb-5">
+  <div class="hero-background-effect"></div>
   <div class="row align-items-center gy-4 position-relative">
     <div class="col-lg-7">
-      <div class="reef-eyebrow" data-skeleton>Reef Metrics</div>
-      <h1 class="reef-heading" data-skeleton>Advanced analytics for your aquarium.</h1>
-      <p class="reef-subtitle">
-        Monitor water quality, spot trends, and stay ahead of dosing alerts with a calm, focused workspace.
-      </p>
-      <div class="d-flex flex-wrap gap-2 mt-3">
-        <a class="btn btn-primary" href="/tanks/new">Add a new tank</a>
-        <a class="btn btn-outline-secondary" href="/tools/calculators">Open dosing tools</a>
+      <div class="hero-content">
+        <div class="reef-eyebrow animate-fade-in" data-skeleton>
+          <i class="bi bi-water"></i> Reef Metrics
+        </div>
+        <h1 class="reef-heading-enhanced animate-slide-up" data-skeleton>
+          Advanced analytics for your aquarium.
+        </h1>
+        <p class="reef-subtitle-enhanced animate-slide-up" style="animation-delay: 0.1s;">
+          Monitor water quality, spot trends, and stay ahead of dosing alerts with a calm, focused workspace designed for reef enthusiasts.
+        </p>
+        <div class="d-flex flex-wrap gap-3 mt-4 animate-slide-up" style="animation-delay: 0.2s;">
+          <a class="btn btn-primary btn-enhanced" href="/tanks/new">
+            <i class="bi bi-plus-circle me-2"></i>Add a new tank
+          </a>
+          <a class="btn btn-outline-secondary btn-enhanced" href="/tools/calculators">
+            <i class="bi bi-calculator me-2"></i>Open dosing tools
+          </a>
+        </div>
       </div>
     </div>
     <div class="col-lg-5">
-      <div class="reef-stat-grid">
-        <div class="reef-stat">
-          <div class="label">Active tanks</div>
-          <div class="value">{{ tank_cards|length }}</div>
+      <div class="reef-stat-grid-enhanced">
+        <div class="reef-stat-enhanced animate-scale" style="animation-delay: 0.1s;">
+          <div class="stat-icon">
+            <i class="bi bi-droplet-fill"></i>
+          </div>
+          <div class="stat-content">
+            <div class="label">Active tanks</div>
+            <div class="value">{{ tank_cards|length }}</div>
+          </div>
         </div>
-        <div class="reef-stat">
-          <div class="label">Latest readings</div>
-          <div class="value">{{ stats.readings }}</div>
+        <div class="reef-stat-enhanced animate-scale" style="animation-delay: 0.2s;">
+          <div class="stat-icon stat-icon-success">
+            <i class="bi bi-graph-up-arrow"></i>
+          </div>
+          <div class="stat-content">
+            <div class="label">Latest readings</div>
+            <div class="value">{{ stats.readings }}</div>
+          </div>
         </div>
-        <div class="reef-stat">
-          <div class="label">Alerts to review</div>
-          <div class="value">{{ stats.alerts }}</div>
+        <div class="reef-stat-enhanced animate-scale" style="animation-delay: 0.3s;">
+          <div class="stat-icon {% if stats.alerts > 0 %}stat-icon-warning{% endif %}">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+          </div>
+          <div class="stat-content">
+            <div class="label">Alerts to review</div>
+            <div class="value {% if stats.alerts > 0 %}text-warning-emphasis{% endif %}">{{ stats.alerts }}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -45,22 +71,35 @@
 </section>
 
 {% if reminders %}
-  <div class="card shadow-sm border-0 mb-4">
-    <div class="card-body">
-      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div class="card reminder-card-enhanced shadow-sm border-0 mb-5 animate-slide-up">
+    <div class="card-body p-4">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
         <div>
-          <h2 class="h6 text-uppercase text-muted mb-1">Testing Reminders</h2>
-          <div class="small text-muted">Parameters that are overdue for testing.</div>
+          <h2 class="h5 mb-2 d-flex align-items-center gap-2">
+            <i class="bi bi-clock-history text-primary"></i>
+            Testing Reminders
+          </h2>
+          <div class="text-muted">Parameters that are overdue for testing.</div>
         </div>
-        <a class="btn btn-outline-secondary btn-sm" href="/insights">View insights</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/insights">
+          <i class="bi bi-graph-up me-1"></i>View insights
+        </a>
       </div>
       <div class="row g-3">
         {% for item in reminders[:6] %}
-          <div class="col-md-4">
-            <a class="border rounded-3 p-3 h-100 bg-light text-decoration-none text-reset d-block" href="/tanks/{{ item.tank_id }}">
-              <div class="fw-semibold">{{ item.parameter }}</div>
-              <div class="small text-muted">
-                {{ item.tank_name }} · Last test {{ item.last_tested|time_ago }}
+          <div class="col-md-4 col-sm-6">
+            <a class="reminder-item-enhanced text-decoration-none text-reset d-block h-100" href="/tanks/{{ item.tank_id }}">
+              <div class="reminder-icon">
+                <i class="bi bi-flask"></i>
+              </div>
+              <div class="reminder-content">
+                <div class="fw-semibold text-navy mb-1">{{ item.parameter }}</div>
+                <div class="small text-muted">
+                  <i class="bi bi-droplet me-1"></i>{{ item.tank_name }}
+                </div>
+                <div class="small text-muted mt-1">
+                  <i class="bi bi-clock me-1"></i>Last test {{ item.last_tested|time_ago }}
+                </div>
               </div>
             </a>
           </div>
@@ -70,33 +109,38 @@
   </div>
 {% endif %}
 
-<div class="d-flex align-items-center justify-content-between mb-4">
+<div class="d-flex align-items-center justify-content-between mb-4 tank-header-enhanced">
   <div>
-    <h2 class="h5 mb-1">Tank overview</h2>
-    <div class="text-muted small">Latest readings per tank</div>
+    <h2 class="h4 mb-2 d-flex align-items-center gap-2">
+      <i class="bi bi-grid-3x3-gap text-primary"></i>
+      Tank overview
+    </h2>
+    <div class="text-muted">Latest readings and status for all your aquariums</div>
   </div>
   <div class="d-flex align-items-center gap-2 flex-wrap">
     <div class="dropdown">
-      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-        <i class="bi bi-sliders"></i> Customize cards
+      <button class="btn btn-outline-secondary btn-sm btn-enhanced dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-sliders"></i> Customize
       </button>
-      <div class="dropdown-menu p-3" style="min-width: 240px; max-height: 320px; overflow-y: auto;">
-        <div class="small text-muted mb-2">Select up to 6 parameters</div>
+      <div class="dropdown-menu dropdown-menu-enhanced p-3" style="min-width: 260px; max-height: 380px; overflow-y: auto;">
+        <div class="small text-muted mb-3 fw-semibold">
+          <i class="bi bi-toggles me-1"></i>Select up to 6 parameters
+        </div>
         {% for p in available_params %}
-          <div class="form-check">
+          <div class="form-check mb-2">
             <input class="form-check-input" type="checkbox" data-dashboard-param-toggle value="{{ p.key }}" id="dash-param-{{ p.key }}">
-            <label class="form-check-label small" for="dash-param-{{ p.key }}">{{ p.name }}</label>
+            <label class="form-check-label" for="dash-param-{{ p.key }}">{{ p.name }}</label>
           </div>
         {% endfor %}
       </div>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" href="/tanks/reorder">
-      <i class="bi bi-arrow-down-up"></i> Reorder Tanks
+    <a class="btn btn-outline-secondary btn-sm btn-enhanced" href="/tanks/reorder">
+      <i class="bi bi-arrow-down-up"></i> Reorder
     </a>
   </div>
 </div>
 
-<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">
+<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-4">
   {% for c in tank_cards %}
     {% set t = c.tank %}
     {% set latest = c.latest %}
@@ -105,108 +149,141 @@
     {% set summary = c.summary if c.summary is defined else {} %}
 
     <div class="col">
-      <div class="card h-100 shadow-sm border-0 position-relative card-hover" data-dashboard-card>
-        <div class="card-body">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
-            <div class="min-w-0">
-              <h5 class="card-title mb-1 text-truncate fw-bold">
-                  <a href="/tanks/{{ t.id if t.id is defined else t['id'] }}" class="text-decoration-none text-dark stretched-link">
+      <div class="card tank-card-enhanced h-100 shadow-sm border-0 position-relative" data-dashboard-card>
+        <div class="tank-card-glow"></div>
+        <div class="card-body p-4">
+          <div class="d-flex align-items-start justify-content-between gap-3 mb-3">
+            <div class="min-w-0 flex-grow-1">
+              <h5 class="card-title mb-2 d-flex align-items-center gap-2">
+                  <i class="bi bi-droplet-fill text-primary tank-icon"></i>
+                  <a href="/tanks/{{ t.id if t.id is defined else t['id'] }}" class="text-decoration-none text-dark stretched-link tank-title-link">
                     {{ t.name if t.name is defined else t['name'] }}
                   </a>
               </h5>
               <div class="mt-2 d-flex flex-wrap gap-2">
                 {% if summary.out_of_range %}
-                  <span class="badge text-bg-warning">{{ summary.out_of_range }} out of range</span>
+                  <span class="badge badge-enhanced badge-warning">
+                    <i class="bi bi-exclamation-circle me-1"></i>{{ summary.out_of_range }} out of range
+                  </span>
                 {% else %}
-                  <span class="badge text-bg-success">All in range</span>
+                  <span class="badge badge-enhanced badge-success">
+                    <i class="bi bi-check-circle me-1"></i>All in range
+                  </span>
                 {% endif %}
                 {% if summary.overdue %}
-                  <span class="badge text-bg-info">{{ summary.overdue }} overdue</span>
+                  <span class="badge badge-enhanced badge-info">
+                    <i class="bi bi-clock me-1"></i>{{ summary.overdue }} overdue
+                  </span>
                 {% endif %}
                 {% if summary.last_dose_at %}
-                  <span class="badge bg-light text-secondary border">Last dose {{ summary.last_dose_at|time_ago }}</span>
+                  <span class="badge badge-enhanced badge-light">
+                    <i class="bi bi-eyedropper me-1"></i>Dosed {{ summary.last_dose_at|time_ago }}
+                  </span>
                 {% endif %}
               </div>
-              <div class="small text-muted">
+              <div class="small text-muted mt-2 d-flex align-items-center gap-1">
                   {% if ts %}
-                    <span class="text-secondary">Last test: {{ ts|time_ago }}</span>
+                    <i class="bi bi-clock-history"></i>
+                    <span>Last test {{ ts|time_ago }}</span>
                   {% else %}
-                    No logs yet
+                    <i class="bi bi-info-circle"></i>
+                    <span>No logs yet</span>
                   {% endif %}
               </div>
             </div>
             <div class="d-flex align-items-center gap-2">
               {% set vol = (t.volume_l if t.volume_l is defined else t.get('volume_l')) %}
               {% if vol %}
-                <span class="badge bg-light text-secondary border">{{ vol|fmt2 }} L</span>
+                <div class="volume-badge-enhanced">
+                  <div class="volume-value">{{ vol|fmt2 }}</div>
+                  <div class="volume-unit">Liters</div>
+                </div>
               {% endif %}
             </div>
           </div>
 
           <div class="mt-3">
             {% if readings and readings|length > 0 %}
-              <div class="d-grid" data-dashboard-param-grid style="grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem;">
+              <div class="d-grid param-grid-enhanced" data-dashboard-param-grid style="grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem;">
                 {% for r in readings %}
-                  {% set status_class = "border-secondary-subtle" %}
+                  {% set status_class = "param-tile-neutral" %}
+                  {% set status_icon = "bi-dash-circle" %}
                   {% if r.status == "danger" %}
-                    {% set status_class = "border-danger bg-danger-subtle" %}
+                    {% set status_class = "param-tile-danger" %}
+                    {% set status_icon = "bi-exclamation-circle-fill" %}
                   {% elif r.status == "warn" %}
-                    {% set status_class = "border-warning bg-warning-subtle" %}
+                    {% set status_class = "param-tile-warning" %}
+                    {% set status_icon = "bi-exclamation-triangle-fill" %}
                   {% elif r.status == "ok" %}
-                    {% set status_class = "border-success bg-success-subtle" %}
+                    {% set status_class = "param-tile-success" %}
+                    {% set status_icon = "bi-check-circle-fill" %}
                   {% endif %}
-                  <div class="border rounded-2 p-2 {{ status_class }}" data-dashboard-param="{{ r.key }}">
-                    <div class="d-flex justify-content-between align-items-start mb-1">
-                        <div class="small text-muted text-truncate" style="max-width: 65%;">
+                  <div class="param-tile-enhanced {{ status_class }}" data-dashboard-param="{{ r.key }}">
+                    <div class="param-tile-header">
+                        <div class="param-name">
+                            <i class="{{ status_icon }} param-status-icon"></i>
                             {{ r.name if r.name is defined else r['name'] }}
                         </div>
                         {% set r_taken = r.taken_at if r.taken_at is defined else r.get('taken_at') %}
                         {% if r_taken %}
-                            <span class="badge bg-white text-secondary border fw-normal" style="font-size: 0.6rem;">
+                            <span class="param-time-badge">
                                 {{ r_taken|time_ago }}
                             </span>
                         {% endif %}
                     </div>
-                    
-                    <div class="fw-bold fs-5">
-                      {% if r.value is defined %}
-                        {{ r.value|fmt2 }}
-                      {% else %}
-                        {{ r['value']|fmt2 }}
-                      {% endif %}
-                      <span class="text-muted fw-normal fs-6">{{ (r.unit if r.unit is defined else r.get('unit')) or "" }}</span>
+
+                    <div class="param-value-container">
+                      <span class="param-value">
+                        {% if r.value is defined %}
+                          {{ r.value|fmt2 }}
+                        {% else %}
+                          {{ r['value']|fmt2 }}
+                        {% endif %}
+                      </span>
+                      <span class="param-unit">{{ (r.unit if r.unit is defined else r.get('unit')) or "" }}</span>
                     </div>
+
                     {% set sparkline = r.sparkline if r.sparkline is defined else "" %}
                     {% if sparkline %}
-                      <div class="mt-2 sparkline">
-                        <svg viewBox="0 0 84 24" width="84" height="24" aria-hidden="true" focusable="false">
-                          <polyline fill="none" stroke="currentColor" stroke-width="2" points="{{ sparkline }}"></polyline>
+                      <div class="param-sparkline">
+                        <svg viewBox="0 0 84 24" width="100%" height="24" aria-hidden="true" focusable="false">
+                          <polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="{{ sparkline }}"></polyline>
                         </svg>
                       </div>
                     {% endif %}
-                    <div class="mt-1 d-flex flex-wrap gap-1">
+
+                    <div class="param-badges">
                       {% if r.trend_warning %}
-                        <span class="badge text-bg-warning">Rapid change</span>
+                        <span class="badge badge-enhanced badge-warning-sm">
+                          <i class="bi bi-arrow-up-right"></i>Rapid change
+                        </span>
                       {% endif %}
                       {% if r.overdue %}
-                        <span class="badge text-bg-info">Overdue</span>
+                        <span class="badge badge-enhanced badge-info-sm">
+                          <i class="bi bi-clock"></i>Overdue
+                        </span>
                       {% endif %}
                     </div>
                   </div>
                 {% endfor %}
               </div>
               <div class="text-muted small py-3 text-center fst-italic d-none" data-dashboard-empty>
-                Select parameters above to display on cards.
+                <i class="bi bi-info-circle me-1"></i>Select parameters above to display on cards.
               </div>
             {% else %}
-              <div class="text-muted small py-4 text-center fst-italic">No recent tests recorded.</div>
+              <div class="empty-state-enhanced text-center py-4">
+                <i class="bi bi-clipboard-x display-6 text-muted mb-2"></i>
+                <div class="text-muted">No recent tests recorded.</div>
+              </div>
             {% endif %}
           </div>
         </div>
 
-        <div class="card-footer bg-white border-top-0 pt-0 pb-3">
-          <div class="d-grid gap-2 d-md-flex justify-content-md-end">
-            <a class="btn btn-primary btn-sm position-relative z-2" href="/tanks/{{ t.id if t.id is defined else t['id'] }}/add">Log Test</a>
+        <div class="card-footer bg-transparent border-top-0 pt-0 pb-3">
+          <div class="d-grid">
+            <a class="btn btn-primary btn-enhanced position-relative z-2" href="/tanks/{{ t.id if t.id is defined else t['id'] }}/add">
+              <i class="bi bi-plus-circle me-2"></i>Log Test
+            </a>
           </div>
         </div>
       </div>
@@ -214,11 +291,13 @@
   {% endfor %}
 
   <div class="col">
-    <a href="/tanks/new" class="card h-100 text-decoration-none text-center d-flex align-items-center justify-content-center p-5 card-hover reef-add-card">
-        <div>
-            <div class="display-4 mb-2">+</div>
-            <div class="fw-medium">Add New Tank</div>
-            <div class="small text-muted">Start tracking a new aquarium.</div>
+    <a href="/tanks/new" class="card add-tank-card-enhanced h-100 text-decoration-none text-center d-flex align-items-center justify-content-center p-5">
+        <div class="add-tank-content">
+            <div class="add-tank-icon mb-3">
+              <i class="bi bi-plus-circle"></i>
+            </div>
+            <div class="fw-semibold fs-5 mb-2">Add New Tank</div>
+            <div class="text-muted">Start tracking a new aquarium</div>
         </div>
     </a>
   </div>
